@@ -10,20 +10,6 @@ BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
 
 RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005.01996.pdf
 
-## Example.
-
-Original photo (200x200 px)
-
-![220px-Lenna_test_image](https://user-images.githubusercontent.com/32263112/161437114-8ed041b2-e958-42df-9c7c-f71052d81948.png)
-
-BSRGAN (800x800 px)
-
-![220px-Lenna_test_image_resized_BSRGAN_x0](https://user-images.githubusercontent.com/32263112/161437168-2db8b791-e9be-45b8-bcdc-9ab49b3daa66.png)
-
-RealSR_JPEG (800x800 px)
-
-![220px-Lenna_test_image_resized_RealSR_JPEG_x0](https://user-images.githubusercontent.com/32263112/161437196-e1b81f58-5c71-41b7-b5ff-56ee215d885c.png)
-
 ## Installation.
 
 QualityScaler is completely portable; just download, unzip and execute the file .exe
@@ -48,3 +34,17 @@ QualityScaler is completely portable; just download, unzip and execute the file 
 ## Next steps.
 * Use both model for the upscale
 * Support for other GPUs (AMD, Intel) with new backend
+
+## Example.
+
+Original photo (200x200 px)
+
+![220px-Lenna_test_image](https://user-images.githubusercontent.com/32263112/161437114-8ed041b2-e958-42df-9c7c-f71052d81948.png)
+
+BSRGAN (800x800 px)
+
+![220px-Lenna_test_image_resized_BSRGAN_x0](https://user-images.githubusercontent.com/32263112/161437168-2db8b791-e9be-45b8-bcdc-9ab49b3daa66.png)
+
+RealSR_JPEG (800x800 px)
+
+![220px-Lenna_test_image_resized_RealSR_JPEG_x0](https://user-images.githubusercontent.com/32263112/161437196-e1b81f58-5c71-41b7-b5ff-56ee215d885c.png)
