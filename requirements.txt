@@ -1,0 +1,9 @@
+tk-tools
+python-tkdnd
+ttkwidgets
+opencv-python
+auto-py-to-exe
+matplotlib
+pywin32
+GPUtil
+torch==1.8.2+cu102 -f https://download.pytorch.org/whl/lts/1.8/torch_lts.html
