@@ -1,5 +1,5 @@
 ## QualityScaler
-Image/video upscaling GUI app based on BRSGAN &amp; RealSR_JPEG
+Image/video upscaling & enhancement GUI app based on BRSGAN &amp; RealSR_JPEG
 
 ![Immagine 2022-04-03 164456](https://user-images.githubusercontent.com/32263112/161433483-03f3b84d-5c76-4626-84e5-c6e92a41838d.png)
 
