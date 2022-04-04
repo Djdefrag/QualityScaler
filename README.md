@@ -24,7 +24,7 @@ QualityScaler is completely portable; just download, unzip and execute the file 
 * Drag&drop files [image/multiple images/video]
 * Different upscale factors:
   * auto - automatic choose best upscale factor for the GPU used (to avoid running out of VRAM)
-  * x1   - will mantain same resolution but will reconstruct the image (ideal for bigger images) 
+  * x1   - mantain same resolution but reconstruct & enhance the image (ideal for bigger images) 
   * x2   - upscale factor 2: 500x500px -> 1000x1000px
   * x4   - upscale factor 4: 500x500px -> 2000x2000px
 * Cpu and Gpu [cuda] backend
