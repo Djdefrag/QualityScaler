@@ -33,6 +33,7 @@ QualityScaler is completely portable; just download, unzip and execute the file 
 
 ## Next steps.
 * Use both model for the upscale
+* Include audio for upscaled video
 * Support for other GPUs (AMD, Intel) with new backend
 
 ## Example.
