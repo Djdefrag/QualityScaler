@@ -1,16 +1,9 @@
-try:
-    import pyi_splash
-    pyi_splash.close()
-except:
-    pass
 
 import ctypes
 import functools
-import math
 import multiprocessing
 import os
 import os.path
-import random
 import shutil
 import sys
 import threading
@@ -26,11 +19,11 @@ from tkinter import ttk
 import cv2
 import numpy as np
 import tkinterDnD
-import torch
+import torch.cuda
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-from PIL import Image, ImageTk
+import tempfile, base64, zlib
 
 ctypes.windll.shcore.SetProcessDpiAwareness(True)
 scaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
@@ -42,7 +35,7 @@ elif scaleFactor == 1.25:
 else:
     font_scale = 0.85
 
-version    = "1.1.0 - stable"
+version    = "1.2.0 - stable"
 
 author     = "Annunziata Gianluca"
 paypalme   = "https://www.paypal.com/paypalme/jjstd/5"
@@ -123,11 +116,11 @@ show_image_width   = drag_drop_width * 0.9
 show_image_height  = drag_drop_width * 0.7
 image_text_width   = drag_drop_width * 0.9
 image_text_height  = 34
-button_1_y = 200
+button_1_y = 205
 button_2_y = 260
 button_3_y = 315
 drag_drop_background = "#303030"
-drag_drop_text_color = "#808080"
+drag_drop_text_color = "#858585"
 
 # ---------------------- /Dimensions ----------------------
 
@@ -197,6 +190,14 @@ def tensor2uint(img):
         img = np.transpose(img, (1, 2, 0))
     return np.uint8((img*255.0).round())
 
+def create_void_logo():
+    ICON = zlib.decompress(base64.b64decode('eJxjYGAEQgEBBiDJwZDBy'
+        'sAgxsDAoAHEQCEGBQaIOAg4sDIgACMUj4JRMApGwQgF/ykEAFXxQRc='))
+    _ , ICON_PATH = tempfile.mkstemp()
+    with open(ICON_PATH, 'wb') as icon_file:
+        icon_file.write(ICON)
+    return ICON_PATH
+
 # ----------------------- /Utils ------------------------
 
 def function_drop(event):
@@ -214,11 +215,11 @@ def function_drop(event):
     if video_files:
         # video section
         if not all_supported:
-            info_string.set("Some files are not supported.")
+            info_string.set("Some files are not supported")
             return
         elif all_supported:
             if multiple_files:
-                info_string.set("Only one video supported.")
+                info_string.set("Only one video supported")
                 return
             elif not multiple_files:
                 if not more_than_one_video:
@@ -234,16 +235,16 @@ def function_drop(event):
                     multi_img_list = []
 
                 elif more_than_one_video:
-                    info_string.set("Only one video supported.")
+                    info_string.set("Only one video supported")
                     return
     else:
         # image section
         if not all_supported:
             if multiple_files:
-                info_string.set("Some files are not supported.")
+                info_string.set("Some files are not supported")
                 return
             elif single_file:
-                info_string.set("This file is not supported.")
+                info_string.set("This file is not supported")
                 return
         elif all_supported:
             if multiple_files:
@@ -257,7 +258,7 @@ def function_drop(event):
 
                 # convert only strings to .png 
                 # of dropped files
-                image_list_filenames_converted = convert_only_image_filenames(image_list_dropped)
+                #image_list_filenames_converted = convert_only_image_filenames(image_list_dropped)
 
                 show_list_images_in_GUI_with_drag_drop(image_list_dropped)
                 multi_img_list = convert_only_image_filenames(image_list_dropped)
@@ -354,91 +355,18 @@ def stop_button_command():
     place_upscale_button()
 
 def resize_single_image(image_to_prepare, upscale_factor, device):
-
     # this must be proportional 
     # with video GPU memory
-    # max 500 pixel 
+    # default 500 pixel 
     max_photo_resolution_value = 500
     
-    # find gpu vram and adapt image reslution
+    # find gpu vram and adapt image resolution
     if 'cuda' in device:
         if torch.cuda.is_available():
-            #print("torch.cuda.memory_allocated: %fGB"%(torch.cuda.memory_allocated()/1024/1024/1024))
-            #print("torch.cuda.memory_reserved: %fGB"%(torch.cuda.memory_reserved()/1024/1024/1024))
-            #print("torch.cuda.max_memory_reserved: %fGB"%(torch.cuda.max_memory_reserved()/1024/1024/1024))
             gpu_memory_gb = round(torch.cuda.get_device_properties('cuda').total_memory/1024/1024/1024)
-            max_photo_resolution_value = gpu_memory_gb * 100
+            max_photo_resolution_value = (gpu_memory_gb * 100) - 100
 
     resize_algorithm = cv2.INTER_AREA
-
-    image_to_prepare = image_to_prepare.replace("{", "").replace("}", "")
-    new_image_path = image_to_prepare
-    
-    if upscale_factor == 0:
-        # automatic mode
-        old_image     = cv2.imread(image_to_prepare)
-        actual_width  = old_image.shape[1]
-        actual_height = old_image.shape[0]
-
-        max_val = max(actual_width, actual_height)
-
-        if max_val >= max_photo_resolution_value:
-            downscale_factor = max_val/max_photo_resolution_value
-            new_width      = round(old_image.shape[1]/downscale_factor)
-            new_height     = round(old_image.shape[0]/downscale_factor)
-            resized_image  = cv2.resize(old_image,
-                                    (new_width, new_height),
-                                    interpolation = resize_algorithm)
-            new_image_path = new_image_path.replace(".png", "_resized.png")
-            cv2.imwrite(new_image_path, resized_image)
-            return new_image_path
-        else:
-            new_image_path = new_image_path.replace(".png", "_resized.png")
-            old_image      = cv2.imread(image_to_prepare)
-            cv2.imwrite(new_image_path, old_image)
-            return new_image_path
-    
-    elif upscale_factor == 1:
-        # not upscale, 
-        # just reconstruct image
-        # divide by 4 
-        old_image      = cv2.imread(image_to_prepare)
-        new_width      = round(old_image.shape[1]/4)
-        new_height     = round(old_image.shape[0]/4)
-        resized_image  = cv2.resize(old_image,
-                                    (new_width, new_height),
-                                    interpolation = resize_algorithm)
-        new_image_path = new_image_path.replace(".png", "_resized.png")
-        cv2.imwrite(new_image_path, resized_image)
-        return new_image_path
-    
-    elif upscale_factor == 2:
-        # upscale x2
-        # divide by 2
-        old_image      = cv2.imread(image_to_prepare)
-        new_width      = round(old_image.shape[1]/2)
-        new_height     = round(old_image.shape[0]/2)
-        resized_image  = cv2.resize(old_image,
-                                    (new_width, new_height),
-                                    interpolation = resize_algorithm)
-        new_image_path = new_image_path.replace(".png", "_resized.png")
-        cv2.imwrite(new_image_path, resized_image)
-        return new_image_path
-    
-    elif upscale_factor == 4:
-        # no downscale
-        # upscale by 4
-        old_image      = cv2.imread(image_to_prepare)
-        cv2.imwrite(new_image_path, old_image)
-        return new_image_path
-
-
-    # this must be proportional 
-    # with video GPU memory
-    # max 500 pixel for 6GB VRAM
-    max_photo_resolution_value = 400
-
-    resize_algorithm = cv2.INTER_LANCZOS4
 
     image_to_prepare = image_to_prepare.replace("{", "").replace("}", "")
     new_image_path = image_to_prepare
@@ -529,7 +457,6 @@ def extract_frames_from_video(video_path, _ ):
         info_string.set("Extracting frames n. " + str(num_frame))
     
     cap.release()
-    cv2.destroyAllWindows()
     actual_step = "ready"
     info_string.set("")
 
@@ -663,7 +590,7 @@ def torch_AI_upscale_multiple_images(image_list, AI_model, upscale_factor, devic
             imsave(img_upscaled, result_path)
     except:
         error_root    = tkinterDnD.Tk()
-        error_message = ErrorMessage(error_root,  "no_memory")
+        ErrorMessage(error_root,  "no_memory")
 
 def torch_AI_upscale_video_frames(video_frames_list, AI_model, upscale_factor, device):
     model = prepare_torch_model(AI_model, upscale_factor, device)
@@ -692,7 +619,7 @@ def torch_AI_upscale_video_frames(video_frames_list, AI_model, upscale_factor, d
             imsave(img_upscaled, result_path)
     except:
         error_root    = tkinterDnD.Tk()
-        error_message = ErrorMessage(error_root, "no_memory")
+        ErrorMessage(error_root, "no_memory")
         
 def convert_frames_list_uspcaled(video_frames_list, AI_model, upscale_factor):
     video_frames_upscaled_list = []
@@ -1141,9 +1068,9 @@ def place_upscale_button():
     Upscale_button["justify"] = "center"
     Upscale_button["text"]    = "Upscale"
     Upscale_button["relief"]  = "flat"
-    Upscale_button.place(x      = left_bar_width/2 - (button_width + 10)/2,
+    Upscale_button.place(x      = left_bar_width/2 - button_width/2,
                          y      = left_bar_height - 50 - 25/2,
-                         width  = button_width + 10,
+                         width  = button_width,
                          height = 42)
     Upscale_button["command"] = lambda : upscale_button_command()
 
@@ -1158,9 +1085,9 @@ def place_stop_button():
     Upscale_button["justify"] = "center"
     Upscale_button["text"]    = "Stop upscaling"
     Upscale_button["relief"]  = "flat"
-    Upscale_button.place(x      = left_bar_width/2 - (button_width + 10)/2,
+    Upscale_button.place(x      = left_bar_width/2 - button_width/2,
                          y      = left_bar_height - 50 - 25/2,
-                         width  = button_width + 10,
+                         width  = button_width,
                          height = 42)
     Upscale_button["command"] = lambda : stop_button_command()
     
@@ -1213,7 +1140,7 @@ def place_RealSR_JPEG_button(root, background_color, text_color):
                         width  = button_width,
                         height = button_height)
     RealSR_JPEG_button["command"] = lambda input = "RealSR_JPEG" : choose_model_RealSR_JPEG(input)
-    
+
 def choose_model_BSRGAN(choosed_model):
     global AI_model
     AI_model = choosed_model
@@ -1235,8 +1162,8 @@ def choose_model_RealSR_JPEG(choosed_model):
     selected_button_color = "#ffbf00"
     selected_text_color   = "#202020"
     
-    place_BSRGAN_button(root, default_button_color, default_text_color)
     place_RealSR_JPEG_button(root, selected_button_color, selected_text_color) # changing
+    place_BSRGAN_button(root, default_button_color, default_text_color)
 
 def place_upscale_factor_button_auto(background_color, text_color):
     ft = tkFont.Font(family  = default_font, 
@@ -1251,9 +1178,9 @@ def place_upscale_factor_button_auto(background_color, text_color):
     Factor_x2_button["text"]    = "auto"
     Factor_x2_button["relief"]  = "flat"
     Factor_x2_button["activebackground"] = "#ffbf00"
-    Factor_x2_button.place(x = 85,
+    Factor_x2_button.place(x = 70,
                            y = 423,
-                           width  = 54,
+                           width  = 60,
                            height = 34)
     Factor_x2_button["command"] = lambda : choose_upscale_auto()
 
@@ -1270,9 +1197,9 @@ def place_upscale_factor_button_x1(background_color, text_color):
     Factor_x2_button["text"]    = "x1"
     Factor_x2_button["relief"]  = "flat"
     Factor_x2_button["activebackground"] = "#ffbf00"
-    Factor_x2_button.place(x = 150,
+    Factor_x2_button.place(x = 142,
                            y = 423,
-                           width  = 54,
+                           width  = 60,
                            height = 34)
     Factor_x2_button["command"] = lambda : choose_upscale_x1()
 
@@ -1289,9 +1216,9 @@ def place_upscale_factor_button_x2(background_color, text_color):
     Factor_x2_button["text"]    = "x2"
     Factor_x2_button["relief"]  = "flat"
     Factor_x2_button["activebackground"] = "#ffbf00"
-    Factor_x2_button.place(x = 215,
+    Factor_x2_button.place(x = 214,
                            y = 423,
-                           width  = 54,
+                           width  = 60,
                            height = 34)
     Factor_x2_button["command"] = lambda : choose_upscale_x2()
 
@@ -1308,9 +1235,9 @@ def place_upscale_factor_button_x4(background_color, text_color):
     Factor_x4_button["text"]    = "x4"
     Factor_x4_button["relief"]  = "flat"
     Factor_x4_button["activebackground"] = "#ffbf00"
-    Factor_x4_button.place(x = 280,
+    Factor_x4_button.place(x = 286,
                            y = 423,
-                           width  = 54,
+                           width  = 60,
                            height = 34)
     Factor_x4_button["command"] = lambda : choose_upscale_x4()
 
@@ -1383,9 +1310,9 @@ def place_upscale_backend_cpu(background_color, text_color):
     Backend_cpu_button["text"]    = "cpu"
     Backend_cpu_button["relief"]  = "flat"
     Backend_cpu_button["activebackground"] = "#ffbf00"
-    Backend_cpu_button.place(x = left_bar_width/2 + left_bar_width/4 - 25,
+    Backend_cpu_button.place(x = left_bar_width/2 + left_bar_width/4 - 22,
                            y = 522,
-                           width  = 54,
+                           width  = 60,
                            height = 34)
     Backend_cpu_button["command"] = lambda : choose_backend_cpu()
 
@@ -1402,9 +1329,9 @@ def place_upscale_backend_cuda(background_color, text_color):
     Backend_cpu_button["text"]    = "gpu"
     Backend_cpu_button["relief"]  = "flat"
     Backend_cpu_button["activebackground"] = "#ffbf00"
-    Backend_cpu_button.place(x = left_bar_width/2 + left_bar_width/4 - 85,
+    Backend_cpu_button.place(x = left_bar_width/2 + left_bar_width/4 - 93,
                            y = 522,
-                           width  = 54,
+                           width  = 60,
                            height = 34)
     Backend_cpu_button["command"] = lambda : choose_backend_cuda()
 
@@ -1436,12 +1363,18 @@ def choose_backend_cuda():
         error_root    = tkinterDnD.Tk()
         error_message = ErrorMessage(error_root, "no_cuda_found")
 
-
 # ---------------------- /Buttons ----------------------
 
 # ---------------------- /GUI related ---------------------- 
 
 # ---------------------- /Functions ----------------------
+
+def apply_windows_dark_bar(window_root):
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        hwnd                 = ctypes.windll.user32.GetParent(window_root.winfo_id())
+        value                = ctypes.c_int(2)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
+
 class ErrorMessage():
     def __init__(self, error_root, error_type):
         ctypes.windll.shcore.SetProcessDpiAwareness(True)
@@ -1455,30 +1388,32 @@ class ErrorMessage():
             font_scale = 0.85
 
         error_root.title(" Error message ")
-        width        = 700
-        height       = 180
+        width        = 500
+        height       = 525
         screenwidth  = error_root.winfo_screenwidth()
         screenheight = error_root.winfo_screenheight()
         alignstr     = '%dx%d+%d+%d' % (width, height, (screenwidth - width) / 2, (screenheight - height) / 2)
         error_root.geometry(alignstr)
         error_root.resizable(width=False, height=False)
 
-        logo = PhotoImage(file=find_file_production_and_dev("logo.png"))
-        error_root.iconphoto(False, logo)
+        error_root.iconbitmap(create_void_logo())
+
+        window_width  = 500
+        window_height = 525
 
         if error_type == "no_memory":
-            error_string = "MEMORY\nERROR"
+            error_string = "Memory\nerror"
             error_suggest = ( " Not enough memory for upscaling, try to: \n\n"
                              + "  set Upscale Factor to <auto>  \n" 
                              + "  set AI Backend to <cpu>  " )
         elif error_type == "no_cuda_found":
-            error_string = "CUDA NOT FOUND\nERROR"
+            error_string = "Cuda not found\nerror"
             error_suggest = (" Cuda compatible GPU not found, try to: \n\n"
                              + "  set AI Backend to <cpu>  ")
 
-        ft = tkFont.Font(family = 'Calibri', 
-                         size   = round(12 * font_scale),
-                         weight = "bold"),
+        ft = tkFont.Font(family = default_font, 
+                         size   =  int(12 * font_scale),
+                         weight = "bold")
 
         Error_container            = tk.Label(error_root)
         Error_container["anchor"]  = "center"
@@ -1490,12 +1425,8 @@ class ErrorMessage():
         Error_container["relief"]  = "flat"
         Error_container.place(x = 0,
                               y = 0,
-                              width = 700 * 0.3, 
-                              height = 180)
-
-        ft = tkFont.Font(family = 'Calibri', 
-                        size   = round(11 * font_scale),
-                        weight = "bold"),
+                              width = window_width, 
+                              height = window_height/3)            
 
         Suggest_container            = tk.Label(error_root)
         Suggest_container["anchor"]  = "center"
@@ -1505,18 +1436,14 @@ class ErrorMessage():
         Suggest_container["fg"]      = "#FF4433" 
         Suggest_container["text"]    = error_suggest
         Suggest_container["relief"]  = "flat"
-        Suggest_container.place(x = 700 * 0.3,
-                                y = 0,
-                                width  = 700 * 0.7, 
-                                height = 180)
+        Suggest_container.place(x = 0,
+                                y = window_height/3,
+                                width  = window_width, 
+                                height = (window_height/3)*2)
 
         error_root.attributes('-topmost',True)
 
-        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        hwnd                 = ctypes.windll.user32.GetParent(error_root.winfo_id())
-        value                = ctypes.c_int(2)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
-        
+        apply_windows_dark_bar(error_root)
         error_root.update()
         error_root.mainloop()
 
@@ -1553,11 +1480,11 @@ class App:
         Title_borders.place(x      = 0,
                             y      = 0,
                             width  = left_bar_width,
-                            height = 182)
+                            height = 60)
 
         # TITLE
         ft = tkFont.Font(family=default_font, 
-                         size = round(18 * font_scale),
+                         size = round(16 * font_scale),
                          weight = "bold"),
         Title            = tk.Label(root)
         Title["bg"]      = "#7267CB"
@@ -1565,10 +1492,10 @@ class App:
         Title["fg"]      = "#181818"
         Title["anchor"]  = "center" 
         Title["text"]    = "QualityScaler"
-        Title.place(x = 0,
-                    y = 55,
-                    width  = left_bar_width,
-                    height = 60)
+        Title.place(x = 10,
+                    y = 3,
+                    width  = left_bar_width/2,
+                    height = 55)
         
         global logo_git
         logo_git = PhotoImage(file=find_file_production_and_dev("github_logo_38.png"))
@@ -1578,8 +1505,8 @@ class App:
         logo_git_label["bg"]      = "#7267CB"
         logo_git_label["relief"]  = "flat"
         logo_git_label["activebackground"] = "#7267CB"
-        logo_git_label.place(x    = left_bar_width - 150,
-                             y      = 12,
+        logo_git_label.place(x    = left_bar_width - 155,
+                             y      = 10,
                              width  = 40,
                              height = 40)
         logo_git_label["command"] = lambda : opengithub()
@@ -1593,8 +1520,8 @@ class App:
         logo_paypal_label["relief"]           = "flat"
         logo_paypal_label["activebackground"] = "#7267CB"
         logo_paypal_label["borderwidth"]      = 1
-        logo_paypal_label.place(x      = left_bar_width - 100,
-                                y      = 12,
+        logo_paypal_label.place(x      = left_bar_width - 105,
+                                y      = 10,
                                 width  = 40,
                                 height = 40)
         logo_paypal_label["command"] = lambda : openpaypal()
@@ -1608,8 +1535,8 @@ class App:
         logo_patreon_label["relief"]           = "flat"
         logo_patreon_label["activebackground"] = "#7267CB"
         logo_patreon_label["borderwidth"]      = 1
-        logo_patreon_label.place(x      = left_bar_width - 50,
-                                y      = 12,
+        logo_patreon_label.place(x      = left_bar_width - 55,
+                                y      = 10,
                                 width  = 40,
                                 height = 40)
         logo_patreon_label["command"] = lambda : openpatreon()
@@ -1620,9 +1547,9 @@ class App:
         IA_selection_borders["justify"]   = "center"
         IA_selection_borders["relief"]    = "flat"
         IA_selection_borders.place(x      = left_bar_width/2 - 350/2,
-                                   y      = 128,
+                                   y      = 132,
                                    width  = 350,
-                                   height = 210)
+                                   height = 200)
         
         ft                            = tkFont.Font(family = default_font,
                                                     size   = round(12 * font_scale), 
@@ -1636,7 +1563,7 @@ class App:
         IA_selection_title["relief"]  = "flat"
         IA_selection_title["text"]    = "      AI models"
         IA_selection_title.place(x      = left_bar_width/2 - 174,
-                                 y      = 145,
+                                 y      = 150,
                                  width  = 348,
                                  height = 40)
 
@@ -1647,7 +1574,7 @@ class App:
         selected_text_color   = "#202020"
         
         place_BSRGAN_button(root, default_button_color, default_text_color)
-        place_RealSR_JPEG_button(root, selected_button_color, selected_text_color)
+        place_RealSR_JPEG_button(root, selected_button_color, selected_text_color) #default selected
 
         # SECTION TO CHOOSE UPSCALE FACTOR
         Upscale_fact_selection_borders              = tk.Label(root)
@@ -1718,7 +1645,7 @@ class App:
         # MESSAGE
         info_string.set("")
         error_message_label = ttk.Label(root,
-                              font       = (default_font, round(11 * font_scale)),
+                              font       = (default_font, round(11 * font_scale), "bold"),
                               textvar    = info_string,
                               relief     = "flat",
                               justify    = "center",
@@ -1734,25 +1661,24 @@ class App:
         place_upscale_button()
 
         # DRAG & DROP WIDGET
+        ft = tkFont.Font(family  = default_font, 
+                     size    = round(13 * font_scale),
+                     weight = "bold")
+
         drag_drop = ttk.Label(root,
-                              text    = " Drop files here \n" 
+                              text    = " DROP FILE HERE \n" 
                                       + " ____________________________________________ \n\n"
-                                      + " Images  [ jpg - png - tif - bmp - webp ]                      \n\n" 
-                                      + " Videos  [ mp4 - webm - mkv - flv - gif - avi - mov ] \n\n\n"
-                                      + "    thank you for supporting this project   😋",
+                                      + " >  IMAGES  - jpg png tif bmp webp -                  \n\n" 
+                                      + " >  VIDEOS  - mp4 webm mkv flv gif avi mov -  \n\n",
                               ondrop     = function_drop,
-                              font       = (default_font, round(13 * font_scale), "normal"),
+                              font       = ft,
                               anchor     = "center",
                               relief     = "flat",
                               justify    = "center",
                               background = drag_drop_background,
                               foreground = drag_drop_text_color)
         drag_drop.place(x=left_bar_width,y=0,width = drag_drop_width, height = drag_drop_height)
-
-        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        hwnd                 = ctypes.windll.user32.GetParent(root.winfo_id())
-        value                = ctypes.c_int(2)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
+        apply_windows_dark_bar(root)
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
@@ -1761,6 +1687,6 @@ if __name__ == "__main__":
     file_name_string  = tk.StringVar()
     info_string       = tk.StringVar()
 
-    app               = App(root)
+    app = App(root)
     root.update()
     root.mainloop()
