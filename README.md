@@ -1,7 +1,7 @@
 ## QualityScaler
 Image/video upscaling & enhancement GUI app based on BRSGAN &amp; RealSR_JPEG
 
-![Immagine 2022-04-03 164456](https://user-images.githubusercontent.com/32263112/161433483-03f3b84d-5c76-4626-84e5-c6e92a41838d.png)
+![Immagine 2022-04-10 174252](https://user-images.githubusercontent.com/32263112/162680088-37c98fd5-08cd-458d-88c9-3c4cc1bcd3f3.jpg)
 
 
 ## Credits.
@@ -15,7 +15,7 @@ RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005
 QualityScaler is completely portable; just download, unzip and execute the file .exe
 
 ## Supported AI Backend.
-* Nvidia Cuda [v10.2]
+* Nvidia Cuda [10.2]
 * CPU [works without GPU, but is very slow]
 
 ## Features.
