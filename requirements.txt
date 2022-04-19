@@ -1,9 +1,14 @@
+wmi
+pypiwin32
 tk-tools
 python-tkdnd
 ttkwidgets
-opencv-python
-auto-py-to-exe
+opencv-python-headless
+#auto-py-to-exe
+pyinstaller
+image_slicer
 matplotlib
 pywin32
-GPUtil
-torch==1.8.2+cu102 -f https://download.pytorch.org/whl/lts/1.8/torch_lts.html
+
+#pip install pytorch-directml
+#pip install torch==1.8.2+cu102 -f https://download.pytorch.org/whl/lts/1.8/torch_lts.html

@@ -1,4 +1,5 @@
 
+import base64
 import ctypes
 import functools
 import multiprocessing
@@ -6,11 +7,13 @@ import os
 import os.path
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
 import tkinter.font as tkFont
 import webbrowser
+import zlib
 from pathlib import Path
 from timeit import default_timer as timer
 from tkinter import *
@@ -23,7 +26,8 @@ import torch.cuda
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-import tempfile, base64, zlib
+from image_slicer import join, slice
+from PIL import Image
 
 ctypes.windll.shcore.SetProcessDpiAwareness(True)
 scaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
@@ -35,7 +39,7 @@ elif scaleFactor == 1.25:
 else:
     font_scale = 0.85
 
-version    = "1.2.0 - stable"
+version    = "1.3.0 - stable"
 
 author     = "Annunziata Gianluca"
 paypalme   = "https://www.paypal.com/paypalme/jjstd/5"
@@ -45,6 +49,7 @@ patreonme  = "https://www.patreon.com/Djdefrag"
 image_path          = "no file"
 AI_model            = "RealSR_JPEG" 
 device              = "cuda"
+upscale_factor      = 2
 actual_step         = ""
 single_file         = False
 multiple_files      = False
@@ -53,14 +58,6 @@ multi_img_list             = []
 video_frames_list          = []
 video_frames_upscaled_list = []
 original_video_path = ""
-default_font        = 'Calibri'
-
-
-# 0 = auto
-# 1 = photo/4 > photo * 1
-# 2 = photo/2 > photo * 2
-# 3 = photo   > photo * 4
-upscale_factor   = 0
 
 supported_file_list = [ '.jpg' , '.jpeg', '.JPG', '.JPEG',
                         '.png' , '.PNG' ,
@@ -111,22 +108,32 @@ left_bar_height    = window_height
 drag_drop_width    = window_width - left_bar_width
 drag_drop_height   = window_height
 button_width       = 250
-button_height      = 35
+button_height      = 34
 show_image_width   = drag_drop_width * 0.9
 show_image_height  = drag_drop_width * 0.7
 image_text_width   = drag_drop_width * 0.9
 image_text_height  = 34
-button_1_y = 205
-button_2_y = 260
-button_3_y = 315
+button_1_y = 120
+button_2_y = 170
+button_3_y = 220
 drag_drop_background = "#303030"
 drag_drop_text_color = "#858585"
+default_font         = 'Calibri'
 
 # ---------------------- /Dimensions ----------------------
 
 # ---------------------- Functions ----------------------
 
 # ------------------------ Utils ------------------------
+
+def openpaypal():
+    webbrowser.open(paypalme, new=1)
+
+def opengithub():
+    webbrowser.open(githubme, new=1)
+
+def openpatreon():
+    webbrowser.open(patreonme, new=1)
 
 def truncate(n, decimals=0):
     multiplier = 10 ** decimals
@@ -141,19 +148,10 @@ def create_temp_dir(name_dir):
     if not os.path.exists(name_dir):
         os.makedirs(name_dir)
 
-def find_file_production_and_dev(relative_path):
+def find_file_by_relative_path(relative_path):
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(
         os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
-
-def openpaypal():
-    webbrowser.open(paypalme, new=1)
-
-def opengithub():
-    webbrowser.open(githubme, new=1)
-
-def openpatreon():
-    webbrowser.open(patreonme, new=1)
 
 def imread_uint(path, n_channels=3):
     if n_channels == 1:
@@ -197,6 +195,20 @@ def create_void_logo():
     with open(ICON_PATH, 'wb') as icon_file:
         icon_file.write(ICON)
     return ICON_PATH
+
+def slice_image(img_file, num_tiles):
+    tiles = slice(img_file, num_tiles)
+    return tiles
+
+def reunion_image(tiles):
+    image = join(tiles)
+    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    return image
+
+def delete_tiles_from_disk(tiles):
+    #remove tiles file
+    for tile in tiles:
+        os.remove(tile.filename)
 
 # ----------------------- /Utils ------------------------
 
@@ -354,64 +366,16 @@ def stop_button_command():
     info_string.set("Stopped")
     place_upscale_button()
 
-def resize_single_image(image_to_prepare, upscale_factor, device):
-    # this must be proportional 
-    # with video GPU memory
-    # default 500 pixel 
-    max_photo_resolution_value = 500
-    
-    # find gpu vram and adapt image resolution
-    if 'cuda' in device:
-        if torch.cuda.is_available():
-            gpu_memory_gb = round(torch.cuda.get_device_properties('cuda').total_memory/1024/1024/1024)
-            max_photo_resolution_value = (gpu_memory_gb * 100) - 100
-
-    resize_algorithm = cv2.INTER_AREA
-
+def resize_image(image_to_prepare, upscale_factor):
     image_to_prepare = image_to_prepare.replace("{", "").replace("}", "")
     new_image_path = image_to_prepare
     
-    if upscale_factor == 0:
-        # automatic mode
-        old_image     = cv2.imread(image_to_prepare)
-        actual_width  = old_image.shape[1]
-        actual_height = old_image.shape[0]
+    resize_algorithm = cv2.INTER_LINEAR
 
-        max_val = max(actual_width, actual_height)
-
-        if max_val >= max_photo_resolution_value:
-            downscale_factor = max_val/max_photo_resolution_value
-            new_width      = round(old_image.shape[1]/downscale_factor)
-            new_height     = round(old_image.shape[0]/downscale_factor)
-            resized_image  = cv2.resize(old_image,
-                                    (new_width, new_height),
-                                    interpolation = resize_algorithm)
-            new_image_path = new_image_path.replace(".png", "_resized.png")
-            cv2.imwrite(new_image_path, resized_image)
-            return new_image_path
-        else:
-            new_image_path = new_image_path.replace(".png", "_resized.png")
-            old_image      = cv2.imread(image_to_prepare)
-            cv2.imwrite(new_image_path, old_image)
-            return new_image_path
-    
-    elif upscale_factor == 1:
-        # not upscale, 
-        # just reconstruct image
-        # divide by 4 
-        old_image      = cv2.imread(image_to_prepare)
-        new_width      = round(old_image.shape[1]/4)
-        new_height     = round(old_image.shape[0]/4)
-        resized_image  = cv2.resize(old_image,
-                                    (new_width, new_height),
-                                    interpolation = resize_algorithm)
-        new_image_path = new_image_path.replace(".png", "_resized.png")
-        cv2.imwrite(new_image_path, resized_image)
-        return new_image_path
-    
-    elif upscale_factor == 2:
+    if upscale_factor == 2:
         # upscale x2
-        # divide by 2
+        # resize image dividing by 2
+
         old_image      = cv2.imread(image_to_prepare)
         new_width      = round(old_image.shape[1]/2)
         new_height     = round(old_image.shape[0]/2)
@@ -422,12 +386,42 @@ def resize_single_image(image_to_prepare, upscale_factor, device):
         cv2.imwrite(new_image_path, resized_image)
         return new_image_path
     
-    elif upscale_factor == 4:
-        # no downscale
-        # upscale by 4
+    elif upscale_factor == 3:
+        # upscale x3
+        # resize image subtracting 1/4 in resolution
+        # ex. 1000 --> 750 --> 3000
+        
         old_image      = cv2.imread(image_to_prepare)
-        cv2.imwrite(new_image_path, old_image)
+        
+        width_to_remove = round(old_image.shape[1]/4)
+        height_to_remove = round(old_image.shape[0]/4)
+
+        new_width      = round(old_image.shape[1] - width_to_remove )
+        new_height     = round(old_image.shape[0] - height_to_remove)
+        resized_image  = cv2.resize(old_image,
+                                    (new_width, new_height),
+                                    interpolation = resize_algorithm)
+        new_image_path = new_image_path.replace(".png", "_resized.png")
+        cv2.imwrite(new_image_path, resized_image)
         return new_image_path
+    
+    elif upscale_factor == 4:
+        # upscale by 4
+        # so simply return the image as it is
+
+        return new_image_path
+
+def remove_image_patches_imperfection(image, upscale_factor):
+    # apply little gaussian blur
+    if upscale_factor == 2:
+        kernel = (5,5)
+    elif upscale_factor == 3:
+        kernel = (7,7)
+    elif upscale_factor == 4:
+        kernel = (9,9)
+
+    blurred_image = cv2.GaussianBlur(image, kernel, 0)
+    return blurred_image
 
 def extract_frames_from_video(video_path, _ ):
     global actual_step
@@ -463,11 +457,11 @@ def extract_frames_from_video(video_path, _ ):
 def video_reconstruction_by_frames(original_video_path, video_frames_upscaled_list, AI_model, upscale_factor):
 
     info_string.set("Reconstructing video...")
-    cap        = cv2.VideoCapture(original_video_path)
-    frame_rate = cap.get(cv2.CAP_PROP_FPS)
+    cap          = cv2.VideoCapture(original_video_path)
+    frame_rate   = cap.get(cv2.CAP_PROP_FPS)
     path_as_list = original_video_path.split("/")
-    video_name = str(path_as_list[-1])
-    only_path = original_video_path.replace(video_name, "")
+    video_name   = str(path_as_list[-1])
+    only_path    = original_video_path.replace(video_name, "")
     cap.release()
 
     for video_type in supported_video_list:
@@ -489,7 +483,7 @@ def video_reconstruction_by_frames(original_video_path, video_frames_upscaled_li
 
     video.release()
 
-def prepare_torch_model(AI_model, upscale_factor, device):
+def prepare_torch_model(AI_model, device):
     if 'cpu' in device:
         backend = torch.device('cpu')
         torch.set_num_threads(4)
@@ -498,7 +492,7 @@ def prepare_torch_model(AI_model, upscale_factor, device):
             backend = torch.device('cuda')
             torch.cuda.empty_cache()
     
-    model_path = find_file_production_and_dev(AI_model + ".pth")
+    model_path = find_file_by_relative_path(AI_model + ".pth")
     
     model = RRDBNet(in_nc=3, out_nc=3, nf=64, nb=23, gc=32, sf=4)
     model.load_state_dict(torch.load(model_path), strict=True)
@@ -564,61 +558,117 @@ def adapt_image_for_deeplearning(img):
     return img
 
 def torch_AI_upscale_multiple_images(image_list, AI_model, upscale_factor, device):
-    model = prepare_torch_model(AI_model, upscale_factor, device)
+    
+    # 0) define the model
+    model = prepare_torch_model(AI_model, device)
 
-    # resize all images
+    # 1) resize all images
     downscaled_images = []
     for image in image_list:
-        img_downscaled = resize_single_image(image, upscale_factor, device)
+        img_downscaled = resize_image(image, upscale_factor)
         downscaled_images.append(img_downscaled)
 
-    # then upscale
     try:
         for img in downscaled_images:
-            result_path = (img.replace(".png","") + 
-                        "_"  + AI_model +
-                        "_x" + str(upscale_factor) + 
-                        ".png")
-            
-            # read and transform image
-            img = adapt_image_for_deeplearning(img)
-            img = img.to(device, non_blocking = True)
+            if "_resized" in img:
+                result_path = (img.replace("_resized.png","") + 
+                                "_"  + AI_model +
+                                "_x" + str(upscale_factor) + 
+                                ".png")
+            else:
+                result_path = (img.replace(".png","") + 
+                            "_"  + AI_model +
+                            "_x" + str(upscale_factor) + 
+                            ".png")
 
-            # upscale and save image
-            img_upscaled = model(img)
-            img_upscaled = tensor2uint(img_upscaled)
-            imsave(img_upscaled, result_path)
+            # 1.5) calculating best slice number
+            img_tmp = cv2.imread(img)
+            max_val = max(img_tmp.shape[1], img_tmp.shape[0])
+
+            # 2) divide the image in tiles
+            tiles = slice_image(img, round(max_val/45))
+
+            # 3) upscale each tiles
+            for tile in tiles:
+                tile_adapted  = adapt_image_for_deeplearning(tile.filename)
+                tile_adapted  = tile_adapted.to(device, non_blocking = True)
+                tile_upscaled = model(tile_adapted)
+                tile_upscaled = tensor2uint(tile_upscaled)
+                imsave(tile_upscaled, tile.filename)
+                tile.image  = Image.open(tile.filename)
+                tile.coords = (tile.coords[0]*4, tile.coords[1]*4)
+
+            # 6) then reconstruct the image by tiles upscaled
+            image_upscaled = reunion_image(tiles)
+            
+            # 7) remove tiles file
+            delete_tiles_from_disk(tiles)
+
+            # 8) try to remove tiles segmentation
+            if "BSRGAN" in AI_model:
+                image_upscaled = remove_image_patches_imperfection(image_upscaled, upscale_factor)
+
+            # 9) save reconstructed image
+            cv2.imwrite(result_path, image_upscaled)
     except:
-        error_root    = tkinterDnD.Tk()
+        error_root = tkinterDnD.Tk()
         ErrorMessage(error_root,  "no_memory")
 
 def torch_AI_upscale_video_frames(video_frames_list, AI_model, upscale_factor, device):
-    model = prepare_torch_model(AI_model, upscale_factor, device)
+    
+    # 0) define the model
+    model = prepare_torch_model(AI_model, device)
 
-    # resize all images
+    # 1) resize all images
     downscaled_images = []
     for image in video_frames_list:
-        img_downscaled = resize_single_image(image, upscale_factor, device)
+        img_downscaled = resize_image(image, upscale_factor)
         downscaled_images.append(img_downscaled)
 
-    # then upscale
     try:
         for img in downscaled_images:
-            result_path = (img.replace(".png","") + 
-                        "_"  + AI_model +
-                        "_x" + str(upscale_factor) + 
-                        ".png")
+            if "_resized" in img:
+                result_path = (img.replace("_resized.png","") + 
+                                "_"  + AI_model +
+                                "_x" + str(upscale_factor) + 
+                                ".png")
+            else:
+                result_path = (img.replace(".png","") + 
+                            "_"  + AI_model +
+                            "_x" + str(upscale_factor) + 
+                            ".png")
             
-            # read and transform image
-            img = adapt_image_for_deeplearning(img)
-            img = img.to(device, non_blocking = True)
+            # 1.5) calculating best slice number
+            img_tmp = cv2.imread(img)
+            max_val = max(img_tmp.shape[1], img_tmp.shape[0])
+
+            # 2) divide the image in tiles
+            tiles = slice_image(img, round(max_val/45))
+
+            # 3) upscale each tiles
+            for tile in tiles:
+                tile_adapted  = adapt_image_for_deeplearning(tile.filename)
+                tile_adapted  = tile_adapted.to(device, non_blocking = True)
+                tile_upscaled = model(tile_adapted)
+                tile_upscaled = tensor2uint(tile_upscaled)
+                imsave(tile_upscaled, tile.filename)
+                tile.image  = Image.open(tile.filename)
+                tile.coords = (tile.coords[0]*4, tile.coords[1]*4)
+
+            # 6) then reconstruct the image by tiles upscaled
+            image_upscaled = reunion_image(tiles)
             
-            # upscale and save image
-            img_upscaled = model(img)
-            img_upscaled = tensor2uint(img_upscaled)
-            imsave(img_upscaled, result_path)
+            # 7) remove tiles file
+            delete_tiles_from_disk(tiles)
+
+            # 8) try to remove tiles segmentation
+            if "BSRGAN" in AI_model:
+                image_upscaled = remove_image_patches_imperfection(image_upscaled, upscale_factor)
+
+            # 9) save reconstructed image
+            cv2.imwrite(result_path, image_upscaled)
     except:
-        error_root    = tkinterDnD.Tk()
+        error_root = tkinterDnD.Tk()
         ErrorMessage(error_root, "no_memory")
         
 def convert_frames_list_uspcaled(video_frames_list, AI_model, upscale_factor):
@@ -631,32 +681,13 @@ def convert_frames_list_uspcaled(video_frames_list, AI_model, upscale_factor):
 
 def images_to_check_convert_filenames(image_list, AI_model, upscale_factor):
     temp_images_to_delete = []
-    image_list_temp = []
-    image_list_downscaled = []
+    image_list_to_check = []
+    
+    for image in image_list:
+        temp = image.replace(".png","") + "_" + AI_model + "_x" + str(upscale_factor) + ".png"
+        image_list_to_check.append(temp)
 
-    if upscale_factor == 4:
-        # no downscale
-        # so no filename changes,
-        # just add _AImodel_xfactor.png
-        for image in image_list:
-            temp = image.replace(".png","") + "_" + AI_model + "_x" + str(upscale_factor) + ".png"
-            image_list_temp.append(temp)
-
-        image_list_to_check = image_list_temp
-    else:
-        # downscale, so add
-        # add _resized_AImodel_xfactor.png
-        # to filename to check
-        for image in image_list:
-            temp = image.replace(".png","") + "_resized_" + AI_model + "_x" + str(upscale_factor) + ".png"
-            image_list_downscaled.append(temp)
-            
-            # add resize image 
-            # to list of image
-            # to delete
-            temp_images_to_delete.append(image.replace(".png","_resized.png"))
-
-        image_list_to_check = image_list_downscaled
+        temp_images_to_delete.append(image.replace(".png","_resized.png"))
 
     return image_list_to_check, temp_images_to_delete
 
@@ -889,7 +920,6 @@ def clear_drag_drop_background():
     drag_drop.place(x=left_bar_width, y=0, width = drag_drop_width, height = drag_drop_height)
 
 def show_video_info_with_drag_drop(video_path):
-
     clear_drag_drop_background()
 
     cap        = cv2.VideoCapture(video_path)
@@ -1016,7 +1046,6 @@ def show_image_in_GUI_with_drag_drop(image_to_show):
                             text    = "",
                             image   = image,
                             ondrop     = function_drop,
-                            font       = (default_font,round(10 * font_scale)),
                             anchor     = "center",
                             relief     = "flat",
                             justify    = "center",
@@ -1041,14 +1070,13 @@ def place_fileName_label(image_path):
                          + " | [" + str(width) + "x" + str(height) + "]" 
                          + " | "  + str(truncate(file_size / 1048576, 2)) + " MB")
     drag_drop = ttk.Label(root,
-                            font = (default_font, round(11 * font_scale), "bold"),
+                            font = (default_font, round(10 * font_scale), "bold"),
                             textvar    = file_name_string,
                             relief     = "flat",
                             justify    = "center",
                             background = "#181818",
                             foreground = "#D3D3D3",
                             anchor     = "center")
-
                             
     drag_drop.place(x = left_bar_width + drag_drop_width/2 - image_text_width/2,
                     y = drag_drop_height - image_text_height - 24,
@@ -1058,6 +1086,8 @@ def place_fileName_label(image_path):
 # ---------------------- Buttons ----------------------
 
 def place_upscale_button():
+    upscale_button_width = button_width + 50
+
     Upscale_button            = tk.Button(root)
     Upscale_button["bg"]      = "#01aaed"
     ft = tkFont.Font(family   = default_font, 
@@ -1068,28 +1098,30 @@ def place_upscale_button():
     Upscale_button["justify"] = "center"
     Upscale_button["text"]    = "Upscale"
     Upscale_button["relief"]  = "flat"
-    Upscale_button.place(x      = left_bar_width/2 - button_width/2,
-                         y      = left_bar_height - 50 - 25/2,
-                         width  = button_width,
-                         height = 42)
+    Upscale_button.place(x      = left_bar_width/2 - upscale_button_width/2,
+                         y      = left_bar_height - 60,
+                         width  = upscale_button_width,
+                         height = 40)
     Upscale_button["command"] = lambda : upscale_button_command()
 
 def place_stop_button():
-    Upscale_button            = tk.Button(root)
-    Upscale_button["bg"]      = "#FF4433"
+    stop_button_width = button_width + 50
+
+    Stop_button            = tk.Button(root)
+    Stop_button["bg"]      = "#FF4433"
     ft = tkFont.Font(family   = default_font, 
                      size     = round(12 * font_scale), 
                      weight   = 'bold')
-    Upscale_button["font"]    = ft
-    Upscale_button["fg"]      = "#202020"
-    Upscale_button["justify"] = "center"
-    Upscale_button["text"]    = "Stop upscaling"
-    Upscale_button["relief"]  = "flat"
-    Upscale_button.place(x      = left_bar_width/2 - button_width/2,
-                         y      = left_bar_height - 50 - 25/2,
-                         width  = button_width,
-                         height = 42)
-    Upscale_button["command"] = lambda : stop_button_command()
+    Stop_button["font"]    = ft
+    Stop_button["fg"]      = "#202020"
+    Stop_button["justify"] = "center"
+    Stop_button["text"]    = "Stop upscaling"
+    Stop_button["relief"]  = "flat"
+    Stop_button.place(x      = left_bar_width/2 - stop_button_width/2,
+                         y      = left_bar_height - 60,
+                         width  = stop_button_width,
+                         height = 40)
+    Stop_button["command"] = lambda : stop_button_command()
     
 def place_BSRGAN_button(root, background_color, text_color):
     ft = tkFont.Font(family  = default_font, 
@@ -1104,16 +1136,10 @@ def place_BSRGAN_button(root, background_color, text_color):
     BSRGAN_button["text"]    = "BSRGAN"
     BSRGAN_button["relief"]  = "flat"
     BSRGAN_button["activebackground"] = "#ffbf00"
-    if background_color == "#ffbf00":
-        BSRGAN_button.place(x = left_bar_width/2 - (button_width-1)/2, 
-                      y = button_2_y,
-                      width  = button_width-1,
-                      height = button_height-1)
-    else:
-        BSRGAN_button.place(x = left_bar_width/2 - button_width/2 ,
-                       y = button_2_y,
-                       width  = button_width,
-                       height = button_height)
+    BSRGAN_button.place(x = left_bar_width/2 - button_width/2 ,
+                    y = button_2_y,
+                    width  = button_width,
+                    height = button_height)
     BSRGAN_button["command"] = lambda input = "BSRGAN" : choose_model_BSRGAN(input)
     
 def place_RealSR_JPEG_button(root, background_color, text_color):
@@ -1129,18 +1155,32 @@ def place_RealSR_JPEG_button(root, background_color, text_color):
     RealSR_JPEG_button["text"]    = "RealSR_JPEG"
     RealSR_JPEG_button["relief"]  = "flat"
     RealSR_JPEG_button["activebackground"] = "#ffbf00"
-    if background_color == "#ffbf00":
-        RealSR_JPEG_button.place(x = left_bar_width/2 - (button_width-1)/2, 
-                      y = button_1_y,
-                      width  = button_width-1,
-                      height = button_height-1)
-    else:
-        RealSR_JPEG_button.place(x = left_bar_width/2 - button_width/2,
-                        y = button_1_y,
-                        width  = button_width,
-                        height = button_height)
+    RealSR_JPEG_button.place(x = left_bar_width/2 - button_width/2,
+                    y = button_1_y,
+                    width  = button_width,
+                    height = button_height)
     RealSR_JPEG_button["command"] = lambda input = "RealSR_JPEG" : choose_model_RealSR_JPEG(input)
 
+def place_BSRGAN_and_RealSR_JPEG_button(root, background_color, text_color):
+    ft = tkFont.Font(family  = default_font, 
+                     size    = round(11 * font_scale),
+                     weight  = "bold")
+    Both_AI_button            = tk.Button(root)
+    Both_AI_button["anchor"]  = "center"
+    Both_AI_button["bg"]      = background_color
+    Both_AI_button["font"]    = ft
+    Both_AI_button["fg"]      = text_color
+    Both_AI_button["justify"] = "center"
+    Both_AI_button["text"]    = "wip :)"
+    Both_AI_button["relief"]  = "flat"
+    Both_AI_button["activebackground"] = "#ffbf00"
+    Both_AI_button.place(x = left_bar_width/2 - button_width/2 ,
+                    y = button_3_y,
+                    width  = button_width,
+                    height = button_height)
+    # WIP
+    # Both_AI_button["command"] = lambda input = "BSRGAN" : choose_model_BSRGAN(input)
+ 
 def choose_model_BSRGAN(choosed_model):
     global AI_model
     AI_model = choosed_model
@@ -1165,44 +1205,6 @@ def choose_model_RealSR_JPEG(choosed_model):
     place_RealSR_JPEG_button(root, selected_button_color, selected_text_color) # changing
     place_BSRGAN_button(root, default_button_color, default_text_color)
 
-def place_upscale_factor_button_auto(background_color, text_color):
-    ft = tkFont.Font(family  = default_font, 
-                     size    = round(11 * font_scale),
-                     weight  = "bold")
-    Factor_x2_button            = tk.Button(root)
-    Factor_x2_button["anchor"]  = "center"
-    Factor_x2_button["bg"]      = background_color
-    Factor_x2_button["font"]    = ft
-    Factor_x2_button["fg"]      = text_color
-    Factor_x2_button["justify"] = "center"
-    Factor_x2_button["text"]    = "auto"
-    Factor_x2_button["relief"]  = "flat"
-    Factor_x2_button["activebackground"] = "#ffbf00"
-    Factor_x2_button.place(x = 70,
-                           y = 423,
-                           width  = 60,
-                           height = 34)
-    Factor_x2_button["command"] = lambda : choose_upscale_auto()
-
-def place_upscale_factor_button_x1(background_color, text_color):
-    ft = tkFont.Font(family  = default_font, 
-                     size    = round(11 * font_scale),
-                     weight  = "bold")
-    Factor_x2_button            = tk.Button(root)
-    Factor_x2_button["anchor"]  = "center"
-    Factor_x2_button["bg"]      = background_color
-    Factor_x2_button["font"]    = ft
-    Factor_x2_button["fg"]      = text_color
-    Factor_x2_button["justify"] = "center"
-    Factor_x2_button["text"]    = "x1"
-    Factor_x2_button["relief"]  = "flat"
-    Factor_x2_button["activebackground"] = "#ffbf00"
-    Factor_x2_button.place(x = 142,
-                           y = 423,
-                           width  = 60,
-                           height = 34)
-    Factor_x2_button["command"] = lambda : choose_upscale_x1()
-
 def place_upscale_factor_button_x2(background_color, text_color):
     ft = tkFont.Font(family  = default_font, 
                      size    = round(11 * font_scale),
@@ -1216,11 +1218,30 @@ def place_upscale_factor_button_x2(background_color, text_color):
     Factor_x2_button["text"]    = "x2"
     Factor_x2_button["relief"]  = "flat"
     Factor_x2_button["activebackground"] = "#ffbf00"
-    Factor_x2_button.place(x = 214,
-                           y = 423,
-                           width  = 60,
-                           height = 34)
+    Factor_x2_button.place(x = left_bar_width/2 - button_width/2,
+                           y = 320,
+                           width  = button_width,
+                           height = button_height)
     Factor_x2_button["command"] = lambda : choose_upscale_x2()
+
+def place_upscale_factor_button_x3(background_color, text_color):
+    ft = tkFont.Font(family  = default_font, 
+                     size    = round(11 * font_scale),
+                     weight  = "bold")
+    Factor_x2_button            = tk.Button(root)
+    Factor_x2_button["anchor"]  = "center"
+    Factor_x2_button["bg"]      = background_color
+    Factor_x2_button["font"]    = ft
+    Factor_x2_button["fg"]      = text_color
+    Factor_x2_button["justify"] = "center"
+    Factor_x2_button["text"]    = "x3"
+    Factor_x2_button["relief"]  = "flat"
+    Factor_x2_button["activebackground"] = "#ffbf00"
+    Factor_x2_button.place(x = left_bar_width/2 - button_width/2,
+                           y = 370,
+                           width  = button_width,
+                           height = button_height)
+    Factor_x2_button["command"] = lambda : choose_upscale_x3()
 
 def place_upscale_factor_button_x4(background_color, text_color):
     ft = tkFont.Font(family  = default_font, 
@@ -1235,39 +1256,11 @@ def place_upscale_factor_button_x4(background_color, text_color):
     Factor_x4_button["text"]    = "x4"
     Factor_x4_button["relief"]  = "flat"
     Factor_x4_button["activebackground"] = "#ffbf00"
-    Factor_x4_button.place(x = 286,
-                           y = 423,
-                           width  = 60,
-                           height = 34)
+    Factor_x4_button.place(x = left_bar_width/2 - button_width/2,
+                           y = 420,
+                           width  = button_width,
+                           height = button_height)
     Factor_x4_button["command"] = lambda : choose_upscale_x4()
-
-def choose_upscale_auto():
-    global upscale_factor
-    upscale_factor = 0
-
-    default_button_color  = "#484848"
-    default_text_color    = "#DCDCDC"
-    selected_button_color = "#ffbf00"
-    selected_text_color   = "#202020"
-
-    place_upscale_factor_button_auto(selected_button_color, selected_text_color) # selected
-    place_upscale_factor_button_x1(default_button_color, default_text_color)     # not selected
-    place_upscale_factor_button_x2(default_button_color, default_text_color)     # not selected
-    place_upscale_factor_button_x4(default_button_color, default_text_color)     # not selected
-
-def choose_upscale_x1():
-    global upscale_factor
-    upscale_factor = 1
-
-    default_button_color  = "#484848"
-    default_text_color    = "#DCDCDC"
-    selected_button_color = "#ffbf00"
-    selected_text_color   = "#202020"
-
-    place_upscale_factor_button_auto(default_button_color, default_text_color)   # not selected
-    place_upscale_factor_button_x1(selected_button_color, selected_text_color)   # selected
-    place_upscale_factor_button_x2(default_button_color, default_text_color)     # not selected
-    place_upscale_factor_button_x4(default_button_color, default_text_color)     # not selected
 
 def choose_upscale_x2():
     global upscale_factor
@@ -1278,9 +1271,21 @@ def choose_upscale_x2():
     selected_button_color = "#ffbf00"
     selected_text_color   = "#202020"
 
-    place_upscale_factor_button_auto(default_button_color, default_text_color)   # not selected
-    place_upscale_factor_button_x1(default_button_color, default_text_color)     # not selected
     place_upscale_factor_button_x2(selected_button_color, selected_text_color)   # selected
+    place_upscale_factor_button_x3(default_button_color, default_text_color)     # not selected
+    place_upscale_factor_button_x4(default_button_color, default_text_color)     # not selected
+
+def choose_upscale_x3():
+    global upscale_factor
+    upscale_factor = 3
+
+    default_button_color  = "#484848"
+    default_text_color    = "#DCDCDC"
+    selected_button_color = "#ffbf00"
+    selected_text_color   = "#202020"
+
+    place_upscale_factor_button_x2(default_button_color, default_text_color)     # not selected
+    place_upscale_factor_button_x3(selected_button_color, selected_text_color)   # selected
     place_upscale_factor_button_x4(default_button_color, default_text_color)     # not selected
 
 def choose_upscale_x4():
@@ -1292,29 +1297,9 @@ def choose_upscale_x4():
     selected_button_color = "#ffbf00"
     selected_text_color   = "#202020"
 
-    place_upscale_factor_button_auto(default_button_color, default_text_color)   # not selected
-    place_upscale_factor_button_x1(default_button_color, default_text_color)     # not selected
     place_upscale_factor_button_x2(default_button_color, default_text_color)     # not selected
+    place_upscale_factor_button_x3(default_button_color, default_text_color)     # not selected
     place_upscale_factor_button_x4(selected_button_color, selected_text_color)   # selected
-
-def place_upscale_backend_cpu(background_color, text_color):
-    ft = tkFont.Font(family  = default_font, 
-                     size    = round(11 * font_scale),
-                     weight  = "bold")
-    Backend_cpu_button            = tk.Button(root)
-    Backend_cpu_button["anchor"]  = "center"
-    Backend_cpu_button["justify"] = "center"
-    Backend_cpu_button["bg"]      = background_color
-    Backend_cpu_button["font"]    = ft
-    Backend_cpu_button["fg"]      = text_color
-    Backend_cpu_button["text"]    = "cpu"
-    Backend_cpu_button["relief"]  = "flat"
-    Backend_cpu_button["activebackground"] = "#ffbf00"
-    Backend_cpu_button.place(x = left_bar_width/2 + left_bar_width/4 - 22,
-                           y = 522,
-                           width  = 60,
-                           height = 34)
-    Backend_cpu_button["command"] = lambda : choose_backend_cpu()
 
 def place_upscale_backend_cuda(background_color, text_color):
     ft = tkFont.Font(family  = default_font, 
@@ -1329,11 +1314,30 @@ def place_upscale_backend_cuda(background_color, text_color):
     Backend_cpu_button["text"]    = "gpu"
     Backend_cpu_button["relief"]  = "flat"
     Backend_cpu_button["activebackground"] = "#ffbf00"
-    Backend_cpu_button.place(x = left_bar_width/2 + left_bar_width/4 - 93,
-                           y = 522,
-                           width  = 60,
-                           height = 34)
+    Backend_cpu_button.place(x = left_bar_width/2 - button_width/2,
+                           y = 520,
+                           width  = button_width,
+                           height = button_height)
     Backend_cpu_button["command"] = lambda : choose_backend_cuda()
+
+def place_upscale_backend_cpu(background_color, text_color):
+    ft = tkFont.Font(family  = default_font, 
+                     size    = round(11 * font_scale),
+                     weight  = "bold")
+    Backend_cpu_button            = tk.Button(root)
+    Backend_cpu_button["anchor"]  = "center"
+    Backend_cpu_button["justify"] = "center"
+    Backend_cpu_button["bg"]      = background_color
+    Backend_cpu_button["font"]    = ft
+    Backend_cpu_button["fg"]      = text_color
+    Backend_cpu_button["text"]    = "cpu"
+    Backend_cpu_button["relief"]  = "flat"
+    Backend_cpu_button["activebackground"] = "#ffbf00"
+    Backend_cpu_button.place(x = left_bar_width/2 - button_width/2,
+                           y = 570,
+                           width  = button_width,
+                           height = button_height)
+    Backend_cpu_button["command"] = lambda : choose_backend_cpu()
 
 def choose_backend_cpu():
     global device
@@ -1361,7 +1365,7 @@ def choose_backend_cuda():
         place_upscale_backend_cuda(selected_button_color, selected_text_color)
     else: 
         error_root    = tkinterDnD.Tk()
-        error_message = ErrorMessage(error_root, "no_cuda_found")
+        ErrorMessage(error_root, "no_cuda_found")
 
 # ---------------------- /Buttons ----------------------
 
@@ -1442,8 +1446,8 @@ class ErrorMessage():
                                 height = (window_height/3)*2)
 
         error_root.attributes('-topmost',True)
-
         apply_windows_dark_bar(error_root)
+        
         error_root.update()
         error_root.mainloop()
 
@@ -1458,61 +1462,47 @@ class App:
         root.geometry(alignstr)
         root.resizable(width=False, height=False)
 
-        logo = PhotoImage(file=find_file_production_and_dev("logo.png"))
+        logo = PhotoImage(file=find_file_by_relative_path("logo.png"))
         root.iconphoto(False, logo)
 
         # BIG BLACK BAR
         Left_container            = tk.Label(root)
         Left_container["anchor"]  = "e"
         Left_container["bg"]      = "#202020"
-        Left_container["cursor"]  = "arrow"
-        Left_container["fg"]      = "#333333"
-        Left_container["justify"] = "center"
-        Left_container["text"]    = ""
         Left_container["relief"]  = "flat"
         Left_container.place(x=0,y=0,width = left_bar_width, height = left_bar_height)
         
-        # TITLE BACKGROUND
-        Title_borders              = tk.Label(root)
-        Title_borders["bg"]        = "#7267CB"
-        Title_borders["justify"]   = "center"
-        Title_borders["relief"]    = "flat"
-        Title_borders.place(x      = 0,
-                            y      = 0,
-                            width  = left_bar_width,
-                            height = 60)
-
         # TITLE
         ft = tkFont.Font(family=default_font, 
                          size = round(16 * font_scale),
                          weight = "bold"),
         Title            = tk.Label(root)
-        Title["bg"]      = "#7267CB"
+        Title["bg"]      = "#202020"
         Title["font"]    = ft
-        Title["fg"]      = "#181818"
+        Title["fg"]      = "#DA70D6"
         Title["anchor"]  = "center" 
         Title["text"]    = "QualityScaler"
-        Title.place(x = 10,
+        Title.place(x = 15,
                     y = 3,
                     width  = left_bar_width/2,
                     height = 55)
         
         global logo_git
-        logo_git = PhotoImage(file=find_file_production_and_dev("github_logo_38.png"))
+        logo_git = PhotoImage(file=find_file_by_relative_path("github_logo_38.png"))
         logo_git_label            = tk.Button(root)
         logo_git_label['image']   = logo_git
         logo_git_label["justify"] = "center"
         logo_git_label["bg"]      = "#7267CB"
         logo_git_label["relief"]  = "flat"
         logo_git_label["activebackground"] = "#7267CB"
-        logo_git_label.place(x    = left_bar_width - 155,
+        logo_git_label.place(x    = left_bar_width - 165,
                              y      = 10,
                              width  = 40,
                              height = 40)
         logo_git_label["command"] = lambda : opengithub()
 
         global logo_paypal
-        logo_paypal = PhotoImage(file=find_file_production_and_dev("paypal_logo_38.png"))
+        logo_paypal = PhotoImage(file=find_file_by_relative_path("paypal_logo_38.png"))
         logo_paypal_label                     = tk.Button(root)
         logo_paypal_label['image']            = logo_paypal
         logo_paypal_label["justify"]          = "center"
@@ -1520,14 +1510,14 @@ class App:
         logo_paypal_label["relief"]           = "flat"
         logo_paypal_label["activebackground"] = "#7267CB"
         logo_paypal_label["borderwidth"]      = 1
-        logo_paypal_label.place(x      = left_bar_width - 105,
+        logo_paypal_label.place(x      = left_bar_width - 115,
                                 y      = 10,
                                 width  = 40,
                                 height = 40)
         logo_paypal_label["command"] = lambda : openpaypal()
 
         global logo_patreon
-        logo_patreon = PhotoImage(file=find_file_production_and_dev("patreon_logo_38.png"))
+        logo_patreon = PhotoImage(file=find_file_by_relative_path("patreon_logo_38.png"))
         logo_patreon_label                     = tk.Button(root)
         logo_patreon_label['image']            = logo_patreon
         logo_patreon_label["justify"]          = "center"
@@ -1535,35 +1525,25 @@ class App:
         logo_patreon_label["relief"]           = "flat"
         logo_patreon_label["activebackground"] = "#7267CB"
         logo_patreon_label["borderwidth"]      = 1
-        logo_patreon_label.place(x      = left_bar_width - 55,
+        logo_patreon_label.place(x      = left_bar_width - 65,
                                 y      = 10,
                                 width  = 40,
                                 height = 40)
         logo_patreon_label["command"] = lambda : openpatreon()
 
-        # SECTION TO CHOOSE MODEL
-        IA_selection_borders              = tk.Label(root)
-        IA_selection_borders["bg"]        = "#181818"
-        IA_selection_borders["justify"]   = "center"
-        IA_selection_borders["relief"]    = "flat"
-        IA_selection_borders.place(x      = left_bar_width/2 - 350/2,
-                                   y      = 132,
-                                   width  = 350,
-                                   height = 200)
-        
-        ft                            = tkFont.Font(family = default_font,
-                                                    size   = round(12 * font_scale), 
-                                                    weight = "bold")      
+        ft = tkFont.Font(family = default_font,
+                         size   = round(12 * font_scale), 
+                         weight = "bold")      
         IA_selection_title            = tk.Label(root)
-        IA_selection_title["bg"]      = "#181818"
+        IA_selection_title["bg"]      = "#202020"
         IA_selection_title["font"]    = ft
         IA_selection_title["fg"]      = "#DCDCDC" 	
         IA_selection_title["anchor"]  = "w" 
         IA_selection_title["justify"] = "center"
         IA_selection_title["relief"]  = "flat"
-        IA_selection_title["text"]    = "      AI models"
+        IA_selection_title["text"]    = " ◪  AI model "
         IA_selection_title.place(x      = left_bar_width/2 - 174,
-                                 y      = 150,
+                                 y      = 70,
                                  width  = 348,
                                  height = 40)
 
@@ -1573,49 +1553,41 @@ class App:
         selected_button_color = "#ffbf00"
         selected_text_color   = "#202020"
         
-        place_BSRGAN_button(root, default_button_color, default_text_color)
-        place_RealSR_JPEG_button(root, selected_button_color, selected_text_color) #default selected
+        place_RealSR_JPEG_button(root, selected_button_color, selected_text_color) #default selected                  
+        place_BSRGAN_button(root, default_button_color, default_text_color)        
+        place_BSRGAN_and_RealSR_JPEG_button(root, default_button_color, default_text_color) 
 
-        # SECTION TO CHOOSE UPSCALE FACTOR
-        Upscale_fact_selection_borders              = tk.Label(root)
-        Upscale_fact_selection_borders["bg"]        = "#181818"
-        Upscale_fact_selection_borders["justify"]   = "center"
-        Upscale_fact_selection_borders["relief"]    = "flat"
-        Upscale_fact_selection_borders.place(x      = left_bar_width/2 - 350/2,
-                                             y      = 355,
-                                             width  = 350,
-                                             height = 130)                   
-
-        place_upscale_factor_button_auto(selected_button_color, selected_text_color)
-        place_upscale_factor_button_x1(default_button_color, default_text_color)
-        place_upscale_factor_button_x2(default_button_color, default_text_color)
-        place_upscale_factor_button_x4(default_button_color, default_text_color)
-
-        ft                            = tkFont.Font(family = default_font,
-                                                    size   = round(12 * font_scale), 
-                                                    weight = "bold")        
         Upscale_fact_selection_title            = tk.Label(root)
-        Upscale_fact_selection_title["bg"]      = "#181818"
+        Upscale_fact_selection_title["bg"]      = "#202020"
         Upscale_fact_selection_title["font"]    = ft
         Upscale_fact_selection_title["fg"]      = "#DCDCDC" 	
         Upscale_fact_selection_title["anchor"]  = "w" 
         Upscale_fact_selection_title["justify"] = "center"
         Upscale_fact_selection_title["relief"]  = "flat"
-        Upscale_fact_selection_title["text"]    = "      Upscale factor"
+        Upscale_fact_selection_title["text"]    = " ⤮  Upscale factor "
         Upscale_fact_selection_title.place(x      = left_bar_width/2 - 175,
-                                           y      = 372,
+                                           y      = 270,
                                            width  = 155,
                                            height = 40)
 
-        # AI BACKEND
-        Upscale_backend_selection_borders              = tk.Label(root)
-        Upscale_backend_selection_borders["bg"]        = "#181818"
-        Upscale_backend_selection_borders["justify"]   = "center"
-        Upscale_backend_selection_borders["relief"]    = "flat"
-        Upscale_backend_selection_borders.place(x      = left_bar_width/2 - 350/2,
-                                             y      = 505,
-                                             width  = 350,
-                                             height = 70)                   
+        place_upscale_factor_button_x2(selected_button_color, selected_text_color)
+        place_upscale_factor_button_x3(default_button_color, default_text_color)
+        place_upscale_factor_button_x4(default_button_color, default_text_color)
+      
+
+        Upscale_backend_selection_title            = tk.Label(root)
+        Upscale_backend_selection_title["bg"]      = "#202020"
+        Upscale_backend_selection_title["font"]    = ft
+        Upscale_backend_selection_title["fg"]      = "#DCDCDC" 	
+        Upscale_backend_selection_title["anchor"]  = "w" 
+        Upscale_backend_selection_title["justify"] = "center"
+        Upscale_backend_selection_title["relief"]  = "flat"
+        Upscale_backend_selection_title["text"]    = " ⍚  AI backend "
+        Upscale_backend_selection_title.place(x      = left_bar_width/2 - 175,
+                                           y      = 470,
+                                           width  = 145,
+                                           height = 40)
+
         global device
         if torch.cuda.is_available():
             place_upscale_backend_cpu(default_button_color, default_text_color)
@@ -1625,25 +1597,9 @@ class App:
             device = "cpu"
             place_upscale_backend_cpu(selected_button_color, selected_text_color)
             place_upscale_backend_cuda(default_button_color, default_text_color)
-
-        ft                            = tkFont.Font(family = default_font,
-                                                    size   = round(12 * font_scale), 
-                                                    weight = "bold")        
-        Upscale_backend_selection_title            = tk.Label(root)
-        Upscale_backend_selection_title["bg"]      = "#181818"
-        Upscale_backend_selection_title["font"]    = ft
-        Upscale_backend_selection_title["fg"]      = "#DCDCDC" 	
-        Upscale_backend_selection_title["anchor"]  = "w" 
-        Upscale_backend_selection_title["justify"] = "center"
-        Upscale_backend_selection_title["relief"]  = "flat"
-        Upscale_backend_selection_title["text"]    = "      AI backend"
-        Upscale_backend_selection_title.place(x      = left_bar_width/2 - 175,
-                                           y      = 520,
-                                           width  = 145,
-                                           height = 40)
+     
         
         # MESSAGE
-        info_string.set("")
         error_message_label = ttk.Label(root,
                               font       = (default_font, round(11 * font_scale), "bold"),
                               textvar    = info_string,
@@ -1653,7 +1609,7 @@ class App:
                               foreground = "#ffbf00",
                               anchor     = "center")
         error_message_label.place(x      = 0,
-                                  y      = 618,
+                                  y      = 625,
                                   width  = left_bar_width,
                                   height = 30)
         
@@ -1666,8 +1622,8 @@ class App:
                      weight = "bold")
 
         drag_drop = ttk.Label(root,
-                              text    = " DROP FILE HERE \n" 
-                                      + " ____________________________________________ \n\n"
+                              text    = " DROP FILE HERE \n\n" 
+                                      + " ⥥ \n\n"
                                       + " >  IMAGES  - jpg png tif bmp webp -                  \n\n" 
                                       + " >  VIDEOS  - mp4 webm mkv flv gif avi mov -  \n\n",
                               ondrop     = function_drop,
