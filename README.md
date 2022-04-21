@@ -15,6 +15,10 @@ QualityScaler is completely portable; just download, unzip and execute the file 
 
 ## Supported AI Backend.
 * Nvidia cuda 10.2
+   * compatible GPUs (including mobile version)
+     * GTX 700/800/900/1000/1600/2000 
+     * Tesla (up to T4)
+     * Quadro (up to RTX T1000)
 * CPU [works without GPU, but is very slow]
 
 ## Features.
@@ -32,6 +36,7 @@ QualityScaler is completely portable; just download, unzip and execute the file 
 * Compatible video  - MP4, WEBM, GIF, MKV, FLV, AVI, MOV 
 
 ## Next steps.
+* Support for Nvidia RTX 3k
 * Use both model for the upscale
 * Include audio for upscaled video
 * Support for other GPUs (AMD, Intel) with new backend
