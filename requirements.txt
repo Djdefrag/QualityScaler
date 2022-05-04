@@ -9,6 +9,8 @@ pyinstaller
 image_slicer
 matplotlib
 pywin32
+moviepy
 
 #pip install pytorch-directml
-#pip install torch==1.8.2+cu102 -f https://download.pytorch.org/whl/lts/1.8/torch_lts.html
+
+#pip install torch==1.8.2+cu111 -f https://download.pytorch.org/whl/lts/1.8/torch_lts.html

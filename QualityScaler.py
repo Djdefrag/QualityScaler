@@ -16,17 +16,18 @@ import webbrowser
 import zlib
 from pathlib import Path
 from timeit import default_timer as timer
-from tkinter import *
-from tkinter import ttk
+from tkinter import PhotoImage, ttk
 
 import cv2
+import moviepy.video.io.ImageSequenceClip
 import numpy as np
 import tkinterDnD
 import torch.cuda
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-from image_slicer import join, slice
+from image_slicer import join
+from image_slicer import slice as img_cutter
 from PIL import Image
 
 ctypes.windll.shcore.SetProcessDpiAwareness(True)
@@ -39,7 +40,7 @@ elif scaleFactor == 1.25:
 else:
     font_scale = 0.85
 
-version    = "1.3.0 - stable"
+version    = "1.4.0 - stable"
 
 author     = "Annunziata Gianluca"
 paypalme   = "https://www.paypal.com/paypalme/jjstd/5"
@@ -47,9 +48,10 @@ githubme   = "https://github.com/Djdefrag"
 patreonme  = "https://www.patreon.com/Djdefrag"
 
 image_path          = "no file"
-AI_model            = "RealSR_JPEG" 
+AI_model            = "BSRGAN" 
 device              = "cuda"
 upscale_factor      = 2
+cut_image_factor    = 170
 actual_step         = ""
 single_file         = False
 multiple_files      = False
@@ -123,695 +125,6 @@ default_font         = 'Calibri'
 # ---------------------- /Dimensions ----------------------
 
 # ---------------------- Functions ----------------------
-
-# ------------------------ Utils ------------------------
-
-def openpaypal():
-    webbrowser.open(paypalme, new=1)
-
-def opengithub():
-    webbrowser.open(githubme, new=1)
-
-def openpatreon():
-    webbrowser.open(patreonme, new=1)
-
-def truncate(n, decimals=0):
-    multiplier = 10 ** decimals
-    return int(n * multiplier) / multiplier
-
-def create_temp_dir(name_dir):
-    # first delete the folder if exists
-    if os.path.exists(name_dir):
-        shutil.rmtree(name_dir)
-
-    # then create a new folder
-    if not os.path.exists(name_dir):
-        os.makedirs(name_dir)
-
-def find_file_by_relative_path(relative_path):
-    base_path = getattr(sys, '_MEIPASS', os.path.dirname(
-        os.path.abspath(__file__)))
-    return os.path.join(base_path, relative_path)
-
-def imread_uint(path, n_channels=3):
-    if n_channels == 1:
-        img = cv2.imread(path, 0)  # cv2.IMREAD_GRAYSCALE
-        img = np.expand_dims(img, axis=2)  # HxWx1
-    elif n_channels == 3:
-        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)  # BGR or G
-        if img.ndim == 2:
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)  # GGG
-        else:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # RGB
-    return img
-
-def imsave(img, img_path):
-    img = np.squeeze(img)
-    if img.ndim == 3:
-        img = img[:, :, [2, 1, 0]]
-    cv2.imwrite(img_path, img)
-
-def imwrite(img, img_path):
-    img = np.squeeze(img)
-    if img.ndim == 3:
-        img = img[:, :, [2, 1, 0]]
-    cv2.imwrite(img_path, img)
-
-def uint2tensor4(img):
-    if img.ndim == 2:
-        img = np.expand_dims(img, axis=2)
-    return torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1).float().div(255.).unsqueeze(0)
-
-def tensor2uint(img):
-    img = img.data.squeeze().float().clamp_(0, 1).cpu().numpy()
-    if img.ndim == 3:
-        img = np.transpose(img, (1, 2, 0))
-    return np.uint8((img*255.0).round())
-
-def create_void_logo():
-    ICON = zlib.decompress(base64.b64decode('eJxjYGAEQgEBBiDJwZDBy'
-        'sAgxsDAoAHEQCEGBQaIOAg4sDIgACMUj4JRMApGwQgF/ykEAFXxQRc='))
-    _ , ICON_PATH = tempfile.mkstemp()
-    with open(ICON_PATH, 'wb') as icon_file:
-        icon_file.write(ICON)
-    return ICON_PATH
-
-def slice_image(img_file, num_tiles):
-    tiles = slice(img_file, num_tiles)
-    return tiles
-
-def reunion_image(tiles):
-    image = join(tiles)
-    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    return image
-
-def delete_tiles_from_disk(tiles):
-    #remove tiles file
-    for tile in tiles:
-        os.remove(tile.filename)
-
-# ----------------------- /Utils ------------------------
-
-def function_drop(event):
-    global image_path
-    global multiple_files
-    global multi_img_list
-    global video_files
-    global single_file
-    
-    info_string.set("")
-
-    supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number = count_files_dropped(event)
-    all_supported, single_file, multiple_files, video_files, more_than_one_video = check_compatibility(supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number)
-
-    if video_files:
-        # video section
-        if not all_supported:
-            info_string.set("Some files are not supported")
-            return
-        elif all_supported:
-            if multiple_files:
-                info_string.set("Only one video supported")
-                return
-            elif not multiple_files:
-                if not more_than_one_video:
-                    file_vid = str(event.data).replace("{", "").replace("}", "")
-                    show_video_info_with_drag_drop(file_vid)
-                    thread_extract_frames = threading.Thread(target = extract_frames_from_video, 
-                                                            args    = (file_vid, 1), 
-                                                            daemon  = True)
-                    thread_extract_frames.start()
-
-                    # reset variable
-                    image_path     = "no file"
-                    multi_img_list = []
-
-                elif more_than_one_video:
-                    info_string.set("Only one video supported")
-                    return
-    else:
-        # image section
-        if not all_supported:
-            if multiple_files:
-                info_string.set("Some files are not supported")
-                return
-            elif single_file:
-                info_string.set("This file is not supported")
-                return
-        elif all_supported:
-            if multiple_files:
-                image_list_dropped             = from_string_to_image_list(event)
-
-                #convert images to png
-                thread_convert_images          = threading.Thread(target = convert_multi_images_to_png, 
-                                                                args   = (image_list_dropped, 1), 
-                                                                daemon  = True)
-                thread_convert_images.start()
-
-                # convert only strings to .png 
-                # of dropped files
-                #image_list_filenames_converted = convert_only_image_filenames(image_list_dropped)
-
-                show_list_images_in_GUI_with_drag_drop(image_list_dropped)
-                multi_img_list = convert_only_image_filenames(image_list_dropped)
-
-                # reset variable
-                image_path        = "no file"
-                video_frames_list = []
-            
-            elif single_file:
-                image_list_dropped             = from_string_to_image_list(event)
-
-                #convert images to png
-                thread_convert_images          = threading.Thread(target = convert_single_image_to_png_and_show_in_GUI, 
-                                                                args   = (str(image_list_dropped[0]), 1), 
-                                                                daemon  = True)
-                thread_convert_images.start()
-
-                multi_img_list = convert_only_image_filenames(image_list_dropped)
-
-                # reset variable
-                image_path        = "no file"
-                video_frames_list = []
-
-def upscale_button_command():
-    global image_path
-    global multiple_files
-    global actual_step
-    global process_upscale
-    global upscale_factor
-    global video_frames_list
-    global video_files
-    global video_frames_upscaled_list
-    global original_video_path
-    global device
-
-    if "no model" in AI_model:
-        info_string.set("No AI model selected!")
-        return
-    
-    if video_files:
-        if "extracting" in actual_step:
-            info_string.set("Waiting for frames extraction...")
-            return
-        elif "ready" in actual_step:
-            info_string.set("Upscaling video")
-            place_stop_button()
-            
-            process_upscale = multiprocessing.Process(target = torch_AI_upscale_video_frames, 
-                                                      args   = (video_frames_list, AI_model, upscale_factor, device))
-            process_upscale.start()
-
-            thread_wait = threading.Thread(target  = thread_wait_for_videoframes_and_video_reconstruct, 
-                                            args   = (video_frames_list, AI_model, upscale_factor, original_video_path),
-                                            daemon = True)
-            thread_wait.start()
-
-    elif multiple_files:
-        if "converting" in actual_step:
-            info_string.set("Waiting for images conversion!")
-            return
-        elif "ready"    in actual_step:
-            place_stop_button()
-            info_string.set("Upscaling multiple images")
-            
-            process_upscale = multiprocessing.Process(target = torch_AI_upscale_multiple_images, 
-                                                      args   = (multi_img_list, AI_model, upscale_factor, device))
-            process_upscale.start()
-
-            thread_wait = threading.Thread(target = thread_wait_for_multiple_file, 
-                                           args   = (multi_img_list, AI_model, upscale_factor),
-                                           daemon = True)
-            thread_wait.start()
-    
-    elif single_file:
-        place_stop_button()
-        info_string.set("Upscaling single image")
-
-        process_upscale = multiprocessing.Process(target = torch_AI_upscale_multiple_images, 
-                                                    args   = (multi_img_list, AI_model, upscale_factor, device))
-        process_upscale.start()
-
-        thread_wait = threading.Thread(target = thread_wait_for_multiple_file, 
-                                           args   = (multi_img_list, AI_model, upscale_factor),
-                                           daemon = True)
-        thread_wait.start()
-    
-    elif "no file" in image_path:
-        info_string.set("No file selected!")
-
-def stop_button_command():
-    global process_upscale
-    process_upscale.terminate()
-    info_string.set("Stopped")
-    place_upscale_button()
-
-def resize_image(image_to_prepare, upscale_factor):
-    image_to_prepare = image_to_prepare.replace("{", "").replace("}", "")
-    new_image_path = image_to_prepare
-    
-    resize_algorithm = cv2.INTER_LINEAR
-
-    if upscale_factor == 2:
-        # upscale x2
-        # resize image dividing by 2
-
-        old_image      = cv2.imread(image_to_prepare)
-        new_width      = round(old_image.shape[1]/2)
-        new_height     = round(old_image.shape[0]/2)
-        resized_image  = cv2.resize(old_image,
-                                    (new_width, new_height),
-                                    interpolation = resize_algorithm)
-        new_image_path = new_image_path.replace(".png", "_resized.png")
-        cv2.imwrite(new_image_path, resized_image)
-        return new_image_path
-    
-    elif upscale_factor == 3:
-        # upscale x3
-        # resize image subtracting 1/4 in resolution
-        # ex. 1000 --> 750 --> 3000
-        
-        old_image      = cv2.imread(image_to_prepare)
-        
-        width_to_remove = round(old_image.shape[1]/4)
-        height_to_remove = round(old_image.shape[0]/4)
-
-        new_width      = round(old_image.shape[1] - width_to_remove )
-        new_height     = round(old_image.shape[0] - height_to_remove)
-        resized_image  = cv2.resize(old_image,
-                                    (new_width, new_height),
-                                    interpolation = resize_algorithm)
-        new_image_path = new_image_path.replace(".png", "_resized.png")
-        cv2.imwrite(new_image_path, resized_image)
-        return new_image_path
-    
-    elif upscale_factor == 4:
-        # upscale by 4
-        # so simply return the image as it is
-
-        return new_image_path
-
-def remove_image_patches_imperfection(image, upscale_factor):
-    # apply little gaussian blur
-    if upscale_factor == 2:
-        kernel = (5,5)
-    elif upscale_factor == 3:
-        kernel = (7,7)
-    elif upscale_factor == 4:
-        kernel = (9,9)
-
-    blurred_image = cv2.GaussianBlur(image, kernel, 0)
-    return blurred_image
-
-def extract_frames_from_video(video_path, _ ):
-    global actual_step
-    global video_frames_list
-    global original_video_path
-
-    original_video_path = video_path
-
-    actual_step = "extracting" 
-    info_string.set("Extracting frames from video...")
-
-    # create a temp directory for frames
-    temp_dir = "QualityScaler_temp"
-    create_temp_dir(temp_dir)
-
-    cap               = cv2.VideoCapture(video_path)
-    num_frame         = 0
-    video_frames_list = []
-    while(cap.isOpened()):
-        ret, frame = cap.read()
-        if ret == False:
-            break
-        num_frame += 1
-        result_path = temp_dir + os.sep + "frame_" + str(num_frame) + ".png"
-        cv2.imwrite(result_path, frame)
-        video_frames_list.append(result_path)
-        info_string.set("Extracting frames n. " + str(num_frame))
-    
-    cap.release()
-    actual_step = "ready"
-    info_string.set("")
-
-def video_reconstruction_by_frames(original_video_path, video_frames_upscaled_list, AI_model, upscale_factor):
-
-    info_string.set("Reconstructing video...")
-    cap          = cv2.VideoCapture(original_video_path)
-    frame_rate   = cap.get(cv2.CAP_PROP_FPS)
-    path_as_list = original_video_path.split("/")
-    video_name   = str(path_as_list[-1])
-    only_path    = original_video_path.replace(video_name, "")
-    cap.release()
-
-    for video_type in supported_video_list:
-        video_name = video_name.replace(video_type, "")
-
-    upscaled_video_name = only_path + video_name + "_" + AI_model + "_x" + str(upscale_factor) + ".mp4"
-
-    first_image = video_frames_upscaled_list[0]
-    img         = cv2.imread(first_image)
-    height, width, layers = img.shape
-    size        = (width,height)
-
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
-    video  = cv2.VideoWriter(upscaled_video_name, fourcc, frame_rate, size)
-    
-    for upscaled_frame in video_frames_upscaled_list:
-        frame = cv2.imread(upscaled_frame)
-        video.write(frame) 
-
-    video.release()
-
-def prepare_torch_model(AI_model, device):
-    if 'cpu' in device:
-        backend = torch.device('cpu')
-        torch.set_num_threads(4)
-    elif 'cuda' in device:
-        if torch.cuda.is_available():
-            backend = torch.device('cuda')
-            torch.cuda.empty_cache()
-    
-    model_path = find_file_by_relative_path(AI_model + ".pth")
-    
-    model = RRDBNet(in_nc=3, out_nc=3, nf=64, nb=23, gc=32, sf=4)
-    model.load_state_dict(torch.load(model_path), strict=True)
-    model.eval()
-
-    for k, v in model.named_parameters():
-        v.requires_grad = False
-    
-    model = model.to(backend, non_blocking=True)
-
-    torch.autograd.set_detect_anomaly(False)
-    torch.autograd.profiler.profile(False)
-    torch.autograd.profiler.emit_nvtx(False)
-    
-    return model
-
-def check_compatibility(supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number):
-    all_supported                     = True
-    single_file                       = False
-    multiple_files                    = False
-    video_files                       = False
-    more_than_one_video               = False
-    
-    if not_supported_file_dropped_number > 0:
-        all_supported = False
-        
-    if supported_file_dropped_number + not_supported_file_dropped_number == 1:
-        single_file = True
-    elif supported_file_dropped_number + not_supported_file_dropped_number > 1:
-        multiple_files = True
-
-    if supported_video_dropped_number == 1:
-        video_files         = True     
-        more_than_one_video = False
-    elif supported_video_dropped_number > 1:
-        video_files         = True
-        more_than_one_video = True
-
-    return all_supported, single_file, multiple_files, video_files, more_than_one_video
-
-def count_files_dropped(event):
-    supported_file_dropped_number     = 0
-    not_supported_file_dropped_number = 0
-    supported_video_dropped_number    = 0
-
-    # count compatible images files
-    for file_type in supported_file_list:
-        supported_file_dropped_number = supported_file_dropped_number + str(event.data).count(file_type)
-    
-    # count compatible video files
-    for file_type in supported_video_list:
-        supported_video_dropped_number = supported_video_dropped_number + str(event.data).count(file_type)
-    
-    # count not supported files
-    for file_type in not_supported_file_list:
-        not_supported_file_dropped_number = not_supported_file_dropped_number + str(event.data).count(file_type)
-
-    return supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number
-
-def adapt_image_for_deeplearning(img):
-    img = imread_uint(img, n_channels=3)
-    img = uint2tensor4(img)
-    return img
-
-def torch_AI_upscale_multiple_images(image_list, AI_model, upscale_factor, device):
-    
-    # 0) define the model
-    model = prepare_torch_model(AI_model, device)
-
-    # 1) resize all images
-    downscaled_images = []
-    for image in image_list:
-        img_downscaled = resize_image(image, upscale_factor)
-        downscaled_images.append(img_downscaled)
-
-    try:
-        for img in downscaled_images:
-            if "_resized" in img:
-                result_path = (img.replace("_resized.png","") + 
-                                "_"  + AI_model +
-                                "_x" + str(upscale_factor) + 
-                                ".png")
-            else:
-                result_path = (img.replace(".png","") + 
-                            "_"  + AI_model +
-                            "_x" + str(upscale_factor) + 
-                            ".png")
-
-            # 1.5) calculating best slice number
-            img_tmp = cv2.imread(img)
-            max_val = max(img_tmp.shape[1], img_tmp.shape[0])
-
-            # 2) divide the image in tiles
-            tiles = slice_image(img, round(max_val/45))
-
-            # 3) upscale each tiles
-            for tile in tiles:
-                tile_adapted  = adapt_image_for_deeplearning(tile.filename)
-                tile_adapted  = tile_adapted.to(device, non_blocking = True)
-                tile_upscaled = model(tile_adapted)
-                tile_upscaled = tensor2uint(tile_upscaled)
-                imsave(tile_upscaled, tile.filename)
-                tile.image  = Image.open(tile.filename)
-                tile.coords = (tile.coords[0]*4, tile.coords[1]*4)
-
-            # 6) then reconstruct the image by tiles upscaled
-            image_upscaled = reunion_image(tiles)
-            
-            # 7) remove tiles file
-            delete_tiles_from_disk(tiles)
-
-            # 8) try to remove tiles segmentation
-            if "BSRGAN" in AI_model:
-                image_upscaled = remove_image_patches_imperfection(image_upscaled, upscale_factor)
-
-            # 9) save reconstructed image
-            cv2.imwrite(result_path, image_upscaled)
-    except:
-        error_root = tkinterDnD.Tk()
-        ErrorMessage(error_root,  "no_memory")
-
-def torch_AI_upscale_video_frames(video_frames_list, AI_model, upscale_factor, device):
-    
-    # 0) define the model
-    model = prepare_torch_model(AI_model, device)
-
-    # 1) resize all images
-    downscaled_images = []
-    for image in video_frames_list:
-        img_downscaled = resize_image(image, upscale_factor)
-        downscaled_images.append(img_downscaled)
-
-    try:
-        for img in downscaled_images:
-            if "_resized" in img:
-                result_path = (img.replace("_resized.png","") + 
-                                "_"  + AI_model +
-                                "_x" + str(upscale_factor) + 
-                                ".png")
-            else:
-                result_path = (img.replace(".png","") + 
-                            "_"  + AI_model +
-                            "_x" + str(upscale_factor) + 
-                            ".png")
-            
-            # 1.5) calculating best slice number
-            img_tmp = cv2.imread(img)
-            max_val = max(img_tmp.shape[1], img_tmp.shape[0])
-
-            # 2) divide the image in tiles
-            tiles = slice_image(img, round(max_val/45))
-
-            # 3) upscale each tiles
-            for tile in tiles:
-                tile_adapted  = adapt_image_for_deeplearning(tile.filename)
-                tile_adapted  = tile_adapted.to(device, non_blocking = True)
-                tile_upscaled = model(tile_adapted)
-                tile_upscaled = tensor2uint(tile_upscaled)
-                imsave(tile_upscaled, tile.filename)
-                tile.image  = Image.open(tile.filename)
-                tile.coords = (tile.coords[0]*4, tile.coords[1]*4)
-
-            # 6) then reconstruct the image by tiles upscaled
-            image_upscaled = reunion_image(tiles)
-            
-            # 7) remove tiles file
-            delete_tiles_from_disk(tiles)
-
-            # 8) try to remove tiles segmentation
-            if "BSRGAN" in AI_model:
-                image_upscaled = remove_image_patches_imperfection(image_upscaled, upscale_factor)
-
-            # 9) save reconstructed image
-            cv2.imwrite(result_path, image_upscaled)
-    except:
-        error_root = tkinterDnD.Tk()
-        ErrorMessage(error_root, "no_memory")
-        
-def convert_frames_list_uspcaled(video_frames_list, AI_model, upscale_factor):
-    video_frames_upscaled_list = []
-    for image in video_frames_list:
-        result_path = image.replace(".png","") + "_" + AI_model + "_x" + str(upscale_factor) + ".png"
-        video_frames_upscaled_list.append(result_path)
-
-    return video_frames_upscaled_list   
-
-def images_to_check_convert_filenames(image_list, AI_model, upscale_factor):
-    temp_images_to_delete = []
-    image_list_to_check = []
-    
-    for image in image_list:
-        temp = image.replace(".png","") + "_" + AI_model + "_x" + str(upscale_factor) + ".png"
-        image_list_to_check.append(temp)
-
-        temp_images_to_delete.append(image.replace(".png","_resized.png"))
-
-    return image_list_to_check, temp_images_to_delete
-
-def thread_wait_for_multiple_file(image_list, AI_model, upscale_factor):
-    start     = timer()
-    image_list_to_check, temp_images_to_delete = images_to_check_convert_filenames(image_list,
-                                                                                     AI_model, 
-                                                                                     upscale_factor)
-    
-    # check if files exist
-    how_many_images = len(image_list_to_check)
-    counter_done    = 0
-    for image in image_list_to_check:
-        while not os.path.exists(image):
-            time.sleep(1)
-
-        if os.path.isfile(image):
-            counter_done += 1
-            info_string.set("Upscaled " + str(counter_done) + "/" + str(how_many_images))
-
-        if counter_done == how_many_images:  
-            # delete temp files
-            if len(temp_images_to_delete) > 0:
-                for to_delete in temp_images_to_delete:
-                    if os.path.exists(to_delete):
-                        os.remove(to_delete)  
-
-            end       = timer()
-            info_string.set("Upscale completed [" + str(round(end - start)) + " sec.]")
-            place_upscale_button()
-
-def thread_wait_for_videoframes_and_video_reconstruct(video_frames_list, AI_model, upscale_factor, original_video_path):
-    start     = timer()
-
-    image_list_to_check, temp_images_to_delete = images_to_check_convert_filenames(video_frames_list,
-                                                                                     AI_model, 
-                                                                                     upscale_factor)
-
-    how_many_images = len(image_list_to_check)
-    counter_done    = 0
-    for image in image_list_to_check:
-        while not os.path.exists(image):
-            time.sleep(1)
-
-        if os.path.isfile(image):
-            counter_done += 1
-            info_string.set("Upscaled " + str(counter_done) + "/" + str(how_many_images))
-
-        if counter_done == how_many_images:  
-            # delete temp files
-            if len(temp_images_to_delete) > 0:
-                for to_delete in temp_images_to_delete:
-                    if os.path.exists(to_delete):
-                        os.remove(to_delete) 
-
-            video_reconstruction_by_frames(original_video_path, 
-                                           image_list_to_check,
-                                           AI_model, 
-                                           upscale_factor)
-            end       = timer()
-            info_string.set("Video upscale completed [" + str(round(end - start)) + " sec.]")
-            place_upscale_button()
-            return
-
-def from_string_to_image_list(event):
-    image_list = str(event.data).replace("{", "").replace("}", "")
-    
-    for file_type in supported_file_list:
-        image_list = image_list.replace(file_type, file_type+"\n")
-
-    image_list = image_list.split("\n")
-    image_list.pop() # to remove last void element
-
-    return image_list
-
-def convert_only_image_filenames(image_list):
-    list_converted = []
-    for image in image_list:
-        image = image.strip().replace("{", "").replace("}", "")
-        for file_type in supported_file_list:
-            image = image.replace(file_type,".png")
-        
-        list_converted.append(image)
-
-    return list(dict.fromkeys(list_converted))
-
-def convert_multi_images_to_png(image_list, _ ):
-    global actual_step
-
-    actual_step    = "converting"
-    info_string.set("Converting images...")
-    
-    for image in image_list:
-        image = image.strip()
-        image_prepared = convert_single_image_to_png(image)
-    
-    actual_step    = "ready"
-    info_string.set("")
-
-def convert_single_image_to_png(image_to_prepare):
-    image_to_prepare = image_to_prepare.replace("{", "").replace("}", "")
-    if ".png" in image_to_prepare:
-        return image_to_prepare
-    else:
-        new_image_path = image_to_prepare
-        for file_type in supported_file_list:
-            new_image_path = new_image_path.replace(file_type,".png")
-        
-        image_to_convert      = cv2.imread(image_to_prepare)
-        cv2.imwrite(new_image_path, image_to_convert)
-        return new_image_path
-
-def convert_single_image_to_png_and_show_in_GUI(image_to_prepare, _ ):
-    image_to_prepare = image_to_prepare.replace("{", "").replace("}", "")
-    if ".png" in image_to_prepare:
-        show_image_in_GUI_with_drag_drop(image_to_prepare)
-    else:
-        new_image_path = image_to_prepare
-        for file_type in supported_file_list:
-            new_image_path = new_image_path.replace(file_type,".png")
-        
-        image_to_convert      = cv2.imread(image_to_prepare)
-        cv2.imwrite(new_image_path, image_to_convert)
-        show_image_in_GUI_with_drag_drop(new_image_path)
 
 # ------------------ Neural Net related ------------------
 
@@ -909,6 +222,682 @@ class RRDBNet(nn.Module):
 
 # ------------------ /Neural Net related ------------------
 
+# ------------------------ Utils ------------------------
+
+def openpaypal():
+    webbrowser.open(paypalme, new=1)
+
+def opengithub():
+    webbrowser.open(githubme, new=1)
+
+def openpatreon():
+    webbrowser.open(patreonme, new=1)
+
+def truncate(n, decimals=0):
+    multiplier = 10 ** decimals
+    return int(n * multiplier) / multiplier
+
+def create_temp_dir(name_dir):
+    # first delete the folder if exists
+    if os.path.exists(name_dir):
+        shutil.rmtree(name_dir)
+
+    # then create a new folder
+    if not os.path.exists(name_dir):
+        os.makedirs(name_dir)
+
+def find_file_by_relative_path(relative_path):
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(
+        os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
+
+def imread_uint(path, n_channels=3):
+    if n_channels == 1:
+        img = cv2.imread(path, 0)  # cv2.IMREAD_GRAYSCALE
+        img = np.expand_dims(img, axis=2)  # HxWx1
+    elif n_channels == 3:
+        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)  # BGR or G
+        if img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)  # GGG
+        else:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # RGB
+    return img
+
+def imsave(img, img_path):
+    img = np.squeeze(img)
+    if img.ndim == 3:
+        img = img[:, :, [2, 1, 0]]
+    cv2.imwrite(img_path, img)
+
+def imwrite(img, img_path):
+    img = np.squeeze(img)
+    if img.ndim == 3:
+        img = img[:, :, [2, 1, 0]]
+    cv2.imwrite(img_path, img)
+
+def uint2tensor4(img):
+    if img.ndim == 2:
+        img = np.expand_dims(img, axis=2)
+    return torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1).float().div(255.).unsqueeze(0)
+
+def tensor2uint(img):
+    img = img.data.squeeze().float().clamp_(0, 1).cpu().numpy()
+    if img.ndim == 3:
+        img = np.transpose(img, (1, 2, 0))
+    return np.uint8((img*255.0).round())
+
+def create_void_logo():
+    ICON = zlib.decompress(base64.b64decode('eJxjYGAEQgEBBiDJwZDBy'
+        'sAgxsDAoAHEQCEGBQaIOAg4sDIgACMUj4JRMApGwQgF/ykEAFXxQRc='))
+    _ , ICON_PATH = tempfile.mkstemp()
+    with open(ICON_PATH, 'wb') as icon_file:
+        icon_file.write(ICON)
+    return ICON_PATH
+
+def slice_image(img_file, num_tiles):
+    tiles = img_cutter(img_file, num_tiles)
+    return tiles
+
+def reunion_image(tiles):
+    image = join(tiles)
+    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    return image
+
+def delete_tiles_from_disk(tiles):
+    #remove tiles file
+    for tile in tiles:
+        os.remove(tile.filename)
+
+def resize_image_to_show(image_to_prepare):
+    max_photo_resolution_value = show_image_height
+    
+    old_image     = cv2.imread(image_to_prepare)
+    actual_width  = old_image.shape[1]
+    actual_height = old_image.shape[0]
+
+    max_val = max(actual_width, actual_height)
+
+    if max_val >= max_photo_resolution_value:
+        downscale_factor = max_val/max_photo_resolution_value
+        new_width      = round(old_image.shape[1]/downscale_factor)
+        new_height     = round(old_image.shape[0]/downscale_factor)
+        resized_image  = cv2.resize(old_image,
+                                (new_width, new_height),
+                                interpolation = cv2.INTER_LINEAR)
+        cv2.imwrite("temp.png", resized_image)
+        return "temp.png"
+    else:
+        return image_to_prepare
+
+# ----------------------- /Utils ------------------------
+
+def optimize_torch(device):
+    torch.autograd.set_detect_anomaly(False)
+    torch.autograd.profiler.profile(False)
+    torch.autograd.profiler.emit_nvtx(False)
+    if 'cpu' in device:
+        torch.set_num_threads(4)
+    elif 'cuda' in device:
+        torch.backends.cudnn.benchmark = True
+
+def prepare_torch_model(AI_model, device):
+    if 'cpu' in device:
+        backend = torch.device('cpu')
+    elif 'cuda' in device:
+        backend = torch.device('cuda')
+    
+    model_path = find_file_by_relative_path(AI_model + ".pth")
+    
+    model = RRDBNet(in_nc=3, out_nc=3, nf=64, nb=23, gc=32, sf=4)
+    model.load_state_dict(torch.load(model_path), strict=True)
+    model.eval()
+
+    for _ , v in model.named_parameters():
+        v.requires_grad = False
+    
+    # not working, maibe torch > 1.8.2 ?
+    # model = torch.jit.optimize_for_inference(torch.jit.script(model.eval()))
+    
+    return model.to(backend, non_blocking=True)
+
+def torch_AI_upscale_multiple_images(image_list, AI_model, upscale_factor, device):
+    try:
+        # 0) define the model
+        model = prepare_torch_model(AI_model, device)
+        optimize_torch(device)
+
+        # 1) resize all images
+        downscaled_images = []
+        for image in image_list:
+            img_downscaled = resize_image(image, upscale_factor)
+            downscaled_images.append(img_downscaled)
+
+        
+        for img in downscaled_images:
+            result_path = (img.replace("_resized.png","").replace(".png","") + 
+                            "_"  + AI_model +
+                            "_x" + str(upscale_factor) + 
+                            ".png")
+
+            # 2) calculating best slice number
+            img_tmp = cv2.imread(img)
+            val = min(img_tmp.shape[1], img_tmp.shape[0])
+            num_tiles = round(val/cut_image_factor)
+            if (num_tiles % 2) != 0:
+                num_tiles += 1
+
+            # 3) divide the image in tiles
+            tiles = slice_image(img, num_tiles)
+
+            # 4) upscale each tiles
+            with torch.no_grad():
+                for tile in tiles:
+                    tile_adapted  = adapt_image_for_deeplearning(tile.filename)
+                    tile_adapted  = tile_adapted.to(device, non_blocking = True)
+                    tile_upscaled = model(tile_adapted)
+                    tile_upscaled = tensor2uint(tile_upscaled)
+                    imsave(tile_upscaled, tile.filename)
+                    tile.image  = Image.open(tile.filename)
+                    tile.coords = (tile.coords[0]*4, tile.coords[1]*4)
+
+            # 5) then reconstruct the image by tiles upscaled
+            image_upscaled = reunion_image(tiles)
+        
+            # 6) remove tiles file
+            delete_tiles_from_disk(tiles)
+
+            # 7) save reconstructed image
+            cv2.imwrite(result_path, image_upscaled)
+    except:
+        error_root = tkinterDnD.Tk()
+        ErrorMessage(error_root,  "upscale_problem")
+
+def torch_AI_upscale_video_frames(video_frames_list, AI_model, upscale_factor, device):
+    try:
+        # 0) define the model
+        model = prepare_torch_model(AI_model, device)
+        optimize_torch(device)
+
+        # 1) resize all images
+        downscaled_images = []
+        for image in video_frames_list:
+            img_downscaled = resize_image(image, upscale_factor)
+            downscaled_images.append(img_downscaled)
+
+        for img in downscaled_images:
+            result_path = (img.replace("_resized.png","").replace(".png","") + 
+                            "_"  + AI_model +
+                            "_x" + str(upscale_factor) + 
+                            ".png")
+
+            # 2) calculating best slice number
+            img_tmp = cv2.imread(img)
+            val = min(img_tmp.shape[1], img_tmp.shape[0])
+            num_tiles = round(val/cut_image_factor)
+            if (num_tiles % 2) != 0:
+                num_tiles += 1
+
+            # 3) divide the image in tiles
+            tiles = slice_image(img, num_tiles)
+
+            # 4) upscale each tiles
+            with torch.no_grad():
+                for tile in tiles:
+                    tile_adapted  = adapt_image_for_deeplearning(tile.filename)
+                    tile_adapted  = tile_adapted.to(device, non_blocking = True)
+                    tile_upscaled = model(tile_adapted)
+                    tile_upscaled = tensor2uint(tile_upscaled)
+                    imsave(tile_upscaled, tile.filename)
+                    tile.image  = Image.open(tile.filename)
+                    tile.coords = (tile.coords[0]*4, tile.coords[1]*4)
+
+            # 5) then reconstruct the image by tiles upscaled
+            image_upscaled = reunion_image(tiles)
+            
+            # 6) remove tiles file
+            delete_tiles_from_disk(tiles)
+
+            # 7) save reconstructed image
+            cv2.imwrite(result_path, image_upscaled)
+    except:
+        error_root = tkinterDnD.Tk()
+        ErrorMessage(error_root, "upscale_problem")
+    
+def function_drop(event):
+    global image_path
+    global multiple_files
+    global multi_img_list
+    global video_files
+    global single_file
+    
+    info_string.set("")
+
+    supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number = count_files_dropped(event)
+    all_supported, single_file, multiple_files, video_files, more_than_one_video = check_compatibility(supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number)
+
+    if video_files:
+        # video section
+        if not all_supported:
+            info_string.set("Some files are not supported")
+            return
+        elif all_supported:
+            if multiple_files:
+                info_string.set("Only one video supported")
+                return
+            elif not multiple_files:
+                if not more_than_one_video:
+                    file_vid = str(event.data).replace("{", "").replace("}", "")
+                    show_video_info_with_drag_drop(file_vid)
+                    thread_extract_frames = threading.Thread(target = extract_frames_from_video, 
+                                                            args    = (file_vid, 1), 
+                                                            daemon  = True)
+                    thread_extract_frames.start()
+
+                    # reset variable
+                    image_path     = "no file"
+                    multi_img_list = []
+
+                elif more_than_one_video:
+                    info_string.set("Only one video supported")
+                    return
+    else:
+        # image section
+        if not all_supported:
+            if multiple_files:
+                info_string.set("Some files are not supported")
+                return
+            elif single_file:
+                info_string.set("This file is not supported")
+                return
+        elif all_supported:
+            if multiple_files:
+                image_list_dropped = from_string_to_image_list(event)
+
+                #convert images to png
+                thread_convert_images = threading.Thread(target  = convert_multi_images_to_png, 
+                                                         args    = (image_list_dropped, 1), 
+                                                         daemon  = True)
+                thread_convert_images.start()
+
+                # convert only strings to .png 
+                # of dropped files
+
+                show_list_images_in_GUI_with_drag_drop(image_list_dropped)
+                multi_img_list = convert_only_image_filenames(image_list_dropped)
+
+                # reset variable
+                image_path        = "no file"
+                video_frames_list = []
+            
+            elif single_file:
+                image_list_dropped             = from_string_to_image_list(event)
+
+                #convert images to png
+                thread_convert_images          = threading.Thread(target = convert_single_image_to_png_and_save_and_show_in_GUI, 
+                                                                args   = (str(image_list_dropped[0]), 1), 
+                                                                daemon  = True)
+                thread_convert_images.start()
+
+                multi_img_list = convert_only_image_filenames(image_list_dropped)
+
+                # reset variable
+                image_path        = "no file"
+                video_frames_list = []
+
+def upscale_button_command():
+    global image_path
+    global multiple_files
+    global actual_step
+    global process_upscale
+    global upscale_factor
+    global video_frames_list
+    global video_files
+    global video_frames_upscaled_list
+    global original_video_path
+    global device
+
+    if "no model" in AI_model:
+        info_string.set("No AI model selected!")
+        return
+    
+    if video_files:
+        if "extracting" in actual_step:
+            info_string.set("Waiting for frames extraction!")
+            return
+        elif "ready" in actual_step:
+            info_string.set("Upscaling video")
+            place_stop_button()
+            
+            process_upscale = multiprocessing.Process(target = torch_AI_upscale_video_frames, 
+                                                      args   = (video_frames_list, AI_model, upscale_factor, device))
+            process_upscale.start()
+
+            thread_wait = threading.Thread(target  = thread_wait_for_videoframes_and_video_reconstruct, 
+                                            args   = (video_frames_list, AI_model, upscale_factor, original_video_path),
+                                            daemon = True)
+            thread_wait.start()
+
+    elif multiple_files:
+        if "converting" in actual_step:
+            info_string.set("Waiting for images conversion!")
+            return
+        elif "ready"    in actual_step:
+            place_stop_button()
+            info_string.set("Upscaling multiple images")
+            
+            process_upscale = multiprocessing.Process(target = torch_AI_upscale_multiple_images, 
+                                                      args   = (multi_img_list, AI_model, upscale_factor, device))
+            process_upscale.start()
+
+            thread_wait = threading.Thread(target = thread_wait_for_multiple_file, 
+                                           args   = (multi_img_list, AI_model, upscale_factor),
+                                           daemon = True)
+            thread_wait.start()
+    
+    elif single_file:
+        place_stop_button()
+        info_string.set("Upscaling single image")
+
+        process_upscale = multiprocessing.Process(target = torch_AI_upscale_multiple_images, 
+                                                    args   = (multi_img_list, AI_model, upscale_factor, device))
+        process_upscale.start()
+
+        thread_wait = threading.Thread(target = thread_wait_for_multiple_file, 
+                                           args   = (multi_img_list, AI_model, upscale_factor),
+                                           daemon = True)
+        thread_wait.start()
+    
+    elif "no file" in image_path:
+        info_string.set("No file selected!")
+
+def stop_button_command():
+    global process_upscale
+    process_upscale.terminate()
+    info_string.set("Stopped")
+    place_upscale_button()
+
+def resize_image(image_to_prepare, upscale_factor):
+    image_to_prepare = image_to_prepare.replace("{", "").replace("}", "")
+    new_image_path = image_to_prepare
+    
+    resize_algorithm = cv2.INTER_AREA
+
+    if upscale_factor == 2:
+        # upscale x2
+        # resize image dividing by 2
+
+        old_image      = cv2.imread(image_to_prepare)
+        new_width      = round(old_image.shape[1]/2)
+        new_height     = round(old_image.shape[0]/2)
+        resized_image  = cv2.resize(old_image,
+                                    (new_width, new_height),
+                                    interpolation = resize_algorithm)
+        new_image_path = new_image_path.replace(".png", "_resized.png")
+        cv2.imwrite(new_image_path, resized_image)
+        return new_image_path
+    
+    elif upscale_factor == 3:
+        # upscale x3
+        # resize image subtracting 1/4 in resolution
+        # ex. 1000 --> 750 --> 3000
+        
+        old_image      = cv2.imread(image_to_prepare)
+        
+        width_to_remove = round(old_image.shape[1]/4)
+        height_to_remove = round(old_image.shape[0]/4)
+
+        new_width      = round(old_image.shape[1] - width_to_remove)
+        new_height     = round(old_image.shape[0] - height_to_remove)
+        resized_image  = cv2.resize(old_image,
+                                    (new_width, new_height),
+                                    interpolation = resize_algorithm)
+        new_image_path = new_image_path.replace(".png", "_resized.png")
+        cv2.imwrite(new_image_path, resized_image)
+        return new_image_path
+    
+    elif upscale_factor == 4:
+        # upscale by 4
+        # so simply return the image as it is
+
+        return new_image_path
+
+def extract_frames_from_video(video_path, _ ):
+    global actual_step
+    global video_frames_list
+    global original_video_path
+
+    create_temp_dir("QualityScaler_temp")
+    original_video_path = video_path
+
+    actual_step = "extracting" 
+    info_string.set("Extracting frames from video")
+    
+    cap               = cv2.VideoCapture(video_path)
+    num_frame         = 0
+    video_frames_list = []
+    while(cap.isOpened()):
+        ret, frame = cap.read()
+        if ret == False:
+            break
+        num_frame += 1
+        result_path = "QualityScaler_temp" + os.sep + "frame_" + str(num_frame) + ".png"
+        cv2.imwrite(result_path, frame)
+        video_frames_list.append(result_path)
+        info_string.set("Extracting frames n. " + str(num_frame))
+    
+    cap.release()
+    actual_step = "ready"
+    info_string.set("")
+
+def video_reconstruction_by_frames(original_video_path, video_frames_upscaled_list, AI_model, upscale_factor):
+    info_string.set("Processing video")
+    
+    # 1) get original video informations
+    cap          = cv2.VideoCapture(original_video_path)
+    frame_rate   = int(cap.get(cv2.CAP_PROP_FPS))
+    path_as_list = original_video_path.split("/")
+    video_name   = str(path_as_list[-1])
+    only_path    = original_video_path.replace(video_name, "")
+    cap.release()
+
+    # 2) remove any file extension from original video path string
+    for video_type in supported_video_list:
+        video_name = video_name.replace(video_type, "")
+
+    # 3) create upscaled video path string
+    upscaled_video_name = (only_path + 
+                            video_name + 
+                            "_" + 
+                            AI_model + 
+                            "_x" + 
+                            str(upscale_factor) + 
+                            ".mp4")
+
+    # 4) create upscaled video with upscaled frames 
+    clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(video_frames_upscaled_list, fps = frame_rate)
+    clip.write_videofile(upscaled_video_name)
+
+def check_compatibility(supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number):
+    all_supported                     = True
+    single_file                       = False
+    multiple_files                    = False
+    video_files                       = False
+    more_than_one_video               = False
+    
+    if not_supported_file_dropped_number > 0:
+        all_supported = False
+        
+    if supported_file_dropped_number + not_supported_file_dropped_number == 1:
+        single_file = True
+    elif supported_file_dropped_number + not_supported_file_dropped_number > 1:
+        multiple_files = True
+
+    if supported_video_dropped_number == 1:
+        video_files         = True     
+        more_than_one_video = False
+    elif supported_video_dropped_number > 1:
+        video_files         = True
+        more_than_one_video = True
+
+    return all_supported, single_file, multiple_files, video_files, more_than_one_video
+
+def count_files_dropped(event):
+    supported_file_dropped_number     = 0
+    not_supported_file_dropped_number = 0
+    supported_video_dropped_number    = 0
+
+    # count compatible images files
+    for file_type in supported_file_list:
+        supported_file_dropped_number = supported_file_dropped_number + str(event.data).count(file_type)
+    
+    # count compatible video files
+    for file_type in supported_video_list:
+        supported_video_dropped_number = supported_video_dropped_number + str(event.data).count(file_type)
+    
+    # count not supported files
+    for file_type in not_supported_file_list:
+        not_supported_file_dropped_number = not_supported_file_dropped_number + str(event.data).count(file_type)
+
+    return supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number
+
+def adapt_image_for_deeplearning(img):
+    img = imread_uint(img, n_channels=3)
+    img = uint2tensor4(img)
+    return img
+    
+def convert_frames_list_uspcaled(video_frames_list, AI_model, upscale_factor):
+    video_frames_upscaled_list = []
+    for image in video_frames_list:
+        result_path = image.replace(".png","") + "_" + AI_model + "_x" + str(upscale_factor) + ".png"
+        video_frames_upscaled_list.append(result_path)
+
+    return video_frames_upscaled_list   
+
+def images_to_check_convert_filenames(image_list, AI_model, upscale_factor):
+    temp_images_to_delete = []
+    image_list_to_check = []
+    
+    for image in image_list:
+        temp = image.replace(".png","") + "_" + AI_model + "_x" + str(upscale_factor) + ".png"
+        image_list_to_check.append(temp)
+        temp_images_to_delete.append(image.replace(".png","_resized.png"))
+
+    return image_list_to_check, temp_images_to_delete
+
+def thread_wait_for_multiple_file(image_list, AI_model, upscale_factor):
+    start     = timer()
+    image_list_to_check, temp_images_to_delete = images_to_check_convert_filenames(image_list,
+                                                                                     AI_model, 
+                                                                                     upscale_factor)
+    # check if files exist
+    how_many_images = len(image_list_to_check)
+    counter_done    = 0
+    for image in image_list_to_check:
+        while not os.path.exists(image):
+            time.sleep(1)
+
+        if os.path.isfile(image):
+            counter_done += 1
+            info_string.set("Upscaled images " + str(counter_done) + "/" + str(how_many_images))
+
+        if counter_done == how_many_images:  
+            # delete temp files
+            if len(temp_images_to_delete) > 0:
+                for to_delete in temp_images_to_delete:
+                    if os.path.exists(to_delete):
+                        os.remove(to_delete)  
+
+            end       = timer()
+            info_string.set("Upscale completed [" + str(round(end - start)) + " sec.]")
+            place_upscale_button()
+
+def thread_wait_for_videoframes_and_video_reconstruct(video_frames_list, AI_model, upscale_factor, original_video_path):
+    start = timer()
+    counter_done = 0
+    image_list_to_check, _ = images_to_check_convert_filenames(video_frames_list,
+                                                               AI_model, 
+                                                               upscale_factor)
+    how_many_images = len(image_list_to_check)
+
+    for image in image_list_to_check:
+        while not os.path.exists(image):
+            time.sleep(1)
+
+        if os.path.isfile(image):
+            counter_done += 1
+            info_string.set("Upscaled frames " + str(counter_done) + "/" + str(how_many_images))
+
+            if counter_done == how_many_images:  
+                video_reconstruction_by_frames(original_video_path, 
+                                            image_list_to_check,
+                                            AI_model, 
+                                            upscale_factor)
+                
+                end = timer()
+                info_string.set("Video upscale completed [" + str(round(end - start)) + " sec.]")
+                place_upscale_button()
+
+def from_string_to_image_list(event):
+    image_list = str(event.data).replace("{", "").replace("}", "")
+    
+    for file_type in supported_file_list:
+        image_list = image_list.replace(file_type, file_type+"\n")
+
+    image_list = image_list.split("\n")
+    image_list.pop() # to remove last void element
+
+    return image_list
+
+def convert_only_image_filenames(image_list):
+    list_converted = []
+    for image in image_list:
+        image = image.strip().replace("{", "").replace("}", "")
+        for file_type in supported_file_list:
+            image = image.replace(file_type,".png")
+        
+        list_converted.append(image)
+
+    return list(dict.fromkeys(list_converted))
+
+def convert_multi_images_to_png(image_list, _ ):
+    global actual_step
+
+    actual_step    = "converting"
+    info_string.set("Converting images...")
+    
+    for image in image_list:
+        image = image.strip()
+        convert_single_image_to_png_and_save(image)
+    
+    actual_step    = "ready"
+    info_string.set("")
+
+def convert_single_image_to_png_and_save(image_to_prepare):
+    image_to_prepare = image_to_prepare.replace("{", "").replace("}", "")
+    if ".png" in image_to_prepare:
+        return image_to_prepare
+    else:
+        new_image_path = image_to_prepare
+        for file_type in supported_file_list:
+            new_image_path = new_image_path.replace(file_type,".png")
+        
+        image_to_convert      = cv2.imread(image_to_prepare)
+        cv2.imwrite(new_image_path, image_to_convert)
+        return new_image_path
+
+def convert_single_image_to_png_and_save_and_show_in_GUI(image_to_prepare, _ ):
+    image_to_prepare = image_to_prepare.replace("{", "").replace("}", "")
+    if ".png" in image_to_prepare:
+        show_image_in_GUI_with_drag_drop(image_to_prepare)
+    else:
+        new_image_path = image_to_prepare
+        for file_type in supported_file_list:
+            new_image_path = new_image_path.replace(file_type,".png")
+        
+        image_to_convert      = cv2.imread(image_to_prepare)
+        cv2.imwrite(new_image_path, image_to_convert)
+        show_image_in_GUI_with_drag_drop(new_image_path)
+
 # ---------------------- GUI related ---------------------- 
 
 def clear_drag_drop_background():
@@ -936,18 +925,18 @@ def show_video_info_with_drag_drop(video_path):
     cap.release()
 
     file_description = ("\n" 
-                        + " >  Path: "     + video_path.replace(video_name, "") + "\n\n" 
-                        + " >  File: "     + video_name + "\n\n"
-                        + " >  Resolution: " + str(width) + "x" + str(height) + "\n\n"
-                        + " >  Size: "      + str(truncate(file_size / 1048576, 2)) + " MB" + "\n\n"
-                        + " >  Duration: "  + str(minutes) + ':' + str(round(seconds)) + "\n\n"
-                        + " >  Frames: "    + str(num_frames) + "\n\n"
-                        + " >  Fps: "       + str(round(frame_rate)) + "\n\n")
+                        + " Path: "     + video_path.replace(video_name, "") + "\n\n" 
+                        + " File: "     + video_name                         + "\n\n"
+                        + " Resolution: " + str(width) + "x" + str(height)   + "\n\n"
+                        + " Size: "      + str(truncate(file_size / 1048576, 2))  + " MB" + "\n\n"
+                        + " Duration: "  + str(minutes) + ':' + str(round(seconds))       + "\n\n"
+                        + " Frames: "    + str(num_frames)        + "\n\n"
+                        + " Fps: "       + str(round(frame_rate)) + "\n\n")
     
     video_header = ttk.Label(root,
                             text       = "Video info",
                             ondrop     = function_drop,
-                            font       = (default_font, round(12 * font_scale), "bold"), #11
+                            font       = (default_font, round(12 * font_scale), "bold"),
                             anchor     = "center",
                             relief     = "flat",
                             justify    = "center",
@@ -981,10 +970,12 @@ def show_list_images_in_GUI_with_drag_drop(image_list_prepared):
         counter_img += 1
         if counter_img <= 16:
             # add first 16 files in list
-            path_as_list = elem.split("/")
-            img_name     = str(path_as_list[-1])
-            final_string += ( " >  " + img_name 
-                            + "\n" )         
+            img        = cv2.imread(elem.strip())
+            width      = round(img.shape[1])
+            height     = round(img.shape[0])
+            img_name   = str(elem.split("/")[-1])
+            
+            final_string += ( img_name + " | [" + str(width) + "x" + str(height) + "]"+ "\n" )         
         else:
             final_string +=  "and others... \n"
             break
@@ -993,7 +984,7 @@ def show_list_images_in_GUI_with_drag_drop(image_list_prepared):
     list_width  = 750
     
     list_header = ttk.Label(root,
-                            text       = "Image list",
+                            text       = " ❏  Image list ",
                             ondrop     = function_drop,
                             font       = (default_font, round(12 * font_scale), "bold"), #11
                             anchor     = "center",
@@ -1004,7 +995,7 @@ def show_list_images_in_GUI_with_drag_drop(image_list_prepared):
     list_header.place(x = left_bar_width + drag_drop_width/2 - list_width/2,
                             y = drag_drop_height/2 - list_height/2 - 45,
                             width  = 200,
-                            height = 35)
+                            height = 36)
 
     multiple_images_list = ttk.Label(root,
                             text       = final_string,
@@ -1023,7 +1014,7 @@ def show_list_images_in_GUI_with_drag_drop(image_list_prepared):
 
     # then image counter
     multiple_images_label = ttk.Label(root,
-                            text       = str(len(image_list_prepared)) + " images ",
+                            text       = str(len(image_list_prepared)) + ' images',
                             ondrop     = function_drop,
                             font       = (default_font, round(12 * font_scale), "bold"),
                             anchor     = "center",
@@ -1031,17 +1022,24 @@ def show_list_images_in_GUI_with_drag_drop(image_list_prepared):
                             justify    = "center",
                             background = "#181818",
                             foreground = "#D3D3D3")
-    multiple_images_label.place(x = left_bar_width + drag_drop_width/2 - 400/2,
-                        y = drag_drop_height/2 + 500/2 + 25,
-                        width  = 400,
-                        height = 42)
+    multiple_images_label.place(x = left_bar_width + drag_drop_width/2 + 175,
+                        y = drag_drop_height/2 + 220,
+                        width  = 200,
+                        height = 36)
 
 def show_image_in_GUI_with_drag_drop(image_to_show):
     global image
+
     image_to_show = image_to_show.replace('{', '').replace('}','')
 
+    # 1) resize image to fit the UI
+    image_to_show_resized = resize_image_to_show(image_to_show)
+    
+    # 2) clean the background
     clear_drag_drop_background()
-    image  = tk.PhotoImage(file=image_to_show)
+
+    # 3) show the resized image in the UI
+    image  = tk.PhotoImage(file = image_to_show_resized)
     drag_drop_and_images = ttk.Label(root,
                             text    = "",
                             image   = image,
@@ -1056,7 +1054,12 @@ def show_image_in_GUI_with_drag_drop(image_to_show):
                             width  = show_image_width,
                             height = show_image_height)
     
+    # 4) show the image file information in the UI
     place_fileName_label(image_to_show)
+    
+    # 5) delete the resized temp image 
+    if "temp.png" in image_to_show_resized:
+        os.remove("temp.png")
         
 def place_fileName_label(image_path):
     path_as_list = image_path.split("/")
@@ -1069,7 +1072,7 @@ def place_fileName_label(image_path):
     file_name_string.set(img_name 
                          + " | [" + str(width) + "x" + str(height) + "]" 
                          + " | "  + str(truncate(file_size / 1048576, 2)) + " MB")
-    drag_drop = ttk.Label(root,
+    single_image_info = ttk.Label(root,
                             font = (default_font, round(10 * font_scale), "bold"),
                             textvar    = file_name_string,
                             relief     = "flat",
@@ -1078,7 +1081,7 @@ def place_fileName_label(image_path):
                             foreground = "#D3D3D3",
                             anchor     = "center")
                             
-    drag_drop.place(x = left_bar_width + drag_drop_width/2 - image_text_width/2,
+    single_image_info.place(x = left_bar_width + drag_drop_width/2 - image_text_width/2,
                     y = drag_drop_height - image_text_height - 24,
                     width  = image_text_width,
                     height = image_text_height + 5)
@@ -1123,7 +1126,7 @@ def place_stop_button():
                          height = 40)
     Stop_button["command"] = lambda : stop_button_command()
     
-def place_BSRGAN_button(root, background_color, text_color):
+def place_BSRGAN_button(background_color, text_color):
     ft = tkFont.Font(family  = default_font, 
                      size    = round(11 * font_scale),
                      weight = "bold")
@@ -1137,12 +1140,12 @@ def place_BSRGAN_button(root, background_color, text_color):
     BSRGAN_button["relief"]  = "flat"
     BSRGAN_button["activebackground"] = "#ffbf00"
     BSRGAN_button.place(x = left_bar_width/2 - button_width/2 ,
-                    y = button_2_y,
+                    y = button_1_y,
                     width  = button_width,
                     height = button_height)
     BSRGAN_button["command"] = lambda input = "BSRGAN" : choose_model_BSRGAN(input)
     
-def place_RealSR_JPEG_button(root, background_color, text_color):
+def place_RealSR_JPEG_button(background_color, text_color):
     ft = tkFont.Font(family  = default_font, 
                      size    = round(11 * font_scale),
                      weight = "bold")
@@ -1156,12 +1159,12 @@ def place_RealSR_JPEG_button(root, background_color, text_color):
     RealSR_JPEG_button["relief"]  = "flat"
     RealSR_JPEG_button["activebackground"] = "#ffbf00"
     RealSR_JPEG_button.place(x = left_bar_width/2 - button_width/2,
-                    y = button_1_y,
+                    y = button_2_y,
                     width  = button_width,
                     height = button_height)
     RealSR_JPEG_button["command"] = lambda input = "RealSR_JPEG" : choose_model_RealSR_JPEG(input)
 
-def place_BSRGAN_and_RealSR_JPEG_button(root, background_color, text_color):
+def place_BSRGAN_and_RealSR_JPEG_button(background_color, text_color):
     ft = tkFont.Font(family  = default_font, 
                      size    = round(11 * font_scale),
                      weight  = "bold")
@@ -1190,8 +1193,8 @@ def choose_model_BSRGAN(choosed_model):
     selected_button_color = "#ffbf00"
     selected_text_color   = "#202020"
     
-    place_BSRGAN_button(root, selected_button_color, selected_text_color) # changing
-    place_RealSR_JPEG_button(root, default_button_color, default_text_color)
+    place_BSRGAN_button(selected_button_color, selected_text_color) # changing
+    place_RealSR_JPEG_button(default_button_color, default_text_color)
 
 def choose_model_RealSR_JPEG(choosed_model):
     global AI_model
@@ -1202,8 +1205,8 @@ def choose_model_RealSR_JPEG(choosed_model):
     selected_button_color = "#ffbf00"
     selected_text_color   = "#202020"
     
-    place_RealSR_JPEG_button(root, selected_button_color, selected_text_color) # changing
-    place_BSRGAN_button(root, default_button_color, default_text_color)
+    place_RealSR_JPEG_button(selected_button_color, selected_text_color) # changing
+    place_BSRGAN_button(default_button_color, default_text_color)
 
 def place_upscale_factor_button_x2(background_color, text_color):
     ft = tkFont.Font(family  = default_font, 
@@ -1405,13 +1408,13 @@ class ErrorMessage():
         window_width  = 500
         window_height = 525
 
-        if error_type == "no_memory":
+        if error_type == "upscale_problem":
             error_string = "Memory\nerror"
-            error_suggest = ( " Not enough memory for upscaling, try to: \n\n"
-                             + "  set Upscale Factor to <auto>  \n" 
+            error_suggest = ( " Some error occured while upscaling, try to: \n\n"
+                             + "  set Upscale Factor to x2 or x3  \n" 
                              + "  set AI Backend to <cpu>  " )
         elif error_type == "no_cuda_found":
-            error_string = "Cuda not found\nerror"
+            error_string = "Cuda not found\nwarning"
             error_suggest = (" Cuda compatible GPU not found, try to: \n\n"
                              + "  set AI Backend to <cpu>  ")
 
@@ -1488,47 +1491,47 @@ class App:
                     height = 55)
         
         global logo_git
-        logo_git = PhotoImage(file=find_file_by_relative_path("github_logo_38.png"))
+        logo_git = PhotoImage(file=find_file_by_relative_path("github_logo.png"))
         logo_git_label            = tk.Button(root)
         logo_git_label['image']   = logo_git
         logo_git_label["justify"] = "center"
-        logo_git_label["bg"]      = "#7267CB"
+        logo_git_label["bg"]      = "#585858"
         logo_git_label["relief"]  = "flat"
-        logo_git_label["activebackground"] = "#7267CB"
+        logo_git_label["activebackground"] = "grey"
         logo_git_label.place(x    = left_bar_width - 165,
-                             y      = 10,
-                             width  = 40,
-                             height = 40)
+                             y      = 13,
+                             width  = 37,
+                             height = 37)
         logo_git_label["command"] = lambda : opengithub()
 
         global logo_paypal
-        logo_paypal = PhotoImage(file=find_file_by_relative_path("paypal_logo_38.png"))
+        logo_paypal = PhotoImage(file=find_file_by_relative_path("paypal_logo.png"))
         logo_paypal_label                     = tk.Button(root)
         logo_paypal_label['image']            = logo_paypal
         logo_paypal_label["justify"]          = "center"
-        logo_paypal_label["bg"]               = "#7267CB"
+        logo_paypal_label["bg"]               = "black"
         logo_paypal_label["relief"]           = "flat"
-        logo_paypal_label["activebackground"] = "#7267CB"
+        logo_paypal_label["activebackground"] = "grey"
         logo_paypal_label["borderwidth"]      = 1
         logo_paypal_label.place(x      = left_bar_width - 115,
-                                y      = 10,
-                                width  = 40,
-                                height = 40)
+                                y      = 13,
+                                width  = 37,
+                                height = 37)
         logo_paypal_label["command"] = lambda : openpaypal()
 
         global logo_patreon
-        logo_patreon = PhotoImage(file=find_file_by_relative_path("patreon_logo_38.png"))
+        logo_patreon = PhotoImage(file=find_file_by_relative_path("patreon_logo.png"))
         logo_patreon_label                     = tk.Button(root)
         logo_patreon_label['image']            = logo_patreon
         logo_patreon_label["justify"]          = "center"
-        logo_patreon_label["bg"]               = "#7267CB"
+        logo_patreon_label["bg"]               = "black"
         logo_patreon_label["relief"]           = "flat"
-        logo_patreon_label["activebackground"] = "#7267CB"
+        logo_patreon_label["activebackground"] = "grey"
         logo_patreon_label["borderwidth"]      = 1
         logo_patreon_label.place(x      = left_bar_width - 65,
-                                y      = 10,
-                                width  = 40,
-                                height = 40)
+                                y      = 13,
+                                width  = 37,
+                                height = 37)
         logo_patreon_label["command"] = lambda : openpatreon()
 
         ft = tkFont.Font(family = default_font,
@@ -1553,9 +1556,9 @@ class App:
         selected_button_color = "#ffbf00"
         selected_text_color   = "#202020"
         
-        place_RealSR_JPEG_button(root, selected_button_color, selected_text_color) #default selected                  
-        place_BSRGAN_button(root, default_button_color, default_text_color)        
-        place_BSRGAN_and_RealSR_JPEG_button(root, default_button_color, default_text_color) 
+        place_RealSR_JPEG_button(default_button_color, default_text_color)  #default selected                  
+        place_BSRGAN_button(selected_button_color, selected_text_color)       
+        place_BSRGAN_and_RealSR_JPEG_button(default_button_color, default_text_color) 
 
         Upscale_fact_selection_title            = tk.Label(root)
         Upscale_fact_selection_title["bg"]      = "#202020"
@@ -1624,8 +1627,8 @@ class App:
         drag_drop = ttk.Label(root,
                               text    = " DROP FILE HERE \n\n" 
                                       + " ⥥ \n\n"
-                                      + " >  IMAGES  - jpg png tif bmp webp -                  \n\n" 
-                                      + " >  VIDEOS  - mp4 webm mkv flv gif avi mov -  \n\n",
+                                      + " IMAGES  - jpg png tif bmp webp -                  \n\n" 
+                                      + " VIDEOS  - mp4 webm mkv flv gif avi mov -  \n\n",
                               ondrop     = function_drop,
                               font       = ft,
                               anchor     = "center",
