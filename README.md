@@ -11,7 +11,10 @@ RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005
 
 ## Installation.
 
-QualityScaler is completely portable; just download, unzip and execute the file .exe
+QualityScaler is completely portable:
+1) download the release .zip
+2) unzip using 7zip or similar file
+3) execute QualityScaler.exe in the directory
 
 ## Supported AI Backend.
 * Nvidia cuda 11.1
