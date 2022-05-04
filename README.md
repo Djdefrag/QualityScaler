@@ -13,7 +13,7 @@ RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005
 
 QualityScaler is completely portable:
 1) download the release .zip
-2) unzip using 7zip or similar file
+2) unzip using 7zip or similar
 3) execute QualityScaler.exe in the directory
 
 ## Supported AI Backend.
