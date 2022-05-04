@@ -46,9 +46,8 @@ QualityScaler is completely portable:
 
 ## Example.
 
-Original photo (200x200 px)
-Upscaled photo x4 (800x800px)
+![test](https://user-images.githubusercontent.com/32263112/166690007-f1601487-7b94-4f2c-b4e2-436bc189a26e.png)
 
-![test bsrganx4](https://user-images.githubusercontent.com/32263112/163949737-627cc079-edcc-4abb-acd9-54b23a348012.png)
+
 
 
