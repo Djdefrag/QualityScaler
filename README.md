@@ -14,11 +14,11 @@ RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005
 QualityScaler is completely portable; just download, unzip and execute the file .exe
 
 ## Supported AI Backend.
-* Nvidia cuda 10.2
+* Nvidia cuda 11.1
    * compatible GPUs (including mobile version)
-     * GTX 700/800/900/1000/1600/2000 
-     * Tesla (up to T4)
-     * Quadro (up to RTX T1000)
+     * from GTX 800 to RTX 3000
+     * Quadro compatible with cuda 11.1
+     * Tesla compatible with cuda 11.1
 * CPU [works without GPU, but is very slow]
 
 ## Features.
@@ -36,7 +36,7 @@ QualityScaler is completely portable; just download, unzip and execute the file 
 * Compatible video  - MP4, WEBM, GIF, MKV, FLV, AVI, MOV 
 
 ## Next steps.
-* Support for Nvidia RTX 3k
+* [v] Support for Nvidia RTX 3k
 * Use both model for the upscale
 * Include audio for upscaled video
 * Support for other GPUs (AMD, Intel) with new backend
