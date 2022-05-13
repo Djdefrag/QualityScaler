@@ -1,4 +1,5 @@
 <div align="center">
+    <br>
     <img src="https://github.com/Djdefrag/QualityScaler/blob/main/logo.png" width="125"> </a> 
     <br><br> QualityScaler - Image-video upscaling/enhancement Windows app <br><br>
     <a href="https://github.com/Djdefrag/QualityScaler/releases">
