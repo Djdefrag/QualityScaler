@@ -1,7 +1,14 @@
-## QualityScaler
-Image/video upscaling/enhancement Windows app - BRSGAN &amp; RealSR_JPEG
-
-![GUI](https://user-images.githubusercontent.com/32263112/163949184-c285734e-8be7-4b37-9f73-aa397f68eb19.png)
+<div align="center">
+    <img src="https://github.com/Djdefrag/QualityScaler/blob/main/logo.png" width="125"> </a> 
+    <br><br> QualityScaler - Image-video upscaling/enhancement Windows app <br><br>
+    <a href="https://github.com/Djdefrag/QualityScaler/releases">
+         <img src="https://user-images.githubusercontent.com/86362423/162710522-c40c4f39-a6b9-48bc-84bc-1c6b78319f01.png" width="200">
+    </a>
+</div>
+<br>
+<div align="center">
+    <img src="https://user-images.githubusercontent.com/32263112/163949184-c285734e-8be7-4b37-9f73-aa397f68eb19.png"> </a> 
+</div>
 
 ## Credits.
 
