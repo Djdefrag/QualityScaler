@@ -34,17 +34,18 @@ QualityScaler is completely portable:
 * CPU [works without GPU, but is very slow]
 
 ## Features.
-* Easy to use GUI
-* Images and video upscale
-* Drag&drop files [image/multiple images/video]
-* Automatic image tiling and merging to avoid gpu VRAM limitation
-* Different upscale factors:
-  * x2   - upscale factor 2: 500x500px -> 1000x1000px
-  * x3   - upscale factor 3: 500x500px -> 1500x1500px
-  * x4   - upscale factor 4: 500x500px -> 2000x2000px
-* Cpu and Cuda backend
-* Compatible images - png, jpeg, bmp, webp, tif  
-* Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
+- [x] Easy to use GUI
+- [x] Image/list of images upscale
+- [x] Video upscale
+- [x] Drag&drop files [image/multiple images/video]
+- [x] Automatic image tiling and merging to avoid gpu VRAM limitation
+- [x] Different upscale factors:
+    - [x] x2   - 500x500px -> 1000x1000px
+    - [x] x3   - 500x500px -> 1500x1500px
+    - [x] x4   - 500x500px -> 2000x2000px
+- [x] Cpu and Cuda backend
+- [x] Compatible images - png, jpeg, bmp, webp, tif  
+- [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
 
 ## Next steps.
 - [x] Support for Nvidia RTX 3k and 2k with cuda 11
