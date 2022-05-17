@@ -50,12 +50,12 @@ QualityScaler is completely portable:
 ## Next steps.
 - [x] Support for Nvidia RTX 3k and 2k with cuda 11
 - [ ] New Fused model (that combines the best of both models)
-- [ ] New GUI respecting Windows 11 style
+- [ ] New GUI with Windows 11 style
 - [ ] Include audio for upscaled video
 - [ ] Switch to Pytorch-directml to support all existing gpu (AMD, Intel, Nvidia)
-- [ ] Update Python 
-    - [ ] Python 3.10 (expecting ~5% more performance) 
-    - [ ] Python 3.11 (expecting ~20% more performance, now in beta)
+- [ ] Update libraries 
+    - [ ] Python 3.10 (expecting ~10% more performance) 
+    - [ ] Python 3.11 (expecting ~30% more performance, now in beta)
 
 ## Example.
 
