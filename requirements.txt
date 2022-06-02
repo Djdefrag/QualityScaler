@@ -1,0 +1,15 @@
+wheel
+wmi
+pypiwin32
+tk-tools
+python-tkdnd
+ttkwidgets
+opencv-python-headless
+pyinstaller
+image_slicer
+matplotlib
+pywin32
+moviepy
+pytorch-directml
+win32mica
+sv_ttk
