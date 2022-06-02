@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/168884267-696ca1d0-a5d0-4e14-8797-c07a4d2fab62.png"> </a> 
+    <img src="https://user-images.githubusercontent.com/32263112/171654121-06709d1c-0551-429a-9467-fd4618019b7e.png"> </a> 
 </div>
 
 ## Credits.
@@ -18,6 +18,15 @@ BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
 
 RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005.01996.pdf
 
+## How is made.
+
+QualityScaler is completely written in Python, from backend to frontend. External packages are:
+- [ ] AI  -> Pytorch-directml
+- [ ] GUI -> Tkinter / Tkdnd / Sv_ttk
+- [ ] Image/video -> OpenCV / Moviepy
+- [ ] Packaging   -> Pyinstaller
+- [ ] Miscellaneous -> Pywin32 / Win32mica / Image_slicer
+
 ## Installation.
 
 1) download the QualityScaler release .zip
@@ -25,11 +34,10 @@ RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005
 3) execute QualityScaler.exe in the directory
 
 ## Supported AI Backend.
-
-- [ ] Nvidia cuda 11.3
-   - [ ] from GTX 800 to RTX 3000
-   - [ ] Quadro compatible with cuda 11.3
-   - [ ] Tesla compatible with cuda 11.3
+- [ ] All Directx12 compatible Gpus:
+    - [ ] any AMD >= Radeon HD 7000 series
+    - [ ] any Intel HD Integrated >= 4th-gen core
+    - [ ] any NVIDIA >=  GTX 600 series
 - [ ] CPU [works without GPU, but is very slow]
 
 ## Features.
@@ -51,9 +59,11 @@ RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005
 
 - [x] Support for Nvidia RTX 3k and 2k with cuda 11
 - [x] New Fused model (that combines the best of both models)
-- [ ] New GUI with Windows 11 style
+- [x] New GUI with Windows 11 style
 - [ ] Include audio for upscaled video
-- [ ] Switch to Pytorch-directml to support all existing gpu (AMD, Intel, Nvidia)
+- [x] Switch to Pytorch-directml to support all Directx12 compatible gpu (AMD, Intel, Nvidia)
+- [ ] Convert to Cython core functions
+    - [ ] expecting ~50% more performance
 - [ ] Update libraries 
     - [ ] Python 3.10 (expecting ~10% more performance) 
     - [ ] Python 3.11 (expecting ~30% more performance, now in beta)
@@ -65,5 +75,9 @@ RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005
 ![Bsrgan x4](https://user-images.githubusercontent.com/32263112/168884625-c869baee-4cca-4a33-bdad-b65d9c29889d.png)
 
 ![ggg](https://user-images.githubusercontent.com/32263112/168884634-fc3fdc7b-ac77-4750-aaf6-54b16786dacf.png)
+
+![example](https://user-images.githubusercontent.com/32263112/171657072-0a746274-46e9-4641-b16c-a9f6f612624b.png)
+
+
 
 
