@@ -2,7 +2,7 @@
 <div align="center">
     <br>
     <img src="https://github.com/Djdefrag/QualityScaler/blob/main/logo.png" width="175"> </a> 
-    <br><br> QualityScaler - Image and video upscaling/enhancement Windows app <br><br>
+    <br><br> Image/video deepLearning upscaler app for Windows <br><br>
     <a href="https://github.com/Djdefrag/QualityScaler/releases">
          <img src="https://user-images.githubusercontent.com/86362423/162710522-c40c4f39-a6b9-48bc-84bc-1c6b78319f01.png" width="200">
     </a>
