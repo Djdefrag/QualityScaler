@@ -36,7 +36,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 ## Requirements
 - [ ] Windows 11 (Windows 10 works but with some GUI glitches)
 - [ ] RAM >= 8Gb
-- [ ] All Directx12 compatible Gpus:
+- [ ] Directx12 compatible GPU:
     - [ ] any AMD >= Radeon HD 7000 series
     - [ ] any Intel HD Integrated >= 4th-gen core
     - [ ] any NVIDIA >=  GTX 600 series
