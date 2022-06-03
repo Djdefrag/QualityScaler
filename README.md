@@ -33,7 +33,9 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 2) unzip using 7zip or similar
 3) execute QualityScaler.exe in the directory
 
-## Supported AI Backend.
+## Requirements
+- [ ] Windows 11 (Windows 10 works but with some GUI glitches)
+- [ ] RAM >= 8Gb
 - [ ] All Directx12 compatible Gpus:
     - [ ] any AMD >= Radeon HD 7000 series
     - [ ] any Intel HD Integrated >= 4th-gen core
