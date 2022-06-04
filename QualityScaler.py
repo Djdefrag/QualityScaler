@@ -5,6 +5,7 @@ import functools
 import multiprocessing
 import os
 import os.path
+import platform
 import shutil
 import sys
 import tempfile
@@ -21,7 +22,6 @@ from tkinter import ttk
 import cv2
 import moviepy.video.io.ImageSequenceClip
 import numpy as np
-import sv_ttk
 import tkinterDnD
 import torch
 import torch.nn as nn
@@ -31,6 +31,8 @@ from image_slicer import join
 from image_slicer import slice as img_cutter
 from PIL import Image
 from win32mica import MICAMODE, ApplyMica
+
+import sv_ttk
 
 ctypes.windll.shcore.SetProcessDpiAwareness(True)
 scaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
@@ -42,7 +44,7 @@ elif scaleFactor == 1.25:
 else:
     font_scale = 0.8
 
-version   = "2.0.0"
+version   = "2.1.0"
 branch    = "stable"
 
 paypalme  = "https://www.paypal.com/paypalme/jjstd/5"
@@ -62,6 +64,8 @@ video_frames_list = []
 video_frames_upscaled_list = []
 
 tiles_resolution = 500
+
+windows_ver = int(platform.version().split('.')[2])
 
 supported_file_list = ['.jpg', '.jpeg', '.JPG', '.JPEG',
                        '.png', '.PNG',
@@ -103,9 +107,6 @@ not_supported_file_list = ['.txt', '.exe', '.xls', '.xlsx', '.pdf',
                            '.m4a', '.msi', '.ini', '.pps', '.potx',
                            '.ppam', '.ppsx', '.pptm', '.pst', '.pub',
                            '.sys', '.tmp', '.xlt', '.avif']
-
-
-# ---------------------- Dimensions ----------------------
 
 default_font         = 'Calibri'
 background_color     = "#202020"
@@ -1569,17 +1570,6 @@ def place_clean_button():
                        height = 45)
     clean_button["command"] = lambda: place_drag_drop_widget()
 
-def place_title():
-    Title = ttk.Label(root, 
-                      font = (default_font, round(16 * font_scale), "bold"),
-                      foreground = "#DA70D6", 
-                      anchor     = 'center', 
-                      text       = "QualityScaler")
-    Title.place(x = 55,
-                y = 25,
-                width  = left_bar_width/2,
-                height = 55)
-
 def place_blurred_background():
     Background = ttk.Label(root, background = background_color, relief = 'flat')
     Background.place(x = 0, 
@@ -1587,14 +1577,32 @@ def place_blurred_background():
                      width  = window_width,
                      height = window_height)
 
-def place_left_bar():
+def place_left_bar_win10():
+    Left_bar = ttk.LabelFrame(root)
+    Left_bar.place(x = 40, 
+                   y = 5, 
+                   width  = left_bar_width,
+                   height = 690)
+
+def place_left_bar_win11():
     Left_bar = ttk.LabelFrame(root)
     Left_bar.place(x = 40, 
                    y = -12, 
                    width  = left_bar_width,
                    height = 710)
 
-def place_github_button():
+def place_title(padding_top):
+    Title = ttk.Label(root, 
+                      font = (default_font, round(16 * font_scale), "bold"),
+                      foreground = "#DA70D6", 
+                      anchor     = 'center', 
+                      text       = "QualityScaler")
+    Title.place(x = 55,
+                y = padding_top,
+                width  = left_bar_width/2,
+                height = 55)
+                
+def place_github_button(padding_top):
     global logo_git
     logo_git = PhotoImage(file = find_file_by_relative_path("github_logo.png"))
     logo_git_label                     = tk.Button(root)
@@ -1605,12 +1613,12 @@ def place_github_button():
     logo_git_label["activebackground"] = "grey"
     logo_git_label["borderwidth"]      = 1
     logo_git_label.place(x = left_bar_width - 140,
-                            y = 35,
+                            y = padding_top,
                             width  = 37,
                             height = 37)
     logo_git_label["command"] = lambda: opengithub()
 
-def place_paypal_button():
+def place_paypal_button(padding_top):
     global logo_paypal
     logo_paypal = PhotoImage(file=find_file_by_relative_path("paypal_logo.png"))
     logo_paypal_label                     = tk.Button(root)
@@ -1621,12 +1629,12 @@ def place_paypal_button():
     logo_paypal_label["activebackground"] = "grey"
     logo_paypal_label["borderwidth"]      = 1
     logo_paypal_label.place(x = left_bar_width - 90,
-                            y = 35,
+                            y = padding_top,
                             width  = 37,
                             height = 37)
     logo_paypal_label["command"] = lambda: openpaypal()
 
-def place_patreon_button():
+def place_patreon_button(padding_top):
     global logo_patreon
     logo_patreon = PhotoImage(file=find_file_by_relative_path("patreon_logo.png"))
     logo_patreon_label            = tk.Button(root)
@@ -1637,7 +1645,7 @@ def place_patreon_button():
     logo_patreon_label["activebackground"] = "grey"
     logo_patreon_label["borderwidth"]      = 1
     logo_patreon_label.place(x = left_bar_width - 40,
-                                y = 35,
+                                y = padding_top,
                                 width  = 37,
                                 height = 37)
     logo_patreon_label["command"] = lambda: openpatreon()
@@ -1811,14 +1819,20 @@ class App:
 
         root.iconphoto(False, PhotoImage(file = find_file_by_relative_path("logo.png")))
 
-        place_blurred_background()       # Background
-        place_left_bar()                 # Left container
-        place_title()                    # Qualityscaler title
-
-        place_github_button()            # Github
-        place_paypal_button()            # Paypal
-        place_patreon_button()           # Patreon
-
+        place_blurred_background()           # Background
+        if windows_ver >= 22000: # Windows 11
+            place_left_bar_win11()              # Left container
+            place_title(25)                     # Qualityscaler title
+            place_github_button(35)             # Github
+            place_paypal_button(35)             # Paypal
+            place_patreon_button(35)            # Patreon
+        else:                   # Windows 10            
+            place_left_bar_win10()              # Left container
+            place_title(35)                     # Qualityscaler title
+            place_github_button(45)             # Github
+            place_paypal_button(45)             # Paypal
+            place_patreon_button(45)            # Patreon
+        
         place_AI_models_title()          # AI models title
         place_AI_combobox()              # AI models widget
 
@@ -1829,7 +1843,7 @@ class App:
         place_backend_combobox()         # Backend widget
 
         place_VRAM_title()               # VRAM title
-        place_VRAM_combobox()
+        place_VRAM_combobox()            # VRAM widget
 
         place_message_box()              # Message box
 
@@ -1837,7 +1851,8 @@ class App:
 
         place_drag_drop_widget()         # Drag&Drop widget
         
-        apply_windows_transparency_effect(root)
+        if windows_ver >= 22000: # Windows 11
+            apply_windows_transparency_effect(root)
         apply_windows_dark_bar(root)
 
 if __name__ == "__main__":
