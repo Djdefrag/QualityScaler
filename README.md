@@ -64,8 +64,6 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [x] New GUI with Windows 11 style
 - [ ] Include audio for upscaled video
 - [x] Switch to Pytorch-directml to support all Directx12 compatible gpu (AMD, Intel, Nvidia)
-- [ ] Convert to Cython core functions
-    - [ ] expecting ~50% more performance
 - [ ] Update libraries 
     - [ ] Python 3.10 (expecting ~10% more performance) 
     - [ ] Python 3.11 (expecting ~30% more performance, now in beta)
