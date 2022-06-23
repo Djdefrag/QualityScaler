@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/171654121-06709d1c-0551-429a-9467-fd4618019b7e.png"> </a> 
+    <img src="https://user-images.githubusercontent.com/32263112/175261298-d71701fc-1428-449b-8b52-f5054730a6f7.png"> </a> 
 </div>
 
 ## Credits.
@@ -53,7 +53,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
     - [x] x2   - 500x500px -> 1000x1000px
     - [x] x3   - 500x500px -> 1500x1500px
     - [x] x4   - 500x500px -> 2000x2000px
-- [x] Cpu and Cuda backend
+- [x] Cpu and Gpu backend
 - [x] Compatible images - png, jpeg, bmp, webp, tif  
 - [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
 
@@ -81,6 +81,9 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - Fused model examples
 
 ![ggg](https://user-images.githubusercontent.com/32263112/168884634-fc3fdc7b-ac77-4750-aaf6-54b16786dacf.png)
+
+![Fusedx4](https://user-images.githubusercontent.com/32263112/175261504-872e25aa-5f36-471f-83df-7f64807a542a.png)
+
 
 
 
