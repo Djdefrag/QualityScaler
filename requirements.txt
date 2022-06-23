@@ -4,10 +4,8 @@ pypiwin32
 tk-tools
 python-tkdnd
 ttkwidgets
-opencv-python-headless
+opencv-python-headless==4.5.5.64
 pyinstaller
-image_slicer
-matplotlib
 pywin32
 moviepy
 pytorch-directml
