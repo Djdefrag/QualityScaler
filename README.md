@@ -68,6 +68,11 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
     - [ ] Python 3.10 (expecting ~10% more performance) 
     - [ ] Python 3.11 (expecting ~30% more performance, now in beta)
 
+## Known bugs.
+- [ ] Windows10 - the app starts with white colored navbar instead of dark
+- [ ] Upscaling multiple images doesn't free GPU Vram, so the it is very likely that the process will fail when the gpu memory fills up
+- [ ] Filenames with non-latin symbols (for example kangy, cyrillic etc.) not supported - [Temp solution] rename files like "image" or "video"
+
 ## Some Example.
 
 - BSRGAN examples
