@@ -49,10 +49,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [x] Video upscale
 - [x] Drag&drop files [image/multiple images/video]
 - [x] Automatic image tiling and merging to avoid gpu VRAM limitation
-- [x] Different upscale factors:
-    - [x] x2   - 500x500px -> 1000x1000px
-    - [x] x3   - 500x500px -> 1500x1500px
-    - [x] x4   - 500x500px -> 2000x2000px
+- [x] Resize image/video before upscaling
 - [x] Cpu and Gpu backend
 - [x] Compatible images - png, jpeg, bmp, webp, tif  
 - [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
@@ -82,13 +79,6 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 ![Bsrgan x4](https://user-images.githubusercontent.com/32263112/168884625-c869baee-4cca-4a33-bdad-b65d9c29889d.png)
 
 ![example](https://user-images.githubusercontent.com/32263112/171657072-0a746274-46e9-4641-b16c-a9f6f612624b.png)
-
-- Fused model examples
-
-![ggg](https://user-images.githubusercontent.com/32263112/168884634-fc3fdc7b-ac77-4750-aaf6-54b16786dacf.png)
-
-![Fusedx4](https://user-images.githubusercontent.com/32263112/175261504-872e25aa-5f36-471f-83df-7f64807a542a.png)
-
 
 
 
