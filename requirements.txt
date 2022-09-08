@@ -1,13 +1,17 @@
 wheel
 wmi
+## opencv-python-headless==4.5.5.64
+## opencv-contrib-python-headless==4.5.5.64
+opencv-python-headless
+opencv-contrib-python-headless
+pytorch-directml
 pypiwin32
 tk-tools
 python-tkdnd
 ttkwidgets
-opencv-python-headless==4.5.5.64
 pyinstaller
+pyinstaller-hooks-contrib
 pywin32
 moviepy
-pytorch-directml
 win32mica
 sv_ttk
