@@ -16,8 +16,6 @@
 
 BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
 
-RealSR_JPEG - https://github.com/jixiaozhong/RealSR | https://arxiv.org/pdf/2005.01996.pdf
-
 ## How is made.
 
 QualityScaler is completely written in Python, from backend to frontend. External packages are:
