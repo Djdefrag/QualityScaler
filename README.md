@@ -54,11 +54,9 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 
 ## Next steps.
 
-- [x] Support for Nvidia RTX 3k and 2k with cuda 11
-- [x] New Fused model (that combines the best of both models)
+- [x] Switch to Pytorch-directml to support all Directx12 compatible gpu (AMD, Intel, Nvidia)
 - [x] New GUI with Windows 11 style
 - [ ] Include audio for upscaled video
-- [x] Switch to Pytorch-directml to support all Directx12 compatible gpu (AMD, Intel, Nvidia)
 - [ ] Update libraries 
     - [ ] Python 3.10 (expecting ~10% more performance) 
     - [ ] Python 3.11 (expecting ~30% more performance, now in beta)
