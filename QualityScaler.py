@@ -16,48 +16,40 @@ from timeit import default_timer as timer
 from tkinter import PhotoImage, ttk
 
 import cv2
-import moviepy.video.io.ImageSequenceClip
 import numpy as np
 import tkinterDnD
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-from PIL import Image
+from moviepy.audio.AudioClip import CompositeAudioClip
+from moviepy.audio.io import AudioFileClip
+from moviepy.video.io import ImageSequenceClip, VideoFileClip
+from PIL import Image, ImageDraw, ImageFont
 from win32mica import MICAMODE, ApplyMica
 
 import sv_ttk
 
 global app_name
 app_name = "QualityScaler"
-version  = "3.0"
+version  = "4.0.f"
+pay      = False
 
-# changelog 3.0
-# changed title version UI
-# new font Segoe UI
-# changed image/frame resize bahaviour, boosting upscale quality
-# fixed button text color
-# resolved a bug on windows 10 that, at first start the navbar is light instead of dark theme
-# fixed background not showing for ErrorMessage on Windows10
-# updated external packages
-# updated weights in fused mode
-# bugfixing and code cleaning
-# when the image does not fit memory now will split by factor 3 instead of 2
-# simplified upscale process:
-#   only one model BSRGAN (with better quality and bettere speed)
-#   only 2 scale factors x2, x4 (maibe in feature there will be x3 again)\
-# new VRAM option and more info about GB occupied by each option
-# fixed bug not freeing VRAM when upscaling multiple images
-# add the possibility to resize input image/video before upscaling
+# changed resize behaviour for better image quality
+# changed image output file to .png to boost image quality
+# add text on image on free tier
+# add possibility to free % resize image instead of only 4 choise
+# added AI RealSR_JPEG models
+# fix for VRAM limiter logic
+# code cleaning
 
 image_path            = "no file"
 AI_model              = "BSRGANx2"
 device                = "dml"
 input_video_path      = ""
-target_file_extension = '.jpg'
+target_file_extension = ".png"
 windows_subversion    = int(platform.version().split('.')[2])
-resize_factor         = 1.33
-tiles_resolution      = 1000
+tiles_resolution      = 800
 single_file           = False
 multiple_files        = False
 video_files           = False
@@ -132,11 +124,13 @@ ctypes.windll.shcore.SetProcessDpiAwareness(True)
 scaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
 font_scale = 1/scaleFactor
 
+
 # ---------------------- /Dimensions ----------------------
 
 # ---------------------- Functions ----------------------
 
 # ------------------- Slice functions -------------------
+
 
 class Tile(object):
     def __init__(self, image, number, position, coords, filename=None):
@@ -307,9 +301,11 @@ def save_tiles(tiles, prefix="", directory=os.getcwd(), format="png"):
         )
     return tuple(tiles)
 
+
 # ------------------ / Slice functions ------------------
 
 # ------------------------ Utils ------------------------
+
 
 def openpaypal():
     webbrowser.open(paypalme, new=1)
@@ -424,19 +420,31 @@ def adapt_image_for_deeplearning(img, device):
     return img
 
 def resize_image(image_path, resize_factor):
-    interpolation_algorithm = cv2.INTER_AREA
 
-    new_image_path = image_path.replace(target_file_extension, "_resized" + target_file_extension)
-    
-    old_image = cv2.imread(image_path)
+    new_image_path = image_path.replace(target_file_extension, 
+                                        "_resized" + target_file_extension)
 
-    new_width   = round(old_image.shape[1]/resize_factor)
-    new_height  = round(old_image.shape[0]/resize_factor)
-    resized_image = cv2.resize(old_image,
-                                (new_width, new_height),
-                                interpolation = interpolation_algorithm)
-    
-    cv2.imwrite(new_image_path, resized_image)
+    old_image = Image.open(image_path)
+
+    new_width, new_height = old_image.size
+    new_width = int(new_width * resize_factor)
+    new_height = int(new_height * resize_factor)
+
+    resized_image = old_image.resize((new_width, new_height), 
+                                        resample = Image.LANCZOS)
+
+    if pay == False:
+        font = ImageFont.truetype("arial.ttf", 18)
+        img_text = ImageDraw.Draw(resized_image)
+        img_text.text((10, 10), 
+                        "Upscaled with"
+                        + "\nhttps://github.com/Djdefrag/QualityScaler"
+                        + "\n:)", 
+                        font=font, 
+                        fill=(230, 230, 230))
+                                    
+    resized_image.save(new_image_path)
+
     return new_image_path
 
 def resize_image_list(image_list, resize_factor):
@@ -451,19 +459,6 @@ def resize_image_list(image_list, resize_factor):
 
     return downscaled_images, files_to_delete
 
-def write_in_log_file(text_to_insert):
-    log_file_name   = app_name + ".log"
-    with open(log_file_name,'w') as log_file:
-        log_file.write(text_to_insert) 
-    log_file.close()
-
-def read_log_file():
-    log_file_name   = app_name + ".log"
-    with open(log_file_name,'r') as log_file:
-        step = log_file.readline()
-    log_file.close()
-    return step
-
 def extract_frames_from_video(video_path):
     create_temp_dir(app_name + "_temp")
 
@@ -477,7 +472,7 @@ def extract_frames_from_video(video_path):
         if ret == False:
             break
         extr_frame += 1
-        result_path = app_name + "_temp" + os.sep + "frame_" + str(extr_frame) + ".jpg"
+        result_path = app_name + "_temp" + os.sep + "frame_" + str(extr_frame) + target_file_extension
         cv2.imwrite(result_path, frame)
         video_frames_list.append(result_path)
 
@@ -507,7 +502,7 @@ def video_reconstruction_by_frames(input_video_path, video_frames_upscaled_list,
                            ".mp4")
 
     # 4) create upscaled video with upscaled frames
-    clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(
+    clip = ImageSequenceClip.ImageSequenceClip(
                     video_frames_upscaled_list, fps=frame_rate)
     clip.write_videofile(upscaled_video_name)
 
@@ -530,10 +525,24 @@ def convert_image_and_save(image_to_prepare, target_file_extension):
     cv2.imwrite(new_image_path, cv2.imread(image_to_prepare))
     return new_image_path
 
+def write_in_log_file(text_to_insert):
+    log_file_name   = app_name + ".log"
+    with open(log_file_name,'w') as log_file:
+        log_file.write(text_to_insert) 
+    log_file.close()
+
+def read_log_file():
+    log_file_name   = app_name + ".log"
+    with open(log_file_name,'r') as log_file:
+        step = log_file.readline()
+    log_file.close()
+    return step
+
 # ----------------------- /Utils ------------------------
 
 
 # ------------------ Neural Net related ------------------
+
 
 def initialize_weights(net_l, scale=1):
     if not isinstance(net_l, list):
@@ -630,19 +639,19 @@ class RRDBNet(nn.Module):
 
         return out
 
+
 # ------------------ /Neural Net related ------------------
 
 # ----------------------- Core ------------------------
 
-def on_drop_event(event):
+
+def file_drop_event(event):
     global image_path
     global multiple_files
     global multi_img_list
     global video_files
     global single_file
     global input_video_path
-
-    info_string.set("")
 
     supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number = count_files_dropped(event)
     all_supported, single_file, multiple_files, video_files, more_than_one_video = check_compatibility(supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number)
@@ -860,7 +869,7 @@ def prepare_AI_model(AI_model, device):
 
     return model
 
-def process_upscale_multiple_images_torch(image_list, AI_model, resize_factor, device, tiles_resolution, target_file_extension):
+def process_upscale_multiple_images_qualityscaler(image_list, AI_model, resize_factor, device, tiles_resolution, target_file_extension):
     try:
         start = timer()
         write_in_log_file('Preparing for upscaling')
@@ -884,13 +893,10 @@ def process_upscale_multiple_images_torch(image_list, AI_model, resize_factor, d
         write_in_log_file("Upscale completed [" + str(round(timer() - start)) + " sec.]")
 
         delete_list_of_files(files_to_delete) 
-
     except:
         write_in_log_file('Error while upscaling')
-        error_root = tkinterDnD.Tk()
-        ErrorMessage(error_root)
 
-def process_upscale_video_frames_torch(input_video_path, AI_model, resize_factor, device, tiles_resolution, target_file_extension):
+def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resize_factor, device, tiles_resolution, target_file_extension):
     try:
         start = timer()
 
@@ -925,12 +931,12 @@ def process_upscale_video_frames_torch(input_video_path, AI_model, resize_factor
 
     except:
         write_in_log_file('Error while upscaling')
-        error_root = tkinterDnD.Tk()
-        ErrorMessage(error_root, "upscale_problem")
+
 
 # ----------------------- /Core ------------------------
 
 # ---------------------- GUI related ----------------------
+
 
 def upscale_button_command():
     global image_path
@@ -944,12 +950,25 @@ def upscale_button_command():
     global input_video_path
     global device
 
+    try:
+        resize_factor = int(float(str(selected_resize_factor.get())))
+    except:
+        info_string.set("Resize input must be a numeric value")
+        return
+
+    if resize_factor > 0 and resize_factor <= 100:
+        resize_factor = resize_factor/100
+        pass    
+    else:
+        info_string.set("Resize must be in range 1 - 100")
+        return
+
     info_string.set("...")
 
     if video_files:
         place_stop_button()
 
-        process_upscale = multiprocessing.Process(target = process_upscale_video_frames_torch,
+        process_upscale = multiprocessing.Process(target = process_upscale_video_frames_qualityscaler,
                                                   args   = (input_video_path, 
                                                             AI_model, 
                                                             resize_factor, 
@@ -966,7 +985,7 @@ def upscale_button_command():
     elif multiple_files:
         place_stop_button()
         
-        process_upscale = multiprocessing.Process(target = process_upscale_multiple_images_torch,
+        process_upscale = multiprocessing.Process(target = process_upscale_multiple_images_qualityscaler,
                                                     args   = (multi_img_list, 
                                                              AI_model, 
                                                              resize_factor, 
@@ -982,7 +1001,7 @@ def upscale_button_command():
     elif single_file:
         place_stop_button()
 
-        process_upscale = multiprocessing.Process(target = process_upscale_multiple_images_torch,
+        process_upscale = multiprocessing.Process(target = process_upscale_multiple_images_qualityscaler,
                                                     args   = (multi_img_list, 
                                                              AI_model, 
                                                              resize_factor, 
@@ -1025,54 +1044,12 @@ def clear_input_variables():
 
 def clear_app_background():
     drag_drop = ttk.Label(root,
-                          ondrop = on_drop_event,
+                          ondrop = file_drop_event,
                           relief = "flat",
                           background = background_color,
                           foreground = text_color)
     drag_drop.place(x = left_bar_width + 50, y=0,
                     width = drag_drop_width, height = drag_drop_height)
-
-def place_drag_drop_widget():
-    clear_input_variables()
-
-    clear_app_background()
-
-    ft = tkFont.Font(family = default_font,
-                        size   = round(12 * font_scale),
-                        weight = "bold")
-
-    text_drop = (" DROP FILES HERE \n\n"
-                + " ⥥ \n\n"
-                + " IMAGE   - jpg png tif bmp webp \n\n"
-                + " IMAGE LIST   - jpg png tif bmp webp \n\n"
-                + " VIDEO   - mp4 webm mkv flv gif avi mov mpg qt 3gp \n\n")
-
-    drag_drop = ttk.Notebook(root, ondrop  = on_drop_event)
-
-    x_center = 30 + left_bar_width + drag_drop_width/2 - (drag_drop_width * 0.75)/2
-    y_center = drag_drop_height/2 - (drag_drop_height * 0.75)/2
-
-    drag_drop.place(x = x_center, 
-                    y = y_center, 
-                    width  = drag_drop_width * 0.75, 
-                    height = drag_drop_height * 0.75)
-
-    drag_drop_text = ttk.Label(root,
-                            text    = text_drop,
-                            ondrop  = on_drop_event,
-                            font    = ft,
-                            anchor  = "center",
-                            relief  = 'flat',
-                            justify = "center",
-                            foreground = text_color)
-
-    x_center = 30 + left_bar_width + drag_drop_width/2 - (drag_drop_width * 0.5)/2
-    y_center = drag_drop_height/2 - (drag_drop_height * 0.5)/2
-    
-    drag_drop_text.place(x = x_center, 
-                         y = y_center, 
-                         width  = drag_drop_width * 0.50, 
-                         height = drag_drop_height * 0.50)
 
 def show_video_info_with_drag_drop(video_path):
     global image
@@ -1109,7 +1086,7 @@ def show_video_info_with_drag_drop(video_path):
     image = tk.PhotoImage(file = image_to_show_resized)
     drag_drop_and_images = ttk.Label(root,
                                      image   = image,
-                                     ondrop  = on_drop_event,
+                                     ondrop  = file_drop_event,
                                      anchor  = "center",
                                      relief  = "flat",
                                      justify = "center",
@@ -1130,7 +1107,7 @@ def show_video_info_with_drag_drop(video_path):
 
     video_info_space = ttk.Label(root,
                                  text    = file_description,
-                                 ondrop  = on_drop_event,
+                                 ondrop  = file_drop_event,
                                  font    = (default_font, round(11 * font_scale), "bold"),
                                  anchor  = "center",
                                  relief  = "flat",
@@ -1174,7 +1151,7 @@ def show_list_images_in_GUI(image_list_prepared):
 
     images_list = ttk.Label(root,
                             text    = final_string,
-                            ondrop  = on_drop_event,
+                            ondrop  = file_drop_event,
                             font    = (default_font, round(12 * font_scale)),
                             anchor  = "n",
                             relief  = "flat",
@@ -1190,7 +1167,7 @@ def show_list_images_in_GUI(image_list_prepared):
 
     images_counter = ttk.Entry(root, 
                                 foreground = text_color,
-                                ondrop  = on_drop_event,
+                                ondrop  = file_drop_event,
                                 font    = (default_font, round(12 * font_scale), "bold"), 
                                 justify = 'center')
 
@@ -1219,7 +1196,7 @@ def show_image_in_GUI(image_to_show, _ ):
     drag_drop_and_images = ttk.Label(root,
                                      text="",
                                      image   = image,
-                                     ondrop  = on_drop_event,
+                                     ondrop  = file_drop_event,
                                      anchor  = "center",
                                      relief  = "flat",
                                      justify = "center",
@@ -1310,29 +1287,10 @@ def combobox_AI_selection(event):
 
     selected = str(selected_AI.get())
 
-    if 'Fused' in selected:
-        AI_model = 'Fused'
-    else:
-        AI_model = selected
+    AI_model = selected
 
     Combo_box_AI.set('')
     Combo_box_AI.set(selected)
-
-def combobox_resize_factor_selection(event):
-    global resize_factor
-
-    selected = str(selected_resize_factor.get())
-    if '25' in selected:
-        resize_factor = 4
-    elif '50' in selected:
-        resize_factor = 2
-    elif '75' in selected:
-        resize_factor = 1.33
-    elif '100' in selected:
-        resize_factor = 1
-
-    Combo_box_upscale_factor.set('') # clean selection in widget
-    Combo_box_upscale_factor.set(selected)
 
 def combobox_backend_selection(event):
     global device
@@ -1352,20 +1310,65 @@ def combobox_VRAM_selection(event):
     selected = str(selected_VRAM.get())
 
     if 'Minimal(2GB)' == selected:
-        tiles_resolution = 250
+        tiles_resolution = 200
     if 'Medium(4GB)' == selected:
-        tiles_resolution = 500
+        tiles_resolution = 400
     if 'Normal(6GB)' == selected:
-        tiles_resolution = 750
+        tiles_resolution = 600
     if 'High(8GB)' == selected:
-        tiles_resolution = 1000
+        tiles_resolution = 800
     if 'Ultra(12GB)' == selected:
-        tiles_resolution = 1250
-    if 'Max(16GB)' == selected:
-        tiles_resolution = 1500
+        tiles_resolution = 1000
+    if 'Max(>16GB)' == selected:
+        tiles_resolution = 1200
 
     Combo_box_VRAM.set('')
     Combo_box_VRAM.set(selected)
+
+
+
+
+def place_drag_drop_widget():
+    clear_input_variables()
+
+    clear_app_background()
+
+    ft = tkFont.Font(family = default_font,
+                        size   = round(12 * font_scale),
+                        weight = "bold")
+
+    text_drop = (" DROP FILES HERE \n\n"
+                + " ⥥ \n\n"
+                + " IMAGE   - jpg png tif bmp webp \n\n"
+                + " IMAGE LIST   - jpg png tif bmp webp \n\n"
+                + " VIDEO   - mp4 webm mkv flv gif avi mov mpg qt 3gp \n\n")
+
+    drag_drop = ttk.Notebook(root, ondrop  = file_drop_event)
+
+    x_center = 30 + left_bar_width + drag_drop_width/2 - (drag_drop_width * 0.75)/2
+    y_center = drag_drop_height/2 - (drag_drop_height * 0.75)/2
+
+    drag_drop.place(x = x_center, 
+                    y = y_center, 
+                    width  = drag_drop_width * 0.75, 
+                    height = drag_drop_height * 0.75)
+
+    drag_drop_text = ttk.Label(root,
+                            text    = text_drop,
+                            ondrop  = file_drop_event,
+                            font    = ft,
+                            anchor  = "center",
+                            relief  = 'flat',
+                            justify = "center",
+                            foreground = text_color)
+
+    x_center = 30 + left_bar_width + drag_drop_width/2 - (drag_drop_width * 0.5)/2
+    y_center = drag_drop_height/2 - (drag_drop_height * 0.5)/2
+    
+    drag_drop_text.place(x = x_center, 
+                         y = y_center, 
+                         width  = drag_drop_width * 0.50, 
+                         height = drag_drop_height * 0.50)
 
 def place_backend_combobox():
     ft = tkFont.Font(family = default_font,
@@ -1393,53 +1396,49 @@ def place_backend_combobox():
     Combo_box_backend.bind('<<ComboboxSelected>>', combobox_backend_selection)
     Combo_box_backend.set('GPU')
 
-def place_resize_factor_combobox():
+def place_resize_factor_entrybox():
     ft = tkFont.Font(family = default_font,
                      size   = round(11 * font_scale),
                      weight = "bold")
 
-    root.option_add("*TCombobox*Listbox*Background", background_color)
-    root.option_add("*TCombobox*Listbox*Foreground", selected_button_color)
-    root.option_add("*TCombobox*Listbox*Font",       ft)
-    root.option_add('*TCombobox*Listbox.Justify', 'center')
+    global Entry_box_resize_factor
+    Entry_box_resize_factor = ttk.Entry(root, 
+                                        textvariable = selected_resize_factor, 
+                                        justify      = 'center',
+                                        foreground   = text_color,
+                                        takefocus    = False,
+                                        font         = ft)
+    Entry_box_resize_factor.place(x = 50 + left_bar_width/2 - 285/2, 
+                                    y = button_2_y, 
+                                    width  = 290 * 0.8, 
+                                    height = 42)
+    Entry_box_resize_factor.insert(0, '75')
 
-    global Combo_box_upscale_factor
-    Combo_box_upscale_factor = ttk.Combobox(root, 
-                            textvariable = selected_resize_factor, 
-                            justify      = 'center',
-                            foreground   = text_color,
-                            values       = ['25%',
-                                            '50%', 
-                                            '75%',
-                                            '100%'],
-                            state        = 'readonly',
-                            takefocus    = False,
-                            font         = ft)
-                            
-    Combo_box_upscale_factor.place(x = 50 + left_bar_width/2 - 285/2, 
-                       y = button_2_y, 
-                       width  = 290, 
-                       height = 42)
-    Combo_box_upscale_factor.bind('<<ComboboxSelected>>', combobox_resize_factor_selection)
-    Combo_box_upscale_factor.set('75%')
-
+    Label_percentage = ttk.Label(root,
+                                 text       = "%",
+                                 justify    = "center",
+                                 font       = tkFont.Font(family = default_font,
+                                            size   = round(13 * font_scale),
+                                            weight = "bold"),
+                                 foreground = text_color)
+    Label_percentage.place(x = left_bar_width/2 + 160, 
+                            y = button_2_y + 2, 
+                            width  = 30, 
+                            height = 42)
+    
 def place_AI_combobox():
     ft = tkFont.Font(family = default_font,
                      size   = round(11 * font_scale),
                      weight = "bold")
 
-    root.option_add("*TCombobox*Listbox*Background", background_color)
-    root.option_add("*TCombobox*Listbox*Foreground", selected_button_color)
-    root.option_add("*TCombobox*Listbox*Font",       ft)
-    root.option_add('*TCombobox*Listbox.Justify', 'center')
+    models_array = [ 'BSRGANx2', 'BSRGANx4', 'RealSR_JPEGx4' ]
 
     global Combo_box_AI
     Combo_box_AI = ttk.Combobox(root, 
                         textvariable = selected_AI, 
                         justify      = 'center',
                         foreground   = text_color,
-                        values       = [ 'BSRGANx2', 
-                                         'BSRGANx4' ],
+                        values       = models_array,
                         state        = 'readonly',
                         takefocus    = False,
                         font         = ft)
@@ -1454,11 +1453,6 @@ def place_VRAM_combobox():
     ft = tkFont.Font(family = default_font,
                      size   = round(11 * font_scale),
                      weight = "bold")
-
-    root.option_add("*TCombobox*Listbox*Background", background_color)
-    root.option_add("*TCombobox*Listbox*Foreground", selected_button_color)
-    root.option_add("*TCombobox*Listbox*Font",       ft)
-    root.option_add('*TCombobox*Listbox.Justify',    'center')
 
     global Combo_box_VRAM
     Combo_box_VRAM = ttk.Combobox(root, 
@@ -1615,10 +1609,10 @@ def place_resize_factor_title():
                                             foreground = text_color, 
                                             justify    = 'left', 
                                             relief     = 'flat', 
-                                            text       = " ⤮  Resize factor ")
+                                            text       = " ⤮  Resize before upscaling ")
     Upscale_fact_selection_title.place(x = left_bar_width/2 - 115,
                                         y = button_2_y - 45,
-                                        width  = 200,
+                                        width  = 300,
                                         height = 40)
 
 def place_backend_title():
@@ -1658,9 +1652,13 @@ def place_message_box():
                         width  = left_bar_width * 0.75,
                         height = 30)
 
+    info_string.set("...")
+
+
 # ---------------------- /GUI related ----------------------
 
 # ---------------------- /Functions ----------------------
+
 
 def apply_windows_dark_bar(window_root):
     window_root.update()
@@ -1683,75 +1681,7 @@ def apply_windows_transparency_effect(window_root):
     hwnd = ctypes.windll.user32.GetParent(window_root.winfo_id())
     ApplyMica(hwnd, MICAMODE.DARK )
 
-class ErrorMessage():
-    def __init__(self, error_root):
-        ctypes.windll.shcore.SetProcessDpiAwareness(True)
-        scaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
-        font_scale = 1.2/scaleFactor
-        
-        error_root.title("")
-        width  = 515
-        height = 525
-        screenwidth = error_root.winfo_screenwidth()
-        screenheight = error_root.winfo_screenheight()
-        alignstr = '%dx%d+%d+%d' % (width, height, (screenwidth - width) / 2, (screenheight - height) / 2)
-        error_root.geometry(alignstr)
-        error_root.resizable(width=False, height=False)
 
-        error_root.iconphoto(False, PhotoImage(file = find_by_relative_path("logo.png")))
-
-        window_width  = 515
-        window_height = 530
-
-        error_string  = "Upscale\nerror"
-        error_suggest = (" Ops, some error occured while upscaling: \n\n"
-                             + " - have you changed the file location? \n"
-                             + " - try to set Upscale Factor to x2 or x3 \n"
-                             + " - try to set AI Backend to <cpu> ")
-
-        ft = tkFont.Font(family=default_font,
-                         size=int(12 * font_scale),
-                         weight="bold")
-
-        Error_container = tk.Label(error_root)
-        Error_container["anchor"]  = "center"
-        Error_container["justify"] = "center"
-        Error_container["font"]    = ft
-        Error_container["bg"]      = "#FF4433"
-        Error_container["fg"]      = "#202020"
-        Error_container["text"]    = error_string
-        Error_container["relief"]  = "flat"
-        Error_container.place(x = 0,
-                              y = 0,
-                              width  = window_width,
-                              height = window_height/4)
-
-        ft = tkFont.Font(family=default_font,
-                    size=int(11 * font_scale),
-                    weight="bold")
-
-        Suggest_container = tk.Label(error_root)
-        Suggest_container["anchor"]  = "center"
-        Suggest_container["justify"] = "left"
-        Suggest_container["font"]    = ft
-        Suggest_container["bg"]      = background_color
-        Suggest_container["fg"]      = "grey"
-        Suggest_container["text"]    = error_suggest
-        Suggest_container["relief"]  = "flat"
-        Suggest_container["wraplength"] = window_width*0.9
-        Suggest_container.place(x = 0,
-                                y = window_height/4,
-                                width  = window_width,
-                                height = window_height*0.75)
-
-        error_root.attributes('-topmost', True)
-        
-        if windows_subversion >= 22000: # Windows 11
-            apply_windows_transparency_effect(error_root)
-        apply_windows_dark_bar(error_root)
-
-        error_root.update()
-        error_root.mainloop()
 
 class App:
     def __init__(self, root):
@@ -1780,7 +1710,7 @@ class App:
         place_AI_models_title()          # AI models title
         place_AI_combobox()              # AI models widget
         place_resize_factor_title()      # Upscale factor title
-        place_resize_factor_combobox()   # Upscale factor widget
+        place_resize_factor_entrybox()   # Upscale factor widget
         place_backend_title()            # Backend title
         place_backend_combobox()         # Backend widget
         place_VRAM_title()               # VRAM title
