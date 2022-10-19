@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/189052979-d3dc5682-61bd-4cb1-a15e-af591f78519d.jpg"> </a> 
+    <img src="https://user-images.githubusercontent.com/32263112/196660740-7d6468a7-045f-4d5d-9803-54dad8224988.PNG"> </a> 
 </div>
 
 ## Credits.
