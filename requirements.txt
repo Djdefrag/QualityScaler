@@ -1,12 +1,10 @@
-wheel
-wmi
-## opencv-python-headless==4.5.5.64
-## opencv-contrib-python-headless==4.5.5.64
+#AI
 opencv-python-headless
 opencv-contrib-python-headless
 pytorch-directml
-pypiwin32
-tk-tools
+
+#UTILS
+wheel
 python-tkdnd
 ttkwidgets
 pyinstaller
@@ -14,4 +12,4 @@ pyinstaller-hooks-contrib
 pywin32
 moviepy
 win32mica
-sv_ttk
+sv_ttk==1.0
