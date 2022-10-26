@@ -1,3 +1,4 @@
+
 import ctypes
 import functools
 import multiprocessing
@@ -32,19 +33,14 @@ import sv_ttk
 
 global app_name
 app_name = "QualityScaler"
-version  = "4.0.f"
+version  = "4.1.f"
 pay      = False
 
-# changed resize behaviour for better image quality
-# changed image output file to .png to boost image quality
-# add text on image on free tier
-# add possibility to free % resize image instead of only 4 choise
-# added AI RealSR_JPEG models
-# fix for VRAM limiter logic
-# code cleaning
+# fix default AI Model to BSRGANx4, BSRGANx2 is not working as intended
+# bug fixing and improvement
 
 image_path            = "no file"
-AI_model              = "BSRGANx2"
+AI_model              = "BSRGANx4"
 device                = "dml"
 input_video_path      = ""
 target_file_extension = ".png"
@@ -183,7 +179,6 @@ def calc_columns_rows(n):
     """
     Calculate the number of columns and rows required to divide an image
     into ``n`` parts.
-
     Return a tuple of integers in the format (num_columns, num_rows)
     """
     num_columns = int(ceil(sqrt(n)))
