@@ -12,11 +12,16 @@
     <img src="https://user-images.githubusercontent.com/32263112/196660740-7d6468a7-045f-4d5d-9803-54dad8224988.PNG"> </a> 
 </div>
 
+
+## Citations. ❤
+
+https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-images/
+
 ## Credits.
 
 BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
 
-## How is made.
+## How is made. 🛠
 
 QualityScaler is completely written in Python, from backend to frontend. External packages are:
 - [ ] AI  -> Pytorch-directml
@@ -25,13 +30,13 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [ ] Packaging   -> Pyinstaller
 - [ ] Miscellaneous -> Pywin32 / Win32mica / Image_slicer
 
-## Installation.
+## Installation. 👨‍💻
 
 1) download the QualityScaler release .zip
 2) unzip using 7zip or similar
 3) execute QualityScaler.exe in the directory
 
-## Requirements
+## Requirements. 🤓
 - [ ] Windows 11 / Windows 10
 - [ ] RAM >= 8Gb
 - [ ] Directx12 compatible GPU:
@@ -52,14 +57,14 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [x] Compatible images - png, jpeg, bmp, webp, tif  
 - [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
 
-## Next steps.
+## Next steps. 🤫
 
 - [x] Switch to Pytorch-directml to support all Directx12 compatible gpu (AMD, Intel, Nvidia)
 - [x] New GUI with Windows 11 style
 - [ ] Include audio for upscaled video
 - [ ] Update libraries 
     - [ ] Python 3.10 (expecting ~10% more performance) 
-    - [ ] Python 3.11 (expecting ~30% more performance, now in beta)
+    - [ ] Python 3.11 (expecting ~30% more performance)
 
 ## Known bugs.
 - [x] Windows10 - the app starts with white colored navbar instead of dark
