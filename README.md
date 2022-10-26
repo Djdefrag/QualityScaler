@@ -17,6 +17,8 @@
 
 https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-images/
 
+https://timesavervfx.com/ai-upscale/
+
 ## Credits.
 
 BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
