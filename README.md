@@ -47,6 +47,13 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
     - [ ] any NVIDIA >=  GTX 600 series
 - [ ] CPU [works without GPU, but is very slow]
 
+## My testing PC.
+- [ ] Windows 10 Revios
+- [ ] CPU Ryzen 5600G
+- [ ] RAM 16Gb
+- [ ] GPU Nvidia 1660
+- [ ] STORAGE 1 Sata 120Gb SSD, 1 NVME 500Gb SSD
+
 ## Features.
 
 - [x] Easy to use GUI
@@ -72,6 +79,8 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [x] Windows10 - the app starts with white colored navbar instead of dark
 - [x] Upscaling multiple images doesn't free GPU Vram, so the it is very likely that the process will fail when the gpu memory fills up
 - [ ] Filenames with non-latin symbols (for example kangy, cyrillic etc.) not supported - [Temp solution] rename files like "image" or "video"
+- [ ] When running QualityScaler as Administrator, drag&drop is not working
+- [ ] Some user reported that QualityScaler does not work correctly, returning the message 'Errore while upscaling'
 
 ## Some Example.
 
