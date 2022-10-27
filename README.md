@@ -51,7 +51,7 @@ https://www.techpowerup.com/download/visual-c-redistributable-runtime-package-al
 - [ ] CPU [works without GPU, but is very slow]
 
 ## My testing PC.
-- [ ] Windows 10 Revios
+- [ ] Windows 10 ReviOS
 - [ ] CPU Ryzen 5600G
 - [ ] RAM 16Gb
 - [ ] GPU Nvidia 1660
