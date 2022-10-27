@@ -33,7 +33,8 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [ ] Miscellaneous -> Pywin32 / Win32mica / Image_slicer
 
 ## Installation. 👨‍💻
-
+Prerequisites: download and install all Visual C++ Redistributable
+https://www.techpowerup.com/download/visual-c-redistributable-runtime-package-all-in-one/
 1) download the QualityScaler release .zip
 2) unzip using 7zip or similar
 3) execute QualityScaler.exe in the directory
@@ -93,9 +94,5 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 ![Bsrgan x4 (3)](https://user-images.githubusercontent.com/32263112/197983979-5857a855-d402-4fab-9217-ee5bd057bd01.png)
 
 ![Bsrgan x4](https://user-images.githubusercontent.com/32263112/198290909-277e176e-ccb4-4a4b-8531-b182a18d566a.png)
-
-
-
-
 
 
