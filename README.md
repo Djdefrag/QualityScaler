@@ -34,7 +34,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 
 ## Installation. 👨‍💻
 #### Prerequisites: 
- Visual C++ Redistributable: https://www.techpowerup.com/download/visual-c-redistributable-runtime-package-all-in-one/
+ Visual C++: https://www.techpowerup.com/download/visual-c-redistributable-runtime-package-all-in-one/
  
  DirectX runtime: https://www.microsoft.com/en-us/download/details.aspx?id=8109
 #### Installation:
