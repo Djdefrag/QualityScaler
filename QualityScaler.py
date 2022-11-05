@@ -30,20 +30,8 @@ from win32mica import MICAMODE, ApplyMica
 
 import sv_ttk
 
-# add audio preservation for video upscaling
-# better upscale quality
-# add resizing progress text
-# optimized resizing video frames 
-# better UI font scaling
-# automatic temp files cleaning when upscaling finish
-# optimized gpu utilization
-# default AI model is now BSRGANx4
-# watermak size will be linear with image/video resolution
-# better file organization in installation folder
-# code cleaning, updated libraries, bugfix and performance improvements
-
 pay      = True
-version  = "v. 5.0"
+version  = "v. 5.1"
 
 if not pay:
     version = version + ".f"
@@ -564,9 +552,12 @@ def extract_frames_from_video(video_path):
     cap.release()
 
     # extract audio from video
-    video = VideoFileClip.VideoFileClip(video_path)
-    audio = video.audio
-    audio.write_audiofile(app_name + "_temp" + os.sep + "audio.mp3")
+    try:
+        video = VideoFileClip.VideoFileClip(video_path)
+        audio = video.audio
+        audio.write_audiofile(app_name + "_temp" + os.sep + "audio.mp3")
+    except:
+        pass
 
     return video_frames_list
 
@@ -584,20 +575,24 @@ def video_reconstruction_by_frames(input_video_path, video_frames_upscaled_list,
         video_name = video_name.replace(video_type, "")
 
     # 4) create upscaled video with upscaled frames
-    temp_video_path = app_name + "_temp" + os.sep + "tempVideo.mp4"
-    clip = ImageSequenceClip.ImageSequenceClip(video_frames_upscaled_list, 
-                                                                fps=frame_rate)
-    clip.write_videofile(temp_video_path)
+    try:
+        temp_video_path = app_name + "_temp" + os.sep + "tempVideo.mp4"
+        clip = ImageSequenceClip.ImageSequenceClip(video_frames_upscaled_list, 
+                                                                    fps=frame_rate)
+        clip.write_videofile(temp_video_path)
 
-    # 5) add audio in upscaled video
-    upscaled_video_path = (only_path + video_name + "_" +
-                        AI_model + ".mp4")
+        # 5) add audio in upscaled video
+        upscaled_video_path = (only_path + video_name + "_" +
+                                AI_model + ".mp4")
 
-    video = VideoFileClip.VideoFileClip(temp_video_path)
-    audio = AudioFileClip.AudioFileClip(app_name + "_temp" + os.sep + "audio.mp3")
+        video = VideoFileClip.VideoFileClip(temp_video_path)
+        audio = AudioFileClip.AudioFileClip(app_name + "_temp" + os.sep + "audio.mp3")
 
-    new_audioclip = CompositeAudioClip([audio])
-    video.audio = new_audioclip
+        new_audioclip = CompositeAudioClip([audio])
+        video.audio = new_audioclip
+    except:
+        pass
+    
     video.write_videofile(upscaled_video_path)
 
 
@@ -996,7 +991,6 @@ def process_upscale_multiple_images_qualityscaler(image_list, AI_model, resize_f
         write_in_log_file('Error while upscaling')
 
 def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resize_factor, device, tiles_resolution, target_file_extension):
-    try:
         start = timer()
                         
         optimize_torch()
@@ -1031,8 +1025,7 @@ def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resiz
         write_in_log_file("Upscale video completed [" + str(round(timer() - start)) + " sec.]")
 
         create_temp_dir(app_name + "_temp")
-    except:
-        write_in_log_file('Error while upscaling')
+
     
 
 # ----------------------- /Core ------------------------
