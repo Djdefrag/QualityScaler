@@ -1,7 +1,7 @@
 
 <div align="center">
     <br>
-    <img src="https://github.com/Djdefrag/QualityScaler/blob/main/logo.png" width="175"> </a> 
+    <img src="https://github.com/Djdefrag/QualityScaler/blob/main/Assets/logo.png" width="175"> </a> 
     <br><br> QualityScaler - image/video deeplearning upscaling for any GPU <br><br>
     <a href="https://github.com/Djdefrag/QualityScaler/releases">
          <img src="https://user-images.githubusercontent.com/86362423/162710522-c40c4f39-a6b9-48bc-84bc-1c6b78319f01.png" width="200">
@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/196660740-7d6468a7-045f-4d5d-9803-54dad8224988.PNG"> </a> 
+    <img src="https://user-images.githubusercontent.com/32263112/200124160-5ca85aae-f09e-4e1f-a5cc-7e013b90ccf3.PNG"> </a> 
 </div>
 
 
@@ -40,6 +40,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
  Visual C++: https://www.techpowerup.com/download/visual-c-redistributable-runtime-package-all-in-one/
  
  DirectX runtime: https://www.microsoft.com/en-us/download/details.aspx?id=8109
+ 
 #### Installation:
  1. download the QualityScaler release .zip
  2. unzip using 7zip or similar
