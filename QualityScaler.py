@@ -1,4 +1,3 @@
-
 import ctypes
 import functools
 import multiprocessing
@@ -26,24 +25,36 @@ import torch.nn.init as init
 from moviepy.audio.AudioClip import CompositeAudioClip
 from moviepy.audio.io import AudioFileClip
 from moviepy.video.io import ImageSequenceClip, VideoFileClip
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from win32mica import MICAMODE, ApplyMica
 
 import sv_ttk
 
+# add audio preservation for video upscaling
+# better upscale quality
+# add resizing progress text
+# optimized resizing video frames 
+# better UI font scaling
+# automatic temp files cleaning when upscaling finish
+# optimized gpu utilization
+# default AI model is now BSRGANx4
+# watermak size will be linear with image/video resolution
+# better file organization in installation folder
+# code cleaning, updated libraries, bugfix and performance improvements
+
+pay      = True
+version  = "v. 5.0"
+
+if not pay:
+    version = version + ".f"
+
 global app_name
 app_name = "QualityScaler"
-version  = "4.1.f"
-pay      = False
-
-# fix default AI Model to BSRGANx4, BSRGANx2 is not working as intended
-# bug fixing and improvement
 
 image_path            = "no file"
 AI_model              = "BSRGANx4"
 device                = "dml"
 input_video_path      = ""
-target_file_extension = ".png"
 windows_subversion    = int(platform.version().split('.')[2])
 tiles_resolution      = 800
 single_file           = False
@@ -52,15 +63,17 @@ video_files           = False
 multi_img_list        = []
 video_frames_list     = []
 video_frames_upscaled_list = []
+blur_pre_resize       = True
+target_file_extension = ".png"
 
 paypalme           = "https://www.paypal.com/paypalme/jjstd/5"
 githubme           = "https://github.com/Djdefrag/QualityScaler"
-patreonme          = "https://www.patreon.com/Djdefrag"
+itchme             = "https://jangystudio.itch.io/qualityscaler"
 
 default_font          = 'Segoe UI'
 background_color      = "#181818"
 window_width          = 1300
-window_height         = 725
+window_height         = 750
 left_bar_width        = 410
 left_bar_height       = window_height
 drag_drop_width       = window_width - left_bar_width
@@ -69,10 +82,10 @@ show_image_width      = drag_drop_width * 0.8
 show_image_height     = drag_drop_width * 0.6
 image_text_width      = drag_drop_width * 0.8
 support_button_height = 95 
-button_1_y            = 200
-button_2_y            = 300
-button_3_y            = 400
-button_4_y            = 500
+button_1_y            = 215
+button_2_y            = 315
+button_3_y            = 415
+button_4_y            = 515
 text_color            = "#DCDCDC"
 selected_button_color = "#ffbf00"
 
@@ -118,7 +131,7 @@ not_supported_file_list = ['.txt', '.exe', '.xls', '.xlsx', '.pdf',
 
 ctypes.windll.shcore.SetProcessDpiAwareness(True)
 scaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
-font_scale = 1/scaleFactor
+font_scale = round(1/scaleFactor, 1)
 
 
 # ---------------------- /Dimensions ----------------------
@@ -179,6 +192,7 @@ def calc_columns_rows(n):
     """
     Calculate the number of columns and rows required to divide an image
     into ``n`` parts.
+
     Return a tuple of integers in the format (num_columns, num_rows)
     """
     num_columns = int(ceil(sqrt(n)))
@@ -301,15 +315,14 @@ def save_tiles(tiles, prefix="", directory=os.getcwd(), format="png"):
 
 # ------------------------ Utils ------------------------
 
-
 def openpaypal():
     webbrowser.open(paypalme, new=1)
 
 def opengithub():
     webbrowser.open(githubme, new=1)
 
-def openpatreon():
-    webbrowser.open(patreonme, new=1)
+def openitch():
+    webbrowser.open(itchme, new=1)
 
 def create_temp_dir(name_dir):
     if os.path.exists(name_dir):
@@ -344,6 +357,9 @@ def save_image(img, img_path):
 def uint_to_tensor4(img):
     if img.ndim == 2:
         img = np.expand_dims(img, axis=2)
+
+    #return F.interpolate(torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1).float().div(255.).unsqueeze(0), 256)
+
     return torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1).float().div(255.).unsqueeze(0)
 
 def tensor_to_uint(img):
@@ -411,68 +427,146 @@ def adapt_image_for_deeplearning(img, device):
 
     img = image_to_uint(img, n_channels=3)
     img = uint_to_tensor4(img)
-    img = img.to(backend)
+    img = img.to(backend, non_blocking = True)
     return img
 
-def resize_image(image_path, resize_factor):
 
+# IMAGE
+
+def resize_image(image_path, resize_factor):
     new_image_path = image_path.replace(target_file_extension, 
                                         "_resized" + target_file_extension)
 
     old_image = Image.open(image_path)
 
+    if blur_pre_resize:
+        old_image = old_image.filter(ImageFilter.GaussianBlur(radius = 0.75))
+
     new_width, new_height = old_image.size
     new_width = int(new_width * resize_factor)
     new_height = int(new_height * resize_factor)
 
-    resized_image = old_image.resize((new_width, new_height), 
-                                        resample = Image.LANCZOS)
+    max_height_or_width = int(max(new_height, new_width))
 
-    if pay == False:
-        font = ImageFont.truetype("arial.ttf", 18)
+    resized_image = old_image.resize((new_width, new_height), 
+                                        resample = Image.BILINEAR)
+
+    if not pay:
+        font = ImageFont.truetype(find_by_relative_path("Assets" 
+                                                        + os.sep 
+                                                        + "arial.ttf"), 
+                                    int(max_height_or_width/40))
         img_text = ImageDraw.Draw(resized_image)
-        img_text.text((10, 10), 
-                        "Upscaled with"
-                        + "\nhttps://github.com/Djdefrag/QualityScaler"
-                        + "\n:)", 
-                        font=font, 
-                        fill=(230, 230, 230))
+        img_text.text((20, 20), 
+                        "Upscaled with QualityScaler"
+                        + "\nDownload it on"
+                        + "\nhttps://github.com/Djdefrag/QualityScaler" , 
+                        font = font, 
+                        fill = (250, 250, 250))
                                     
     resized_image.save(new_image_path)
-
-    return new_image_path
 
 def resize_image_list(image_list, resize_factor):
     files_to_delete   = []
     downscaled_images = []
+    how_much_images = len(image_list)
 
+    index = 1
     for image in image_list:
-        img_downscaled = resize_image(image, resize_factor)
-        downscaled_images.append(img_downscaled)
-        if "_resized" in img_downscaled:
-            files_to_delete.append(img_downscaled)
+        resized_image_path = image.replace(target_file_extension, 
+                                            "_resized" + target_file_extension)
+        
+        resize_image(image, resize_factor)
+        write_in_log_file("Resizing image " + str(index) + "/" + str(how_much_images)) 
+
+        downscaled_images.append(resized_image_path)
+        files_to_delete.append(resized_image_path)
+
+        index += 1
 
     return downscaled_images, files_to_delete
 
+
+#VIDEO
+
+def resize_frame(image_path, new_width, new_height, max_height_or_width):
+    new_image_path = image_path.replace(target_file_extension, 
+                                        "_resized" + target_file_extension)
+
+    old_image = Image.open(image_path)
+
+    if blur_pre_resize:
+        old_image = old_image.filter(ImageFilter.GaussianBlur(radius = 0.75))
+
+    resized_image = old_image.resize((new_width, new_height), 
+                                        resample = Image.BILINEAR)
+
+    if not pay:
+        font = ImageFont.truetype(find_by_relative_path("Assets" 
+                                                        + os.sep 
+                                                        + "arial.ttf"), 
+                                    int(max_height_or_width/40))
+        img_text = ImageDraw.Draw(resized_image)
+        img_text.text((20, 20), 
+                        "Upscaled with QualityScaler"
+                        + "\nDownload it on"
+                        + "\nhttps://github.com/Djdefrag/QualityScaler" , 
+                        font = font, 
+                        fill = (250, 250, 250))
+                                    
+    resized_image.save(new_image_path)
+
+def resize_frame_list(image_list, resize_factor):
+    downscaled_images = []
+    how_much_images = len(image_list)    
+
+    old_image = Image.open(image_list[1])
+    new_width, new_height = old_image.size
+    new_width = int(new_width * resize_factor)
+    new_height = int(new_height * resize_factor)
+
+    max_height_or_width = int(max(new_height, new_width))
+    
+    index = 1
+
+    for image in image_list:
+        resized_image_path = image.replace(target_file_extension, 
+                                            "_resized" + target_file_extension)
+        
+        resize_frame(image, new_width, new_height, max_height_or_width)
+        write_in_log_file("Resizing frame " + str(index) + "/" + str(how_much_images)) 
+
+        downscaled_images.append(resized_image_path)
+
+        index += 1
+
+    return downscaled_images
+
 def extract_frames_from_video(video_path):
     create_temp_dir(app_name + "_temp")
-
     cap          = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     extr_frame   = 0
     video_frames_list = []
     
+    # extract video frames
     while(cap.isOpened()):
         ret, frame = cap.read()
         if ret == False:
             break
         extr_frame += 1
         result_path = app_name + "_temp" + os.sep + "frame_" + str(extr_frame) + target_file_extension
+        
         cv2.imwrite(result_path, frame)
         video_frames_list.append(result_path)
 
         write_in_log_file("Extracted frames " + str(extr_frame) + "/" + str(total_frames))
     cap.release()
+
+    # extract audio from video
+    video = VideoFileClip.VideoFileClip(video_path)
+    audio = video.audio
+    audio.write_audiofile(app_name + "_temp" + os.sep + "audio.mp3")
 
     return video_frames_list
 
@@ -489,17 +583,25 @@ def video_reconstruction_by_frames(input_video_path, video_frames_upscaled_list,
     for video_type in supported_video_list:
         video_name = video_name.replace(video_type, "")
 
-    # 3) create upscaled video path string
-    upscaled_video_name = (only_path +
-                           video_name +
-                           "_" +
-                           AI_model + 
-                           ".mp4")
-
     # 4) create upscaled video with upscaled frames
-    clip = ImageSequenceClip.ImageSequenceClip(
-                    video_frames_upscaled_list, fps=frame_rate)
-    clip.write_videofile(upscaled_video_name)
+    temp_video_path = app_name + "_temp" + os.sep + "tempVideo.mp4"
+    clip = ImageSequenceClip.ImageSequenceClip(video_frames_upscaled_list, 
+                                                                fps=frame_rate)
+    clip.write_videofile(temp_video_path)
+
+    # 5) add audio in upscaled video
+    upscaled_video_path = (only_path + video_name + "_" +
+                        AI_model + ".mp4")
+
+    video = VideoFileClip.VideoFileClip(temp_video_path)
+    audio = AudioFileClip.AudioFileClip(app_name + "_temp" + os.sep + "audio.mp3")
+
+    new_audioclip = CompositeAudioClip([audio])
+    video.audio = new_audioclip
+    video.write_videofile(upscaled_video_path)
+
+
+
 
 def convert_image_list(image_list, target_file_extension):
     converted_images = []
@@ -532,6 +634,7 @@ def read_log_file():
         step = log_file.readline()
     log_file.close()
     return step
+
 
 # ----------------------- /Utils ------------------------
 
@@ -758,7 +861,7 @@ def count_files_dropped(event):
     return supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number
 
 def thread_check_steps_for_images( not_used_var, not_used_var2 ):
-    time.sleep(2)
+    time.sleep(3)
     try:
         while True:
             step = read_log_file()
@@ -771,7 +874,7 @@ def thread_check_steps_for_images( not_used_var, not_used_var2 ):
         place_upscale_button()
 
 def thread_check_steps_for_videos( not_used_var, not_used_var2 ):
-    time.sleep(2)
+    time.sleep(3)
     try:
         while True:
             step = read_log_file()
@@ -834,13 +937,10 @@ def upscale_image_and_save(img, AI_model, model, result_path, device, tiles_reso
         # 6) save reconstructed image
         cv2.imwrite(result_path, image_upscaled)
 
-def optimize_torch(device):
+def optimize_torch():
     torch.autograd.set_detect_anomaly(False)
     torch.autograd.profiler.profile(False)
     torch.autograd.profiler.emit_nvtx(False)
-    if 'cpu' in device:
-        cpu_numb = os.cpu_count()
-        torch.set_num_threads(round(cpu_numb*0.8))
 
 def prepare_AI_model(AI_model, device):
     if 'cpu' in device:
@@ -848,26 +948,30 @@ def prepare_AI_model(AI_model, device):
     elif 'dml' in device:
         backend = torch.device('dml')
 
-    model_path = find_by_relative_path(AI_model + ".pth")
+    model_path = find_by_relative_path("AI" + os.sep + AI_model + ".pth")
 
     if "x2" in AI_model: upscale_factor = 2
     elif "x4" in AI_model: upscale_factor = 4
 
-    model = RRDBNet(in_nc=3, out_nc=3, nf=64, nb=23, gc=32, sf = upscale_factor)
+    model = RRDBNet(in_nc = 3, out_nc = 3, nf = 64, 
+                    nb = 23, gc = 32, sf = upscale_factor)
     model.load_state_dict(torch.load(model_path), strict=True)
     model.eval()
 
     for _, v in model.named_parameters():
         v.requires_grad = False
     
-    model = model.to(backend)
+    model = model.to(backend, non_blocking = True)
 
     return model
 
 def process_upscale_multiple_images_qualityscaler(image_list, AI_model, resize_factor, device, tiles_resolution, target_file_extension):
     try:
         start = timer()
-        write_in_log_file('Preparing for upscaling')
+
+        optimize_torch()
+
+        write_in_log_file('Resizing images')
         image_list = convert_image_list(image_list, target_file_extension)
         image_list, files_to_delete = resize_image_list(image_list, resize_factor)
 
@@ -894,12 +998,14 @@ def process_upscale_multiple_images_qualityscaler(image_list, AI_model, resize_f
 def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resize_factor, device, tiles_resolution, target_file_extension):
     try:
         start = timer()
+                        
+        optimize_torch()
 
         write_in_log_file('Extracting video frames')
         image_list = extract_frames_from_video(input_video_path)
         
-        write_in_log_file('Preparing for upscaling')
-        image_list, _ = resize_image_list(image_list, resize_factor)
+        write_in_log_file('Resizing video frames')
+        image_list  = resize_frame_list(image_list, resize_factor)
 
         write_in_log_file('Upscaling')
         how_many_images = len(image_list)
@@ -916,7 +1022,7 @@ def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resiz
                                     result_path, device,    
                                     tiles_resolution)
             done_images += 1
-            write_in_log_file("Upscaled images " + str(done_images) + "/" + str(how_many_images))
+            write_in_log_file("Upscaled frame " + str(done_images) + "/" + str(how_many_images))
 
         write_in_log_file("Processing upscaled video")
         
@@ -924,9 +1030,10 @@ def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resiz
 
         write_in_log_file("Upscale video completed [" + str(round(timer() - start)) + " sec.]")
 
+        create_temp_dir(app_name + "_temp")
     except:
         write_in_log_file('Error while upscaling')
-
+    
 
 # ----------------------- /Core ------------------------
 
@@ -1233,7 +1340,9 @@ def show_image_in_GUI(image_to_show, _ ):
 
 def place_upscale_button():
     global play_icon
-    play_icon = tk.PhotoImage(file = find_by_relative_path('upscale_icon.png'))
+    play_icon = tk.PhotoImage(file = find_by_relative_path("Assets" 
+                                                        + os.sep 
+                                                        + "upscale_icon.png"))
     
     ft = tkFont.Font(family = default_font,
                     size   = round(11 * font_scale),
@@ -1259,7 +1368,9 @@ def place_stop_button():
                     weight = 'bold')
     
     global stop_icon
-    stop_icon = tk.PhotoImage(file = find_by_relative_path('stop_icon.png'))
+    stop_icon = tk.PhotoImage(file = find_by_relative_path("Assets" 
+                                                        + os.sep 
+                                                        + "stop_icon.png"))
     
     Upsc_Butt_Style = ttk.Style()
     Upsc_Butt_Style.configure("Bold.TButton", font = ft)
@@ -1407,7 +1518,7 @@ def place_resize_factor_entrybox():
                                     y = button_2_y, 
                                     width  = 290 * 0.8, 
                                     height = 42)
-    Entry_box_resize_factor.insert(0, '75')
+    Entry_box_resize_factor.insert(0, '70')
 
     Label_percentage = ttk.Label(root,
                                  text       = "%",
@@ -1456,7 +1567,7 @@ def place_VRAM_combobox():
                             foreground   = text_color,
                             values       = ['Minimal(2GB)', 'Medium(4GB)', 
                                             'Normal(6GB)', 'High(8GB)', 
-                                            'Ultra(12GB)', 'Max(16GB)' ],
+                                            'Ultra(12GB)', 'Max(>16GB)' ],
                             state        = 'readonly',
                             takefocus    = False,
                             font         = ft)
@@ -1465,11 +1576,25 @@ def place_VRAM_combobox():
                          width  = 290, 
                          height = 42)
     Combo_box_VRAM.bind('<<ComboboxSelected>>', combobox_VRAM_selection)
-    Combo_box_VRAM.set('High(8GB)')
+
+    if tiles_resolution == 200:
+        Combo_box_VRAM.set('Minimal(2GB)')
+    if tiles_resolution == 400:
+        Combo_box_VRAM.set('Medium(4GB)')
+    if tiles_resolution == 600:
+        Combo_box_VRAM.set('Normal(6GB)')
+    if tiles_resolution == 800:
+        Combo_box_VRAM.set('High(8GB)')
+    if tiles_resolution == 1000:
+        Combo_box_VRAM.set('Ultra(12GB)')
+    if tiles_resolution == 1200:
+        Combo_box_VRAM.set('Max(>16GB)')
 
 def place_clean_button():
     global clear_icon
-    clear_icon = tk.PhotoImage(file = find_by_relative_path('clear_icon.png'))
+    clear_icon = tk.PhotoImage(file = find_by_relative_path("Assets" 
+                                                        + os.sep 
+                                                        + "clear_icon.png"))
 
     clean_button = ttk.Button(root, 
                             text     = '  CLEAN',
@@ -1478,7 +1603,7 @@ def place_clean_button():
                             style    = 'Bold.TButton')
 
     clean_button.place(x = 50 + left_bar_width + drag_drop_width/2 - 175/2,
-                       y = 20,
+                       y = 25,
                        width  = 175,
                        height = 40)
     clean_button["command"] = lambda: place_drag_drop_widget()
@@ -1499,36 +1624,44 @@ def place_left_bar():
                        height = 700)
     else:                            # Windows 10
         Left_bar.place(x = 50, 
-                       y = 20, 
+                       y = 22, 
                        width  = left_bar_width,
-                       height = 670)
+                       height = left_bar_height * 0.92)
 
 def place_app_title():
-    horizontal_center = 50 + left_bar_width/2
-
     Title = ttk.Label(root, 
-                      font = (default_font, round(17 * font_scale), "bold"),
+                      font = (default_font, round(20 * font_scale), "bold"),
                       foreground = "#DA70D6", 
-                      anchor     = 'center', 
+                      anchor     = 'w', 
                       text       = app_name)
-    Title.place(x = horizontal_center - 300/2,
-                y = 30,
+    Title.place(x = 50 + 35,
+                y = 70,
                 width  = 300,
                 height = 55)
 
-    label_version = ttk.Button(root,
+    global logo_itch
+    logo_itch = PhotoImage(file = find_by_relative_path( "Assets" 
+                                                        + os.sep 
+                                                        + "itch_logo.png"))
+
+    version_button = ttk.Button(root,
+                               image = logo_itch,
                                padding = '0 0 0 0',
-                               text    = version,
-                               compound = 'center',
+                               text    = " " + version,
+                               compound = 'left',
                                style    = 'Bold.TButton')
-    label_version.place(x = 50 + left_bar_width - 60*2,
-                        y = 43,
-                        width  = 60,
-                        height = 32) 
+    version_button.place(x = (left_bar_width + 50) - (125 + 25),
+                        y = 40,
+                        width  = 125,
+                        height = 35)
+    version_button["command"] = lambda: openitch()
+
 
 def place_github_button():
     global logo_git
-    logo_git = PhotoImage(file = find_by_relative_path("github_logo.png"))
+    logo_git = PhotoImage(file = find_by_relative_path( "Assets" 
+                                                        + os.sep 
+                                                        + "github_logo.png"))
 
     ft = tkFont.Font(family = default_font)
     Butt_Style = ttk.Style()
@@ -1540,51 +1673,33 @@ def place_github_button():
                                text    = ' Github',
                                compound = 'left',
                                style    = 'Bold.TButton')
-    github_button.place(x = 50 + left_bar_width/2 - 115/2 - 113 - 10,
-                        y = support_button_height,
-                        width  = 113,
+    github_button.place(x = (left_bar_width + 50) - (125 + 25),
+                        y = 85,
+                        width  = 125,
                         height = 35)
     github_button["command"] = lambda: opengithub()
 
 def place_paypal_button():
     global logo_paypal
-    logo_paypal = PhotoImage(file=find_by_relative_path("paypal_logo.png"))
+    logo_paypal = PhotoImage(file=find_by_relative_path("Assets" 
+                                                        + os.sep 
+                                                        + "paypal_logo.png"))
 
     ft = tkFont.Font(family = default_font)
     Butt_Style = ttk.Style()
     Butt_Style.configure("Bold.TButton", font = ft)
 
-    logo_paypal_label = ttk.Button(root,
-                                   image = logo_paypal,
-                                   padding = '0 0 0 0',
-                                   text = ' Paypal',
-                                   compound = 'left',
-                                   style    = 'Bold.TButton')
-    logo_paypal_label.place(x = 50 + left_bar_width/2 - 113/2,
-                            y = support_button_height,
-                            width  = 113,
+    paypal_button = ttk.Button(root,
+                                image = logo_paypal,
+                                padding = '0 0 0 0',
+                                text = ' Paypal',
+                                compound = 'left',
+                                style    = 'Bold.TButton')
+    paypal_button.place(x = (left_bar_width + 50) - (125 + 25),
+                            y = 130,
+                            width  = 125,
                             height = 35)
-    logo_paypal_label["command"] = lambda: openpaypal()
-
-def place_patreon_button():
-    global logo_patreon
-    logo_patreon = PhotoImage(file=find_by_relative_path("patreon_logo.png"))
-
-    ft = tkFont.Font(family = default_font)
-    Butt_Style = ttk.Style()
-    Butt_Style.configure("Bold.TButton", font = ft)
-    
-    logo_patreon_label = ttk.Button(root,
-                                   image = logo_patreon,
-                                   padding = '0 0 0 0',
-                                   text = ' Patreon',
-                                   compound = 'left',
-                                   style    = 'Bold.TButton')
-    logo_patreon_label.place(x = 50 + left_bar_width/2 + 113/2 + 10,
-                            y = support_button_height,
-                            width  = 113,
-                            height = 35)
-    logo_patreon_label["command"] = lambda: openpatreon()
+    paypal_button["command"] = lambda: openpaypal()
 
 def place_AI_models_title():
     IA_selection_title = ttk.Label(root, 
@@ -1643,7 +1758,7 @@ def place_message_box():
                             foreground = "#ffbf00",
                             anchor     = "center")
     message_label.place(x = 50 + left_bar_width/2 - (left_bar_width * 0.75)/2,
-                        y = 575,
+                        y = 600,
                         width  = left_bar_width * 0.75,
                         height = 30)
 
@@ -1690,7 +1805,9 @@ class App:
         alignstr     = '%dx%d+%d+%d' % (width, height, (screenwidth - width) / 2, (screenheight - height) / 2)
         root.geometry(alignstr)
         root.resizable(width=False, height=False)
-        root.iconphoto(False, PhotoImage(file = find_by_relative_path("logo.png")))
+        root.iconphoto(False, PhotoImage(file = find_by_relative_path("Assets" 
+                                                        + os.sep 
+                                                        + "logo.png")))
 
         if windows_subversion >= 22000: # Windows 11
             apply_windows_transparency_effect(root)
@@ -1701,7 +1818,6 @@ class App:
         place_app_title()                # App title
         place_github_button()
         place_paypal_button()
-        place_patreon_button()
         place_AI_models_title()          # AI models title
         place_AI_combobox()              # AI models widget
         place_resize_factor_title()      # Upscale factor title
