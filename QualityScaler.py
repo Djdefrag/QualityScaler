@@ -11,7 +11,6 @@ import time
 import tkinter as tk
 import tkinter.font as tkFont
 import webbrowser
-from math import ceil, floor, sqrt
 from timeit import default_timer as timer
 from tkinter import PhotoImage, ttk
 
@@ -25,13 +24,25 @@ import torch.nn.init as init
 from moviepy.audio.AudioClip import CompositeAudioClip
 from moviepy.audio.io import AudioFileClip
 from moviepy.video.io import ImageSequenceClip, VideoFileClip
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFont
+from split_image import reverse_split, split_image
 from win32mica import MICAMODE, ApplyMica
 
 import sv_ttk
 
-pay      = True
-version  = "v. 5.1"
+pay      = False
+version  = "v. 6.0"
+
+#  tweaked VRAM + RAM limiter to boost speed and avoid memory overflow
+#  rewritten image tiling and merge to minimize 
+#       the vertical and horizontal lines visible in the upscaled image 
+#       and boost speed 
+#  better error logging, now the app will write why the upscale fails in .log file
+#  better upscale quality
+#  resize images/frames is now faster
+#  some GUI fixes
+#  code cleaning and bug fix
+
 
 if not pay:
     version = version + ".f"
@@ -39,20 +50,21 @@ if not pay:
 global app_name
 app_name = "QualityScaler"
 
+windows_subversion    = int(platform.version().split('.')[2])
+
 image_path            = "no file"
 AI_model              = "BSRGANx4"
 device                = "dml"
 input_video_path      = ""
-windows_subversion    = int(platform.version().split('.')[2])
-tiles_resolution      = 800
+tiles_resolution      = 700
 single_file           = False
 multiple_files        = False
 video_files           = False
 multi_img_list        = []
 video_frames_list     = []
 video_frames_upscaled_list = []
-blur_pre_resize       = True
 target_file_extension = ".png"
+multiplier_num_tiles  = 3
 
 paypalme           = "https://www.paypal.com/paypalme/jjstd/5"
 githubme           = "https://github.com/Djdefrag/QualityScaler"
@@ -70,10 +82,10 @@ show_image_width      = drag_drop_width * 0.8
 show_image_height     = drag_drop_width * 0.6
 image_text_width      = drag_drop_width * 0.8
 support_button_height = 95 
-button_1_y            = 215
-button_2_y            = 315
-button_3_y            = 415
-button_4_y            = 515
+button_1_y            = 210
+button_2_y            = 313
+button_3_y            = 416
+button_4_y            = 519
 text_color            = "#DCDCDC"
 selected_button_color = "#ffbf00"
 
@@ -125,181 +137,6 @@ font_scale = round(1/scaleFactor, 1)
 # ---------------------- /Dimensions ----------------------
 
 # ---------------------- Functions ----------------------
-
-# ------------------- Slice functions -------------------
-
-
-class Tile(object):
-    def __init__(self, image, number, position, coords, filename=None):
-        self.image = image
-        self.number = number
-        self.position = position
-        self.coords = coords
-        self.filename = filename
-
-    @property
-    def row(self):
-        return self.position[0]
-
-    @property
-    def column(self):
-        return self.position[1]
-
-    @property
-    def basename(self):
-        return get_basename(self.filename)
-
-    def generate_filename(
-        self, directory=os.getcwd(), prefix="tile", format="png", path=True
-    ):
-        filename = prefix + "_{col:02d}_{row:02d}.{ext}".format(
-            col=self.column, row=self.row, ext=format.lower().replace("jpeg", "jpg")
-        )
-        if not path:
-            return filename
-        return os.path.join(directory, filename)
-
-    def save(self, filename=None, format="png"):
-        if not filename:
-            filename = self.generate_filename(format=format)
-        self.image.save(filename, format)
-        self.filename = filename
-
-    def __repr__(self):
-        """Show tile number, and if saved to disk, filename."""
-        if self.filename:
-            return "<Tile #{} - {}>".format(
-                self.number, os.path.basename(self.filename)
-            )
-        return "<Tile #{}>".format(self.number)
-
-def get_basename(filename):
-    return os.path.splitext(os.path.basename(filename))[0]
-
-def calc_columns_rows(n):
-    """
-    Calculate the number of columns and rows required to divide an image
-    into ``n`` parts.
-
-    Return a tuple of integers in the format (num_columns, num_rows)
-    """
-    num_columns = int(ceil(sqrt(n)))
-    num_rows = int(ceil(n / float(num_columns)))
-    return (num_columns, num_rows)
-
-def get_combined_size(tiles):
-    """Calculate combined size of tiles."""
-    # TODO: Refactor calculating layout to avoid repetition.
-    columns, rows = calc_columns_rows(len(tiles))
-    tile_size = tiles[0].image.size
-    return (tile_size[0] * columns, tile_size[1] * rows)
-
-def join(tiles, width=0, height=0):
-    """
-    @param ``tiles`` - Tuple of ``Image`` instances.
-    @param ``width`` - Optional, width of combined image.
-    @param ``height`` - Optional, height of combined image.
-    @return ``Image`` instance.
-    """
-    # Don't calculate size if width and height are provided
-    # this allows an application that knows what the
-    # combined size should be to construct an image when
-    # pieces are missing.
-
-    if width > 0 and height > 0:
-        im = Image.new("RGBA", (width, height), None)
-    else:
-        im = Image.new("RGBA", get_combined_size(tiles), None)
-    columns, rows = calc_columns_rows(len(tiles))
-    for tile in tiles:
-        try:
-            im.paste(tile.image, tile.coords)
-        except IOError:
-            # do nothing, blank out the image
-            continue
-    return im
-
-def validate_image(image, number_tiles):
-    """Basic sanity checks prior to performing a split."""
-    TILE_LIMIT = 99 * 99
-
-    try:
-        number_tiles = int(number_tiles)
-    except BaseException:
-        raise ValueError("number_tiles could not be cast to integer.")
-
-    if number_tiles > TILE_LIMIT or number_tiles < 2:
-        raise ValueError(
-            "Number of tiles must be between 2 and {} (you \
-                          asked for {}).".format(
-                TILE_LIMIT, number_tiles
-            )
-        )
-
-def validate_image_col_row(image, col, row):
-    """Basic checks for columns and rows values"""
-    SPLIT_LIMIT = 99
-
-    try:
-        col = int(col)
-        row = int(row)
-    except BaseException:
-        raise ValueError("columns and rows values could not be cast to integer.")
-
-    if col < 1 or row < 1 or col > SPLIT_LIMIT or row > SPLIT_LIMIT:
-        raise ValueError(
-            f"Number of columns and rows must be between 1 and"
-            f"{SPLIT_LIMIT} (you asked for rows: {row} and col: {col})."
-        )
-    if col == 1 and row == 1:
-        raise ValueError("There is nothing to divide. You asked for the entire image.")
-
-def img_cutter(filename, number_tiles=None, col=None, row=None, save=True, DecompressionBombWarning=True):
-    if DecompressionBombWarning is False:
-        Image.MAX_IMAGE_PIXELS = None
-
-    im = Image.open(filename)
-    im_w, im_h = im.size
-
-    columns = 0
-    rows = 0
-    if number_tiles:
-        validate_image(im, number_tiles)
-        columns, rows = calc_columns_rows(number_tiles)
-    else:
-        validate_image_col_row(im, col, row)
-        columns = col
-        rows = row
-
-    tile_w, tile_h = int(floor(im_w / columns)), int(floor(im_h / rows))
-
-    tiles = []
-    number = 1
-    for pos_y in range(0, im_h - rows, tile_h):  # -rows for rounding error.
-        for pos_x in range(0, im_w - columns, tile_w):  # as above.
-            area = (pos_x, pos_y, pos_x + tile_w, pos_y + tile_h)
-            image = im.crop(area)
-            position = (int(floor(pos_x / tile_w)) + 1, int(floor(pos_y / tile_h)) + 1)
-            coords = (pos_x, pos_y)
-            tile = Tile(image, number, position, coords)
-            tiles.append(tile)
-            number += 1
-    if save:
-        save_tiles(tiles, prefix=get_basename(filename), directory=os.path.dirname(filename))
-    return tuple(tiles)
-
-def save_tiles(tiles, prefix="", directory=os.getcwd(), format="png"):
-    for tile in tiles:
-        tile.save(
-            filename=tile.generate_filename(
-                prefix=prefix, directory=directory, format=format
-            ),
-            format=format,
-        )
-    return tuple(tiles)
-
-
-# ------------------ / Slice functions ------------------
 
 # ------------------------ Utils ------------------------
 
@@ -355,11 +192,6 @@ def tensor_to_uint(img):
     if img.ndim == 3:
         img = np.transpose(img, (1, 2, 0))
     return np.uint8((img*255.0).round())
-
-def reunion_image(tiles):
-    image = join(tiles)
-    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    return image
 
 def delete_tiles(tiles):
     for tile in tiles:
@@ -427,9 +259,6 @@ def resize_image(image_path, resize_factor):
 
     old_image = Image.open(image_path)
 
-    if blur_pre_resize:
-        old_image = old_image.filter(ImageFilter.GaussianBlur(radius = 0.75))
-
     new_width, new_height = old_image.size
     new_width = int(new_width * resize_factor)
     new_height = int(new_height * resize_factor)
@@ -437,7 +266,7 @@ def resize_image(image_path, resize_factor):
     max_height_or_width = int(max(new_height, new_width))
 
     resized_image = old_image.resize((new_width, new_height), 
-                                        resample = Image.BILINEAR)
+                                        resample = Image.LINEAR)
 
     if not pay:
         font = ImageFont.truetype(find_by_relative_path("Assets" 
@@ -477,17 +306,74 @@ def resize_image_list(image_list, resize_factor):
 
 #VIDEO
 
+def extract_frames_from_video(video_path):
+    cap          = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    extr_frame   = 0
+    video_frames_list = []
+    
+    # extract video frames
+    while(cap.isOpened()):
+        ret, frame = cap.read()
+        if ret == False:
+            break
+        extr_frame += 1
+        result_path = app_name + "_temp" + os.sep + "frame_" + str(extr_frame) + target_file_extension
+        
+        cv2.imwrite(result_path, frame)
+        video_frames_list.append(result_path)
+
+        write_in_log_file("Extracted frames " + str(extr_frame) + "/" + str(total_frames))
+    cap.release()
+
+    # extract audio from video
+    try:
+        video = VideoFileClip.VideoFileClip(video_path)
+        audio = video.audio
+        audio.write_audiofile(app_name + "_temp" + os.sep + "audio.mp3")
+    except:
+        pass
+
+    return video_frames_list
+
+def video_reconstruction_by_frames(input_video_path, video_frames_upscaled_list, AI_model):
+    cap          = cv2.VideoCapture(input_video_path)
+    frame_rate   = int(cap.get(cv2.CAP_PROP_FPS))
+    path_as_list = input_video_path.split("/")
+    video_name   = str(path_as_list[-1])
+    only_path    = input_video_path.replace(video_name, "")
+    cap.release()
+
+    for video_type in supported_video_list:
+        video_name = video_name.replace(video_type, "")
+
+    upscaled_video_path = (only_path + video_name + "_" + AI_model + ".mp4")
+
+    temp_video_path = app_name + "_temp" + os.sep + "tempVideo.mp4"
+    clip = ImageSequenceClip.ImageSequenceClip(video_frames_upscaled_list, 
+                                                                fps=frame_rate)
+    clip.write_videofile(temp_video_path)
+
+    video = VideoFileClip.VideoFileClip(temp_video_path)
+    
+    # audio
+    try:
+        audio = AudioFileClip.AudioFileClip(app_name + "_temp" + os.sep + "audio.mp3")
+        new_audioclip = CompositeAudioClip([audio])
+        video.audio = new_audioclip
+    except:
+        pass
+    
+    video.write_videofile(upscaled_video_path)
+
 def resize_frame(image_path, new_width, new_height, max_height_or_width):
     new_image_path = image_path.replace(target_file_extension, 
                                         "_resized" + target_file_extension)
 
     old_image = Image.open(image_path)
 
-    if blur_pre_resize:
-        old_image = old_image.filter(ImageFilter.GaussianBlur(radius = 0.75))
-
     resized_image = old_image.resize((new_width, new_height), 
-                                        resample = Image.BILINEAR)
+                                        resample = Image.LINEAR)
 
     if not pay:
         font = ImageFont.truetype(find_by_relative_path("Assets" 
@@ -529,73 +415,6 @@ def resize_frame_list(image_list, resize_factor):
         index += 1
 
     return downscaled_images
-
-def extract_frames_from_video(video_path):
-    create_temp_dir(app_name + "_temp")
-    cap          = cv2.VideoCapture(video_path)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    extr_frame   = 0
-    video_frames_list = []
-    
-    # extract video frames
-    while(cap.isOpened()):
-        ret, frame = cap.read()
-        if ret == False:
-            break
-        extr_frame += 1
-        result_path = app_name + "_temp" + os.sep + "frame_" + str(extr_frame) + target_file_extension
-        
-        cv2.imwrite(result_path, frame)
-        video_frames_list.append(result_path)
-
-        write_in_log_file("Extracted frames " + str(extr_frame) + "/" + str(total_frames))
-    cap.release()
-
-    # extract audio from video
-    try:
-        video = VideoFileClip.VideoFileClip(video_path)
-        audio = video.audio
-        audio.write_audiofile(app_name + "_temp" + os.sep + "audio.mp3")
-    except:
-        pass
-
-    return video_frames_list
-
-def video_reconstruction_by_frames(input_video_path, video_frames_upscaled_list, AI_model):
-    # 1) get original video informations
-    cap          = cv2.VideoCapture(input_video_path)
-    frame_rate   = int(cap.get(cv2.CAP_PROP_FPS))
-    path_as_list = input_video_path.split("/")
-    video_name   = str(path_as_list[-1])
-    only_path    = input_video_path.replace(video_name, "")
-    cap.release()
-
-    # 2) remove any file extension from original video path string
-    for video_type in supported_video_list:
-        video_name = video_name.replace(video_type, "")
-
-    # 4) create upscaled video with upscaled frames
-    try:
-        temp_video_path = app_name + "_temp" + os.sep + "tempVideo.mp4"
-        clip = ImageSequenceClip.ImageSequenceClip(video_frames_upscaled_list, 
-                                                                    fps=frame_rate)
-        clip.write_videofile(temp_video_path)
-
-        # 5) add audio in upscaled video
-        upscaled_video_path = (only_path + video_name + "_" +
-                                AI_model + ".mp4")
-
-        video = VideoFileClip.VideoFileClip(temp_video_path)
-        audio = AudioFileClip.AudioFileClip(app_name + "_temp" + os.sep + "audio.mp3")
-
-        new_audioclip = CompositeAudioClip([audio])
-        video.audio = new_audioclip
-    except:
-        pass
-    
-    video.write_videofile(upscaled_video_path)
-
-
 
 
 def convert_image_list(image_list, target_file_extension):
@@ -861,7 +680,12 @@ def thread_check_steps_for_images( not_used_var, not_used_var2 ):
         while True:
             step = read_log_file()
             if "Upscale completed" in step or "Error while upscaling" in step or "Stopped upscaling" in step:
-                info_string.set(step)
+                
+                if  "Error while upscaling" in step:
+                    info_string.set("Error while upscaling | check .log file")
+                else:
+                    info_string.set(step)
+
                 stop = 1 + "x"
             info_string.set(step)
             time.sleep(1)
@@ -874,7 +698,12 @@ def thread_check_steps_for_videos( not_used_var, not_used_var2 ):
         while True:
             step = read_log_file()
             if "Upscale video completed" in step or "Error while upscaling" in step or "Stopped upscaling" in step:
-                info_string.set(step)
+                
+                if  "Error while upscaling" in step:
+                    info_string.set("Error while upscaling | check .log file")
+                else:
+                    info_string.set(step)
+
                 stop = 1 + "x"
             info_string.set(step)
             time.sleep(1)
@@ -892,7 +721,7 @@ def drop_event_to_image_list(event):
 
     return image_list
 
-def upscale_image_and_save(img, AI_model, model, result_path, device, tiles_resolution):
+def upscale_image_and_save(img, model, result_path, device, tiles_resolution):
     img_tmp          = cv2.imread(img)
     image_resolution = max(img_tmp.shape[1], img_tmp.shape[0])
     num_tiles        = image_resolution/tiles_resolution
@@ -905,32 +734,25 @@ def upscale_image_and_save(img, AI_model, model, result_path, device, tiles_reso
         save_image(img_upscaled, result_path)
     else:
         num_tiles = round(num_tiles)
-        if (num_tiles % 2) != 0:
-            num_tiles += 1
-        num_tiles = round(num_tiles * 3)
+        if (num_tiles % 2) != 0: num_tiles += 1
+        num_tiles = round(num_tiles * multiplier_num_tiles)
 
-        tiles = img_cutter(img, num_tiles)
+        num_tiles_applied = int(num_tiles/2)
+        how_many_tiles = int(pow(num_tiles/2, 2))
 
-        if "x2" in AI_model: upscale_factor = 2
-        elif "x4" in AI_model: upscale_factor = 4
+        split_image(img, num_tiles_applied, num_tiles_applied, False, False)
+
+        tiles = []
+        for index in range(how_many_tiles):
+            tiles.append(img.replace(".png", "_" + str(index) + ".png"))
 
         with torch.no_grad():
             for tile in tiles:
-                tile_adapted  = adapt_image_for_deeplearning(tile.filename, device)
+                tile_adapted  = adapt_image_for_deeplearning(tile, device)
                 tile_upscaled = tensor_to_uint(model(tile_adapted))
-                save_image(tile_upscaled, tile.filename)
-                tile.image = Image.open(tile.filename)
-                tile.coords = (tile.coords[0] * upscale_factor, 
-                                tile.coords[1] * upscale_factor)
+                save_image(tile_upscaled, tile)
 
-        # 4) then reconstruct the image by tiles upscaled
-        image_upscaled = reunion_image(tiles)
-
-        # 5) remove tiles file
-        delete_tiles(tiles)
-
-        # 6) save reconstructed image
-        cv2.imwrite(result_path, image_upscaled)
+        reverse_split(tiles, num_tiles_applied, num_tiles_applied, result_path, True, False)
 
 def optimize_torch():
     torch.autograd.set_detect_anomaly(False)
@@ -955,14 +777,18 @@ def prepare_AI_model(AI_model, device):
 
     for _, v in model.named_parameters():
         v.requires_grad = False
-    
+        
     model = model.to(backend, non_blocking = True)
 
     return model
 
+
+
 def process_upscale_multiple_images_qualityscaler(image_list, AI_model, resize_factor, device, tiles_resolution, target_file_extension):
     try:
         start = timer()
+        
+        write_in_log_file('...')
 
         optimize_torch()
 
@@ -973,11 +799,11 @@ def process_upscale_multiple_images_qualityscaler(image_list, AI_model, resize_f
         how_many_images = len(image_list)
         done_images     = 0
 
-        write_in_log_file('Upscaling')
+        write_in_log_file('Upscaling...')
         for img in image_list:
             model = prepare_AI_model(AI_model, device)
             result_path = prepare_output_filename(img, AI_model, target_file_extension)
-            upscale_image_and_save(img, AI_model, model, 
+            upscale_image_and_save(img, model, 
                                     result_path, device,    
                                     tiles_resolution)
 
@@ -986,13 +812,18 @@ def process_upscale_multiple_images_qualityscaler(image_list, AI_model, resize_f
                 
         write_in_log_file("Upscale completed [" + str(round(timer() - start)) + " sec.]")
 
-        delete_list_of_files(files_to_delete) 
-    except:
-        write_in_log_file('Error while upscaling')
+        delete_list_of_files(files_to_delete)
+    except Exception as e:
+        write_in_log_file('Error while upscaling' + '\n\n' + str(e)) 
 
 def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resize_factor, device, tiles_resolution, target_file_extension):
+    try:
         start = timer()
-                        
+
+        create_temp_dir(app_name + "_temp")
+
+        write_in_log_file('...')
+      
         optimize_torch()
 
         write_in_log_file('Extracting video frames')
@@ -1001,10 +832,9 @@ def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resiz
         write_in_log_file('Resizing video frames')
         image_list  = resize_frame_list(image_list, resize_factor)
 
-        write_in_log_file('Upscaling')
+        write_in_log_file('Upscaling...')
         how_many_images = len(image_list)
         done_images     = 0
-        
         video_frames_upscaled_list = []
 
         model = prepare_AI_model(AI_model, device)
@@ -1012,7 +842,7 @@ def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resiz
         for img in image_list:
             result_path = prepare_output_filename(img, AI_model, target_file_extension)
             video_frames_upscaled_list.append(result_path)
-            upscale_image_and_save(img, AI_model, model, 
+            upscale_image_and_save(img, model, 
                                     result_path, device,    
                                     tiles_resolution)
             done_images += 1
@@ -1025,7 +855,8 @@ def process_upscale_video_frames_qualityscaler(input_video_path, AI_model, resiz
         write_in_log_file("Upscale video completed [" + str(round(timer() - start)) + " sec.]")
 
         create_temp_dir(app_name + "_temp")
-
+    except Exception as e:
+        write_in_log_file('Error while upscaling' + '\n\n' + str(e)) 
     
 
 # ----------------------- /Core ------------------------
@@ -1146,14 +977,15 @@ def clear_app_background():
     drag_drop.place(x = left_bar_width + 50, y=0,
                     width = drag_drop_width, height = drag_drop_height)
 
+
 def show_video_info_with_drag_drop(video_path):
     global image
     
     fist_frame = "temp.jpg"
     
     clear_app_background()
+    place_clean_button()
 
-    # 1) get video informations
     cap          = cv2.VideoCapture(video_path)
     width        = round(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height       = round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -1165,7 +997,6 @@ def show_video_info_with_drag_drop(video_path):
     path_as_list = video_path.split("/")
     video_name   = str(path_as_list[-1])
     
-    # 2) get first frame of the video
     while(cap.isOpened()):
         ret, frame = cap.read()
         if ret == False:
@@ -1174,10 +1005,8 @@ def show_video_info_with_drag_drop(video_path):
         break
     cap.release()
 
-    # 3) resize the frame to fit the UI
     image_to_show_resized = adapt_image_to_show(fist_frame)
 
-    # 4) show the resized image in the UI
     image = tk.PhotoImage(file = image_to_show_resized)
     drag_drop_and_images = ttk.Label(root,
                                      image   = image,
@@ -1192,10 +1021,8 @@ def show_video_info_with_drag_drop(video_path):
                                width  = show_image_width,
                                height = show_image_height)
 
-    # 5) remove the temp first frame
     os.remove(fist_frame)
 
-    # 6) create string video description
     file_description = ( video_name + "\n" + "[" + str(width) + "x" + str(height) + "]" + " | " + str(minutes) + 'm:' + str(round(seconds)) + "s | " + str(num_frames) + "frames | " + str(round(frame_rate)) + "fps")
 
     video_info_width = drag_drop_width * 0.8
@@ -1215,11 +1042,10 @@ def show_video_info_with_drag_drop(video_path):
                            width  = video_info_width,
                            height = 65)
 
-    # 7) show clear button
-    place_clean_button()
 
 def show_list_images_in_GUI(image_list_prepared):
     clear_app_background()
+    place_clean_button()
 
     final_string = "\n"
     counter_img = 0
@@ -1275,18 +1101,16 @@ def show_list_images_in_GUI(image_list_prepared):
                         width  = 250,
                         height = 42)
 
+
 def show_image_in_GUI(image_to_show, _ ):
     global image
-
     image_to_show = image_to_show.replace('{', '').replace('}', '')
 
-    # 1) resize image to fit the UI
     image_to_show_resized = adapt_image_to_show(image_to_show)
 
-    # 2) clean the background
     clear_app_background()
+    place_clean_button()
 
-    # 3) show the resized image in the UI
     image = tk.PhotoImage(file = image_to_show_resized)
     drag_drop_and_images = ttk.Label(root,
                                      text="",
@@ -1302,7 +1126,6 @@ def show_image_in_GUI(image_to_show, _ ):
                                width  = show_image_width,
                                height = show_image_height)
 
-    # 4) show the image file information in the UI
     path_as_list = image_to_show.split("/")
     img_name     = str(path_as_list[-1])
     img          = cv2.imread(image_to_show)
@@ -1324,12 +1147,8 @@ def show_image_in_GUI(image_to_show, _ ):
                             width  = image_text_width,
                             height = 40)
 
-    # 5) delete the resized temp image
-    if "temp.png" in image_to_show_resized:
-        os.remove(image_to_show_resized)
-
-    # 6) show clear button
     place_clean_button()
+
 
 def place_upscale_button():
     global play_icon
@@ -1350,7 +1169,7 @@ def place_upscale_button():
                                 style    = 'Bold.TButton')
 
     Upscale_button.place(x      = 50 + left_bar_width/2 - 310/2,  
-                         y      = left_bar_height - 110,
+                         y      = left_bar_height - 95,
                          width  = 310,
                          height = 45)
     Upscale_button["command"] = lambda: upscale_button_command()
@@ -1375,7 +1194,7 @@ def place_stop_button():
                                 style    = 'Bold.TButton')
 
     Stop_button.place(x      = 50 + left_bar_width/2 - 310/2,  
-                      y      = left_bar_height - 110,
+                      y      = left_bar_height - 95,
                       width  = 310,
                       height = 45)
 
@@ -1409,15 +1228,15 @@ def combobox_VRAM_selection(event):
     selected = str(selected_VRAM.get())
 
     if 'Minimal(2GB)' == selected:
-        tiles_resolution = 200
+        tiles_resolution = 100
     if 'Medium(4GB)' == selected:
-        tiles_resolution = 400
+        tiles_resolution = 300
     if 'Normal(6GB)' == selected:
-        tiles_resolution = 600
+        tiles_resolution = 500
     if 'High(8GB)' == selected:
-        tiles_resolution = 800
+        tiles_resolution = 700
     if 'Ultra(12GB)' == selected:
-        tiles_resolution = 1000
+        tiles_resolution = 900
     if 'Max(>16GB)' == selected:
         tiles_resolution = 1200
 
@@ -1570,15 +1389,15 @@ def place_VRAM_combobox():
                          height = 42)
     Combo_box_VRAM.bind('<<ComboboxSelected>>', combobox_VRAM_selection)
 
-    if tiles_resolution == 200:
+    if tiles_resolution == 100:
         Combo_box_VRAM.set('Minimal(2GB)')
-    if tiles_resolution == 400:
+    if tiles_resolution == 300:
         Combo_box_VRAM.set('Medium(4GB)')
-    if tiles_resolution == 600:
+    if tiles_resolution == 500:
         Combo_box_VRAM.set('Normal(6GB)')
-    if tiles_resolution == 800:
+    if tiles_resolution == 700:
         Combo_box_VRAM.set('High(8GB)')
-    if tiles_resolution == 1000:
+    if tiles_resolution == 900:
         Combo_box_VRAM.set('Ultra(12GB)')
     if tiles_resolution == 1200:
         Combo_box_VRAM.set('Max(>16GB)')
@@ -1610,16 +1429,10 @@ def place_background():
 
 def place_left_bar():
     Left_bar = ttk.Notebook(root)
-    if windows_subversion >= 22000:  # Windows 11
-        Left_bar.place(x = 50, 
-                       y = 0, 
-                       width  = left_bar_width,
-                       height = 700)
-    else:                            # Windows 10
-        Left_bar.place(x = 50, 
-                       y = 22, 
-                       width  = left_bar_width,
-                       height = left_bar_height * 0.92)
+    Left_bar.place(x = 50, 
+                    y = 22, 
+                    width  = left_bar_width,
+                    height = left_bar_height * 0.76)
 
 def place_app_title():
     Title = ttk.Label(root, 
@@ -1632,6 +1445,7 @@ def place_app_title():
                 width  = 300,
                 height = 55)
 
+def place_itch_button():
     global logo_itch
     logo_itch = PhotoImage(file = find_by_relative_path( "Assets" 
                                                         + os.sep 
@@ -1644,7 +1458,7 @@ def place_app_title():
                                compound = 'left',
                                style    = 'Bold.TButton')
     version_button.place(x = (left_bar_width + 50) - (125 + 25),
-                        y = 40,
+                        y = 47,
                         width  = 125,
                         height = 35)
     version_button["command"] = lambda: openitch()
@@ -1667,7 +1481,7 @@ def place_github_button():
                                compound = 'left',
                                style    = 'Bold.TButton')
     github_button.place(x = (left_bar_width + 50) - (125 + 25),
-                        y = 85,
+                        y = 92,
                         width  = 125,
                         height = 35)
     github_button["command"] = lambda: opengithub()
@@ -1689,7 +1503,7 @@ def place_paypal_button():
                                 compound = 'left',
                                 style    = 'Bold.TButton')
     paypal_button.place(x = (left_bar_width + 50) - (125 + 25),
-                            y = 130,
+                            y = 137,
                             width  = 125,
                             height = 35)
     paypal_button["command"] = lambda: openpaypal()
@@ -1736,10 +1550,10 @@ def place_VRAM_title():
                                    foreground = text_color, 
                                    justify    = 'left', 
                                    relief     = 'flat', 
-                                   text       = " ⋈  Vram/Ram ")
+                                   text       = " ⋈  Gpu Vram + PC Ram ")
     IA_selection_title.place(x = left_bar_width/2 - 115,
                              y = button_4_y - 45,
-                             width  = 200,
+                             width  = 250,
                              height = 40)
 
 def place_message_box():
@@ -1748,11 +1562,12 @@ def place_message_box():
                             textvar    = info_string,
                             relief     = "flat",
                             justify    = "center",
+                            background = background_color,
                             foreground = "#ffbf00",
                             anchor     = "center")
-    message_label.place(x = 50 + left_bar_width/2 - (left_bar_width * 0.75)/2,
-                        y = 600,
-                        width  = left_bar_width * 0.75,
+    message_label.place(x = 50 + left_bar_width/2 - left_bar_width/2,
+                        y = 615,
+                        width  = left_bar_width,
                         height = 30)
 
     info_string.set("...")
@@ -1809,6 +1624,7 @@ class App:
         place_background()               # Background
         place_left_bar()                 # Left bar background
         place_app_title()                # App title
+        place_itch_button()
         place_github_button()
         place_paypal_button()
         place_AI_models_title()          # AI models title

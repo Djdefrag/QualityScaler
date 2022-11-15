@@ -9,6 +9,7 @@ python-tkdnd
 ttkwidgets
 pyinstaller
 pyinstaller-hooks-contrib
+split_image
 pywin32
 moviepy
 win32mica
