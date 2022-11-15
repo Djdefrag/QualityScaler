@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/200124160-5ca85aae-f09e-4e1f-a5cc-7e013b90ccf3.PNG"> </a> 
+    <img src="https://user-images.githubusercontent.com/32263112/201931787-9357dd08-7cfb-4847-9f92-243f6534a43b.PNG"> </a> 
 </div>
 
 
@@ -78,7 +78,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 
 - [x] Switch to Pytorch-directml to support all Directx12 compatible gpu (AMD, Intel, Nvidia)
 - [x] New GUI with Windows 11 style
-- [ ] Optimizing image/frame resize and frames extraction 
+- [x] Optimizing image/frame resize and frames extraction 
 - [x] Include audio for upscaled video
 - [ ] Update libraries 
     - [ ] Python 3.10 (expecting ~10% more performance) 
