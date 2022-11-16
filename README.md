@@ -33,7 +33,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [ ] GUI -> Tkinter / Tkdnd / Sv_ttk
 - [ ] Image/video -> OpenCV / Moviepy
 - [ ] Packaging   -> Pyinstaller
-- [ ] Miscellaneous -> Pywin32 / Win32mica / Image_slicer
+- [ ] Miscellaneous -> Pywin32 / Win32mica / split_image
 
 ## Installation. 👨‍💻
 #### Prerequisites: 
