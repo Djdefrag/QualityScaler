@@ -89,7 +89,6 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [x] Upscaling multiple images doesn't free GPU Vram, so the it is very likely that the process will fail when the gpu memory fills up
 - [ ] Filenames with non-latin symbols (for example kangy, cyrillic etc.) not supported - [Temp solution] rename files like "image" or "video"
 - [ ] When running QualityScaler as Administrator, drag&drop is not working
-- [ ] Some user reported that QualityScaler does not work correctly, returning the message 'Errore while upscaling'
 
 ## Some Example.
 
