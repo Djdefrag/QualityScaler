@@ -102,4 +102,5 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 
 ![Bsrgan x4](https://user-images.githubusercontent.com/32263112/198290909-277e176e-ccb4-4a4b-8531-b182a18d566a.png)
 
+![startr_BSRGANx4](https://user-images.githubusercontent.com/32263112/202902428-e5367fc6-6ea5-4344-906f-ff2989d0dc0a.png)
 
