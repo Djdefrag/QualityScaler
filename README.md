@@ -42,9 +42,9 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
  DirectX runtime: https://www.microsoft.com/en-us/download/details.aspx?id=8109
  
 #### Installation:
- 1. download the QualityScaler release .zip
- 2. unzip using 7zip or similar
- 3. execute QualityScaler.exe in the directory
+ - download the QualityScaler release .zip
+ - unzip using 7zip or similar
+ - execute QualityScaler.exe in the directory
 
 ## Requirements. 🤓
 - [ ] Windows 11 / Windows 10
@@ -55,15 +55,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
     - [ ] any NVIDIA >=  GTX 600 series
 - [ ] CPU [works without GPU, but is very slow]
 
-## My testing PC.
-- [ ] Windows 10 ReviOS
-- [ ] CPU Ryzen 5600G
-- [ ] RAM 16Gb
-- [ ] GPU Nvidia 1660
-- [ ] STORAGE 1 Sata 120Gb SSD, 1 NVME 500Gb SSD
-
 ## Features.
-
 - [x] Easy to use GUI
 - [x] Image/list of images upscale
 - [x] Video upscale
@@ -80,6 +72,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [x] New GUI with Windows 11 style
 - [x] Include audio for upscaled video
 - [ ] Optimizing image/frame resize and video frames extraction speed
+- [ ] Multi GPU support (for pc with double GPU, integrated + dedicated)
 - [ ] Update libraries 
     - [ ] Python 3.10 (expecting ~10% more performance) 
     - [ ] Python 3.11 (expecting ~30% more performance)
