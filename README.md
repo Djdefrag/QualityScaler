@@ -62,7 +62,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [x] Drag&drop files [image/multiple images/video]
 - [x] Automatic image tiling and merging to avoid gpu VRAM limitation
 - [x] Resize image/video before upscaling
-- [x] Cpu and Gpu backend
+- [x] Gpu backend
 - [x] Compatible images - png, jpeg, bmp, webp, tif  
 - [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
 
@@ -71,8 +71,9 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [x] Switch to Pytorch-directml to support all Directx12 compatible gpu (AMD, Intel, Nvidia)
 - [x] New GUI with Windows 11 style
 - [x] Include audio for upscaled video
-- [ ] Optimizing image/frame resize and video frames extraction speed
-- [ ] Multi GPU support (for pc with double GPU, integrated + dedicated)
+- [x] Optimizing image/frame resize and video frames extraction speed
+- [ ] Optimizing video frames extraction speed
+- [x] Multi GPU support (for pc with double GPU, integrated + dedicated)
 - [ ] Update libraries 
     - [ ] Python 3.10 (expecting ~10% more performance) 
     - [ ] Python 3.11 (expecting ~30% more performance)
