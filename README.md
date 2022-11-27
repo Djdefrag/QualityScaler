@@ -12,6 +12,9 @@
     <img src="https://user-images.githubusercontent.com/32263112/204013752-04cdb736-b816-443b-9898-dc8938195b07.PNG"> </a> 
 </div>
 
+## Other AI projects.🤓
+
+https://github.com/Djdefrag/ReSR.Scaler / ReSR.Scaler - image/video deeplearning upscaler with any GPU (Real-ESRGAN/Pytorch)
 
 ## Citations. ❤
 
