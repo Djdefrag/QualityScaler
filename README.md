@@ -22,9 +22,6 @@ https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-imag
 
 https://timesavervfx.com/ai-upscale/
 
-## No Watermarks ✨
-To avoid watermarks leave a tip here: https://jangystudio.itch.io/qualityscaler ❤
-
 ## Credits.
 
 BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
@@ -56,16 +53,15 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
     - [ ] any AMD >= Radeon HD 7000 series
     - [ ] any Intel HD Integrated >= 4th-gen core
     - [ ] any NVIDIA >=  GTX 600 series
-- [ ] CPU [works without GPU, but is very slow]
 
 ## Features.
 - [x] Easy to use GUI
 - [x] Image/list of images upscale
 - [x] Video upscale
-- [x] Drag&drop files [image/multiple images/video]
+- [x] Drag&drop files [image / multiple images / video]
 - [x] Automatic image tiling and merging to avoid gpu VRAM limitation
 - [x] Resize image/video before upscaling
-- [x] Gpu backend
+- [x] Multiple Gpu support
 - [x] Compatible images - png, jpeg, bmp, webp, tif  
 - [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
 
@@ -80,6 +76,7 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [ ] Update libraries 
     - [ ] Python 3.10 (expecting ~10% more performance) 
     - [ ] Python 3.11 (expecting ~30% more performance)
+    - [ ] Pytorch-directml
 
 ## Known bugs.
 - [x] Windows10 - the app starts with white colored navbar instead of dark
