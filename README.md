@@ -14,7 +14,8 @@
 
 ## Other AI projects.🤓
 
-https://github.com/Djdefrag/ReSR.Scaler / ReSR.Scaler - image/video deeplearning upscaler with any GPU (Real-ESRGAN/Pytorch)
+https://github.com/Djdefrag/RealESRScaler / RealESRScaler - image/video deeplearning upscaling for any GPU
+
 
 ## Citations. ❤
 
