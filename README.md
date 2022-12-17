@@ -2,7 +2,7 @@
 <div align="center">
     <br>
     <img src="https://github.com/Djdefrag/QualityScaler/blob/main/Assets/logo.png" width="175"> </a> 
-    <br><br> QualityScaler - image/video deeplearning upscaling for any GPU <br><br>
+    <br><br> QualityScaler - image/video AI upscaler app (BSRGAN) <br><br>
     <a href="https://jangystudio.itch.io/qualityscaler">
          <img src="https://user-images.githubusercontent.com/86362423/162710522-c40c4f39-a6b9-48bc-84bc-1c6b78319f01.png" width="200">
     </a>
@@ -14,7 +14,7 @@
 
 ## Other AI projects.🤓
 
-https://github.com/Djdefrag/RealESRScaler / RealESRScaler - image/video deeplearning upscaling for any GPU
+https://github.com/Djdefrag/RealESRScaler / RealESRScaler - image/video AI upscaler app (Real-ESRGAN)
 
 
 ## Citations. ❤
