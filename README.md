@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/206183387-6c19ecde-9107-4712-b312-6c33dd403348.PNG"> </a> 
+    <img src="https://user-images.githubusercontent.com/32263112/208716221-83d7fde3-43fb-499d-8052-a1b0e950195c.PNG"> </a> 
 </div>
 
 ## Other AI projects.🤓
@@ -63,9 +63,9 @@ QualityScaler is completely written in Python, from backend to frontend. Externa
 - [x] Optimizing video frame resize and extraction speed
 - [x] Multi GPU support (for pc with double GPU, integrated + dedicated)
 - [ ] Update libraries 
-    - [ ] Python 3.10 (expecting ~10% more performance) 
+    - [x] Python 3.10 (expecting ~10% more performance) 
     - [ ] Python 3.11 (expecting ~30% more performance)
-    - [ ] Pytorch-directml
+    - [x] Pytorch-directml
 
 ## Known bugs.
 - [x] Windows10 - the app starts with white colored navbar instead of dark
