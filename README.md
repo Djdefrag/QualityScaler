@@ -12,6 +12,9 @@
     <img src="https://user-images.githubusercontent.com/32263112/208716221-83d7fde3-43fb-499d-8052-a1b0e950195c.PNG"> </a> 
 </div>
 
+## What is QualityScaler?
+Qualityscaler is a Windows app that uses BSRGAN Artificial Intelligence to enhance, enlarge and reduce noise in photographs and videos.
+
 ## Other AI projects.🤓
 
 https://github.com/Djdefrag/RealESRScaler / RealESRScaler - image/video AI upscaler app (Real-ESRGAN)
