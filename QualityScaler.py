@@ -12,6 +12,7 @@ import time
 import tkinter as tk
 import tkinter.font as tkFont
 import webbrowser
+from math import ceil, floor, sqrt
 from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 from tkinter import PhotoImage, ttk
@@ -24,21 +25,31 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 import torch_directml
-from moviepy.audio.AudioClip import CompositeAudioClip
-from moviepy.audio.io import AudioFileClip
 from moviepy.editor import VideoFileClip
 from moviepy.video.io import ImageSequenceClip
-from moviepy.video.io import VideoFileClip as MoviePyClip
-from PIL import Image, ImageDraw, ImageFont
-from split_image import reverse_split, split_image
+from PIL import Image
 from win32mica import MICAMODE, ApplyMica
 
 import sv_ttk
 
-pay      = True
-version  = "v. 9.0"
+version  = "v. 10.0"
 
-if not pay: version = version + ".f"
+# totally reworked tiles/join function (when image/frame does not fit entirely in VRAM)
+#   tiles cut and join is now faster for images and frames
+# in addition to a general improvement of the tiles, for videos, the management of tiles has been completely revised 
+#   this will especially help gpu with low vram
+#   and it will accelerate the upscale of high-resolution video
+# reworked upscaled video reconstruction
+#   it is now multithreading based on value of "Cpu number" widget 
+#   is now also faster and lighter
+# reworked images/frames resize 
+#   now faster
+# fixed a bug when extracting video frames that led to 
+#   the extraction of more frames than were actually present in the video
+# GUI improvements
+# code cleaning & removed unused code
+# optimized packages imports
+# updated libraries
 
 global app_name
 app_name = "QualityScaler"
@@ -50,7 +61,7 @@ image_path            = "none"
 device                = 0
 input_video_path      = ""
 target_file_extension = ".png"
-file_extension_list = [ '.png', '.jpg', '.jp2', '.bmp', '.tiff' ]
+file_extension_list   = [ '.png', '.jpg', '.jp2', '.bmp', '.tiff' ]
 half_precision        = True
 single_file           = False
 multiple_files        = False
@@ -62,8 +73,8 @@ vram_multiplier       = 1
 default_vram_limiter  = 8
 multiplier_num_tiles  = 2
 cpu_number            = 4
+interpolation_mode    = cv2.INTER_AREA
 windows_subversion    = int(platform.version().split('.')[2])
-resize_algorithm      = Image.LINEAR
 compatible_gpus       = torch_directml.device_count()
 
 device_list_names     = []
@@ -153,6 +164,180 @@ scaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
 font_scale = round(1/scaleFactor, 1)
 
 
+# ------------------- Slice functions -------------------
+
+
+class Tile(object):
+    def __init__(self, image, number, position, coords, filename=None):
+        self.image = image
+        self.number = number
+        self.position = position
+        self.coords = coords
+        self.filename = filename
+
+    @property
+    def row(self): return self.position[0]
+
+    @property
+    def column(self): return self.position[1]
+
+    @property
+    def basename(self): return get_basename(self.filename)
+
+    def generate_filename(
+        self, directory=os.getcwd(), prefix="tile", format="png", path=True
+    ):
+        filename = prefix + "_{col:02d}_{row:02d}.{ext}".format(
+            col=self.column, row=self.row, ext=format.lower().replace("jpeg", "jpg")
+        )
+        if not path: return filename
+        return os.path.join(directory, filename)
+
+    def save(self, filename=None, format="png"):
+        if not filename: filename = self.generate_filename(format=format)
+        self.image.save(filename, format)
+        self.filename = filename
+
+    def __repr__(self):
+        """Show tile number, and if saved to disk, filename."""
+        if self.filename:
+            return "<Tile #{} - {}>".format(
+                self.number, os.path.basename(self.filename)
+            )
+        return "<Tile #{}>".format(self.number)
+
+def get_basename(filename):
+    return os.path.splitext(os.path.basename(filename))[0]
+
+def calc_columns_rows(n):
+    """
+    Calculate the number of columns and rows required to divide an image
+    into ``n`` parts.
+    Return a tuple of integers in the format (num_columns, num_rows)
+    """
+    num_columns = int(ceil(sqrt(n)))
+    num_rows = int(ceil(n / float(num_columns)))
+    return (num_columns, num_rows)
+
+def get_combined_size(tiles):
+    """Calculate combined size of tiles."""
+    # TODO: Refactor calculating layout to avoid repetition.
+    columns, rows = calc_columns_rows(len(tiles))
+    tile_size = tiles[0].image.size
+    return (tile_size[0] * columns, tile_size[1] * rows)
+
+def join(tiles, width=0, height=0):
+    """
+    @param ``tiles`` - Tuple of ``Image`` instances.
+    @param ``width`` - Optional, width of combined image.
+    @param ``height`` - Optional, height of combined image.
+    @return ``Image`` instance.
+    """
+    # Don't calculate size if width and height are provided
+    # this allows an application that knows what the
+    # combined size should be to construct an image when
+    # pieces are missing.
+
+    if width > 0 and height > 0:
+        im = Image.new("RGBA", (width, height), None)
+    else:
+        im = Image.new("RGBA", get_combined_size(tiles), None)
+    columns, rows = calc_columns_rows(len(tiles))
+    for tile in tiles:
+        try:
+            im.paste(tile.image, tile.coords)
+        except IOError:
+            # do nothing, blank out the image
+            continue
+    return im
+
+def validate_image(image, number_tiles):
+    """Basic sanity checks prior to performing a split."""
+    TILE_LIMIT = 99 * 99
+
+    try:
+        number_tiles = int(number_tiles)
+    except BaseException:
+        raise ValueError("number_tiles could not be cast to integer.")
+
+    if number_tiles > TILE_LIMIT or number_tiles < 2:
+        raise ValueError(
+            "Number of tiles must be between 2 and {} (you \
+                          asked for {}).".format(
+                TILE_LIMIT, number_tiles
+            )
+        )
+
+def validate_image_col_row(image, col, row):
+    """Basic checks for columns and rows values"""
+    SPLIT_LIMIT = 99
+
+    try:
+        col = int(col)
+        row = int(row)
+    except BaseException:
+        raise ValueError("columns and rows values could not be cast to integer.")
+
+    if col < 1 or row < 1 or col > SPLIT_LIMIT or row > SPLIT_LIMIT:
+        raise ValueError(
+            f"Number of columns and rows must be between 1 and"
+            f"{SPLIT_LIMIT} (you asked for rows: {row} and col: {col})."
+        )
+    if col == 1 and row == 1:
+        raise ValueError("There is nothing to divide. You asked for the entire image.")
+
+def img_cutter(filename, number_tiles=None, col=None, row=None, save=True, DecompressionBombWarning=True):
+    if DecompressionBombWarning is False:
+        Image.MAX_IMAGE_PIXELS = None
+
+    im = Image.open(filename)
+    im_w, im_h = im.size
+
+    columns = 0
+    rows = 0
+    if number_tiles:
+        validate_image(im, number_tiles)
+        columns, rows = calc_columns_rows(number_tiles)
+    else:
+        validate_image_col_row(im, col, row)
+        columns = col
+        rows = row
+
+    tile_w, tile_h = int(floor(im_w / columns)), int(floor(im_h / rows))
+
+    tiles = []
+    number = 1
+    for pos_y in range(0, im_h - rows, tile_h):  # -rows for rounding error.
+        for pos_x in range(0, im_w - columns, tile_w):  # as above.
+            area = (pos_x, pos_y, pos_x + tile_w, pos_y + tile_h)
+            image = im.crop(area)
+            position = (int(floor(pos_x / tile_w)) + 1, int(floor(pos_y / tile_h)) + 1)
+            coords = (pos_x, pos_y)
+            tile = Tile(image, number, position, coords)
+            tiles.append(tile)
+            number += 1
+    if save:
+        save_tiles(tiles, prefix=get_basename(filename), directory=os.path.dirname(filename))
+    return tiles
+
+def save_tiles(tiles, prefix="", directory=os.getcwd(), format="png"):
+    for tile in tiles:
+        tile.save(
+            filename=tile.generate_filename(
+                prefix=prefix, directory=directory, format=format
+            ),
+            format=format,
+        )
+    return tuple(tiles)
+
+def reunion_image(tiles):
+    image = join(tiles)
+    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    return image
+
+
+# ------------------ / Slice functions ------------------
+
 # ------------------------ Utils ------------------------
 
 
@@ -186,7 +371,7 @@ def adapt_image_to_show(image_to_prepare):
         new_height       = round(old_image.shape[0]/downscale_factor)
         resized_image    = cv2.resize(old_image,
                                    (new_width, new_height),
-                                   interpolation = cv2.INTER_NEAREST)
+                                   interpolation = interpolation_mode)
         cv2.imwrite("temp.png", resized_image)
         return "temp.png"
     else:
@@ -194,7 +379,7 @@ def adapt_image_to_show(image_to_prepare):
         new_height       = round(old_image.shape[0])
         resized_image    = cv2.resize(old_image,
                                    (new_width, new_height),
-                                   interpolation = cv2.INTER_NEAREST)
+                                   interpolation = interpolation_mode)
         cv2.imwrite("temp.png", resized_image)
         return "temp.png"
 
@@ -226,30 +411,13 @@ def read_log_file():
 def resize_image(image_path, resize_factor, target_file_extension):
     new_image_path = (os.path.splitext(image_path)[0] + "_resized" + target_file_extension).strip()
 
-    old_image = Image.open(image_path.strip())
+    old_image  = cv2.imread(image_path.strip(), cv2.IMREAD_UNCHANGED)
+    new_width  = int(old_image.shape[1] * resize_factor)
+    new_height = int(old_image.shape[0] * resize_factor)
 
-    new_width, new_height = old_image.size
-    new_width = int(new_width * resize_factor)
-    new_height = int(new_height * resize_factor)
-
-    max_height_or_width = int(max(new_height, new_width))
-
-    resized_image = old_image.resize((new_width, new_height), resample = resize_algorithm)
-
-    if not pay:
-        font = ImageFont.truetype(find_by_relative_path("Assets" 
-                                                        + os.sep 
-                                                        + "arial.ttf"), 
-                                    int(max_height_or_width/40))
-        img_text = ImageDraw.Draw(resized_image)
-        img_text.text((20, 20), 
-                        "Upscaled with " + app_name 
-                        + "\nTo avoid watermarks leave a tip here:"
-                        + "\n" + itchme , 
-                        font = font, 
-                        fill = (250, 250, 250))
-                                    
-    resized_image.save(new_image_path)
+    resized_image = cv2.resize(old_image, (new_width, new_height), 
+                                interpolation = interpolation_mode)    
+    cv2.imwrite(new_image_path, resized_image)
 
 def resize_image_list(image_list, resize_factor, target_file_extension):
     files_to_delete   = []
@@ -273,76 +441,56 @@ def resize_image_list(image_list, resize_factor, target_file_extension):
 
 #VIDEO
 
-def extract_frames_from_video(video_path, target_file_extension, cpu_number):
-    cap          = cv2.VideoCapture(video_path)
-    frame_rate   = int(cap.get(cv2.CAP_PROP_FPS))
-    cap.release()
-
+def extract_frames_from_video(video_path):
     video_frames_list = []
+    cap          = cv2.VideoCapture(video_path)
+    frame_rate   = float(cap.get(cv2.CAP_PROP_FPS))
+    cap.release()
 
     # extract frames
     video = VideoFileClip(video_path)
     img_sequence = app_name + "_temp" + os.sep + "frame_%01d" + '.jpg'
-    video_frames_list = video.write_images_sequence(img_sequence, 
-                                                    fps = frame_rate,
-                                                    logger = 'bar')
+    video_frames_list = video.write_images_sequence(img_sequence, logger = 'bar', fps = frame_rate)
     
     # extract audio
     try:
-        video = MoviePyClip.VideoFileClip(video_path)
         video.audio.write_audiofile(app_name + "_temp" + os.sep + "audio.mp3")
     except Exception as e:
         pass
 
     return video_frames_list
 
-def video_reconstruction_by_frames(input_video_path, frames_upscaled_list, AI_model):
+def video_reconstruction_by_frames(input_video_path, frames_upscaled_list, AI_model, cpu_number):
     cap          = cv2.VideoCapture(input_video_path)
     frame_rate   = int(cap.get(cv2.CAP_PROP_FPS))
     path_as_list = input_video_path.split("/")
     video_name   = str(path_as_list[-1])
     only_path    = input_video_path.replace(video_name, "")
+    for video_type in supported_video_list: video_name = video_name.replace(video_type, "")
+    upscaled_video_path = (only_path + video_name + "_" + AI_model + ".mp4")
     cap.release()
 
-    for video_type in supported_video_list: video_name = video_name.replace(video_type, "")
+    audio_file = app_name + "_temp" + os.sep + "audio.mp3"
 
-    upscaled_video_path = (only_path + video_name + "_" + AI_model + ".mp4")
+    clip = ImageSequenceClip.ImageSequenceClip(frames_upscaled_list, fps = frame_rate)
+    if os.path.exists(audio_file):
+        clip.write_videofile(upscaled_video_path,
+                            fps = frame_rate,
+                            audio   = audio_file,
+                            threads = cpu_number)
+    else:
+        clip.write_videofile(upscaled_video_path,
+                            fps = frame_rate,
+                            threads = cpu_number)       
 
-    temp_video_path = app_name + "_temp" + os.sep + "tempVideo.mp4"
-    clip = ImageSequenceClip.ImageSequenceClip(frames_upscaled_list, fps=frame_rate)
-    clip.write_videofile(temp_video_path, fps=frame_rate)
-
-    video = MoviePyClip.VideoFileClip(temp_video_path)
+def resize_frame(image_path, new_width, new_height, target_file_extension):
+    new_image_path = image_path.replace('.jpg', "" + target_file_extension)
     
-    # audio
-    try:
-        audio = AudioFileClip.AudioFileClip(app_name + "_temp" + os.sep + "audio.mp3")
-        new_audioclip = CompositeAudioClip([audio])
-        video.audio = new_audioclip
-    except:
-        pass
-    
-    video.write_videofile(upscaled_video_path)
+    old_image = cv2.imread(image_path.strip(), cv2.IMREAD_UNCHANGED)
 
-def resize_frame(image_path, new_width, new_height, max_height_or_width, target_file_extension):
-    new_image_path = image_path.replace('.jpg', "_resized" + target_file_extension)
-
-    resized_image = Image.open(image_path).resize((new_width, new_height), resample = resize_algorithm)
-
-    if not pay:
-        font = ImageFont.truetype(find_by_relative_path("Assets" 
-                                                        + os.sep 
-                                                        + "arial.ttf"), 
-                                    int(max_height_or_width/40))
-        img_text = ImageDraw.Draw(resized_image)
-        img_text.text((20, 20), 
-                        "Upscaled with " + app_name 
-                        + "\To avoid watermarks leave a tip here:"
-                        + "\n" + itchme , 
-                        font = font, 
-                        fill = (250, 250, 250))
-                                    
-    resized_image.save(new_image_path)
+    resized_image = cv2.resize(old_image, (new_width, new_height), 
+                                interpolation = interpolation_mode)    
+    cv2.imwrite(new_image_path, resized_image)
 
 def resize_frame_list(image_list, resize_factor, target_file_extension, cpu_number):
     downscaled_images = []
@@ -351,21 +499,19 @@ def resize_frame_list(image_list, resize_factor, target_file_extension, cpu_numb
     new_width, new_height = old_image.size
     new_width = int(new_width * resize_factor)
     new_height = int(new_height * resize_factor)
-
-    max_height_or_width = int(max(new_height, new_width))
     
     with ThreadPool(cpu_number) as pool:
         pool.starmap(resize_frame, zip(image_list, 
                                     itertools.repeat(new_width), 
                                     itertools.repeat(new_height), 
-                                    itertools.repeat(max_height_or_width),
                                     itertools.repeat(target_file_extension)))
 
     for image in image_list:
-        resized_image_path = image.replace('.jpg', "_resized" + target_file_extension)
+        resized_image_path = image.replace('.jpg', "" + target_file_extension)
         downscaled_images.append(resized_image_path)
 
     return downscaled_images
+
 
 
 # ----------------------- /Utils ------------------------
@@ -473,6 +619,33 @@ class RRDBNet(nn.Module):
 # ----------------------- Core ------------------------
 
 
+def thread_check_steps_for_images( not_used_var, not_used_var2 ):
+    time.sleep(3)
+    try:
+        while True:
+            step = read_log_file()
+            if "Upscale completed" in step or "Error while upscaling" in step or "Stopped upscaling" in step:
+                info_string.set(step)
+                stop = 1 + "x"
+            info_string.set(step)
+            time.sleep(2)
+    except:
+        place_upscale_button()
+
+def thread_check_steps_for_videos( not_used_var, not_used_var2 ):
+    time.sleep(3)
+    try:
+        while True:
+            step = read_log_file()
+            if "Upscale video completed" in step or "Error while upscaling" in step or "Stopped upscaling" in step:
+                info_string.set(step)
+                stop = 1 + "x"
+            info_string.set(step)
+            time.sleep(2)
+    except:
+        place_upscale_button()
+
+
 def prepare_model(AI_model, device, half_precision):
     backend = torch.device(torch_directml.device(device))
 
@@ -491,33 +664,6 @@ def prepare_model(AI_model, device, half_precision):
     model = model.to(backend)
 
     return model
-
-
-def thread_check_steps_for_images( not_used_var, not_used_var2 ):
-    time.sleep(3)
-    try:
-        while True:
-            step = read_log_file()
-            if "Upscale completed" in step or "Error while upscaling" in step or "Stopped upscaling" in step:
-                info_string.set(step)
-                stop = 1 + "x"
-            info_string.set(step)
-            time.sleep(1)
-    except:
-        place_upscale_button()
-
-def thread_check_steps_for_videos( not_used_var, not_used_var2 ):
-    time.sleep(3)
-    try:
-        while True:
-            step = read_log_file()
-            if "Upscale video completed" in step or "Error while upscaling" in step or "Stopped upscaling" in step:
-                info_string.set(step)
-                stop = 1 + "x"
-            info_string.set(step)
-            time.sleep(1)
-    except:
-        place_upscale_button()
 
 def enhance(model, img, backend, half_precision):
     img = img.astype(np.float32)
@@ -575,9 +721,115 @@ def enhance(model, img, backend, half_precision):
 
     return output, img_mode
 
+
+
+def reverse_split_multiple_frames(list_of_tiles_list, frames_upscaled_list):
+    for index in range(len(frames_upscaled_list)):
+        cv2.imwrite(frames_upscaled_list[index], reunion_image(list_of_tiles_list[index]))              
+
+def upscale_frame_and_save(frame, model, result_path, 
+                            tiles_resolution, device, 
+                            half_precision, list_of_tiles_list):
+
+    used_tiles       = False
+    backend          = torch.device(torch_directml.device(device))
+
+    img_tmp          = cv2.imread(frame)
+    image_resolution = max(img_tmp.shape[1], img_tmp.shape[0])
+    num_tiles        = image_resolution/tiles_resolution
+
+    if num_tiles <= 1:
+        with torch.no_grad():
+            img_adapted     = cv2.imread(frame, cv2.IMREAD_UNCHANGED)
+            img_upscaled, _ = enhance(model, img_adapted, backend, half_precision)
+            cv2.imwrite(result_path, img_upscaled)
+    else:
+        used_tiles = True
+
+        num_tiles  = round(num_tiles)
+        if (num_tiles % 2) != 0: num_tiles += 1
+        num_tiles  = round(num_tiles * multiplier_num_tiles)
+
+        tiles = img_cutter(frame, num_tiles)
+        with torch.no_grad():
+            for tile in tiles:
+                tile_adapted  = cv2.imread(tile.filename, cv2.IMREAD_UNCHANGED)
+                tile_upscaled, _ = enhance(model, tile_adapted, backend, half_precision)
+                cv2.imwrite(tile.filename, tile_upscaled)
+                tile.image = Image.open(tile.filename)
+                tile.coords = (tile.coords[0] * 4, 
+                                tile.coords[1] * 4)
+
+        list_of_tiles_list.append(tiles)
+
+    return list_of_tiles_list, used_tiles
+
+def process_upscale_video_frames(input_video_path, AI_model, resize_factor, device,
+                                tiles_resolution, target_file_extension, cpu_number,
+                                half_precision):
+    try:
+        start = timer()
+
+        create_temp_dir(app_name + "_temp")
+
+        write_in_log_file('...')
+      
+        write_in_log_file('Extracting video frames...')
+        frame_list = extract_frames_from_video(input_video_path)
+        
+        write_in_log_file('Resizing video frames...')
+        frame_list  = resize_frame_list(frame_list, resize_factor, target_file_extension, cpu_number)
+
+        write_in_log_file('Upscaling...')
+        how_many_images = len(frame_list)
+        done_images     = 0
+        frames_upscaled_list = []
+        list_of_tiles_list   = []
+
+        model = prepare_model(AI_model, device, half_precision)
+
+        for frame in frame_list:
+            result_path = prepare_output_filename(frame, AI_model, target_file_extension)
+            frames_upscaled_list.append(result_path)
+
+            list_of_tiles_list, used_tiles = upscale_frame_and_save(frame, 
+                                                                    model, 
+                                                                    result_path, 
+                                                                    tiles_resolution, 
+                                                                    device, 
+                                                                    half_precision,
+                                                                    list_of_tiles_list)
+            done_images += 1
+            write_in_log_file("Upscaled frame " + str(done_images) + "/" + str(how_many_images))
+
+        if used_tiles: 
+            write_in_log_file("Reconstructing frames from tiles...")
+            reverse_split_multiple_frames(list_of_tiles_list, frames_upscaled_list)
+
+        write_in_log_file("Processing upscaled video...")
+        video_reconstruction_by_frames(input_video_path, frames_upscaled_list, AI_model, cpu_number)
+
+        write_in_log_file("Upscale video completed [" + str(round(timer() - start)) + " sec.]")
+
+        create_temp_dir(app_name + "_temp")
+
+    except Exception as e:
+        write_in_log_file('Error while upscaling' + '\n\n' + str(e)) 
+        import tkinter as tk
+        error_root = tk.Tk()
+        error_root.withdraw()
+        tk.messagebox.showerror(title   = 'Error', 
+                                message = 'Upscale failed caused by:\n\n' +
+                                           str(e) + '\n\n' +
+                                          'Please report the error on Github.com or Itch.io.' +
+                                          '\n\nThank you :)')
+
+
+
 def upscale_image_and_save(img, model, result_path, 
-                            tiles_resolution, target_file_extension, 
-                            device, half_precision, task_type):
+                            tiles_resolution, 
+                            upscale_factor, 
+                            device, half_precision):
     img_tmp          = cv2.imread(img)
     image_resolution = max(img_tmp.shape[1], img_tmp.shape[0])
     num_tiles        = image_resolution/tiles_resolution
@@ -593,36 +845,31 @@ def upscale_image_and_save(img, model, result_path,
         if (num_tiles % 2) != 0: num_tiles += 1
         num_tiles = round(num_tiles * multiplier_num_tiles)
 
-        num_tiles_applied = int(num_tiles/2)
-        how_many_tiles = int(pow(num_tiles/2, 2))
-
-        split_image(img, num_tiles_applied, num_tiles_applied, False, 
-                    should_cleanup = False, should_quiet = True, 
-                    output_dir = None)
-
-        tiles = []
-        for index in range(how_many_tiles): tiles.append(img.replace(target_file_extension, "_" + str(index) + target_file_extension))
-
+        tiles = img_cutter(img, num_tiles)
         with torch.no_grad():
             for tile in tiles:
-                tile_adapted  = cv2.imread(tile, cv2.IMREAD_UNCHANGED)
+                tile_adapted  = cv2.imread(tile.filename, cv2.IMREAD_UNCHANGED)
                 tile_upscaled, _ = enhance(model, tile_adapted, backend, half_precision)
-                cv2.imwrite(tile, tile_upscaled)
+                cv2.imwrite(tile.filename, tile_upscaled)
+                tile.image = Image.open(tile.filename)
+                tile.coords = (tile.coords[0] * upscale_factor, 
+                                tile.coords[1] * upscale_factor)
+    
+        cv2.imwrite(result_path, reunion_image(tiles))
 
-        reverse_split(tiles, num_tiles_applied, num_tiles_applied, 
-                        result_path, should_cleanup = False, 
-                        should_quiet = True)
-        
-        if task_type == 'image': delete_list_of_files(tiles)
-
+        to_delete = []
+        for tile in tiles: to_delete.append(tile.filename)
+        delete_list_of_files(to_delete)
 
 def process_upscale_multiple_images(image_list, AI_model, resize_factor, device, 
-                                                tiles_resolution, target_file_extension, 
-                                                half_precision):
+                                    tiles_resolution, target_file_extension, 
+                                    half_precision):
     try:
         start = timer()
-        
         write_in_log_file('...')
+
+        if "x2" in AI_model: upscale_factor = 2
+        elif "x4" in AI_model: upscale_factor = 4        
 
         write_in_log_file('Resizing images...')
         image_list, files_to_delete = resize_image_list(image_list, resize_factor, target_file_extension)
@@ -631,69 +878,17 @@ def process_upscale_multiple_images(image_list, AI_model, resize_factor, device,
         done_images     = 0
 
         write_in_log_file('Upscaling...')
+        model = prepare_model(AI_model, device, half_precision)
         for img in image_list:
-            model = prepare_model(AI_model, device, half_precision)
             result_path = prepare_output_filename(img, AI_model, target_file_extension)
             upscale_image_and_save(img, model, result_path, tiles_resolution, 
-                                    target_file_extension, device, half_precision,
-                                    "image")
-            del model
+                                    upscale_factor, device, half_precision)
             done_images += 1
             write_in_log_file("Upscaled images " + str(done_images) + "/" + str(how_many_images))
                 
         write_in_log_file("Upscale completed [" + str(round(timer() - start)) + " sec.]")
 
         delete_list_of_files(files_to_delete)
-    except Exception as e:
-        write_in_log_file('Error while upscaling' + '\n\n' + str(e)) 
-        import tkinter as tk
-        error_root = tk.Tk()
-        error_root.withdraw()
-        tk.messagebox.showerror(title   = 'Error', 
-                                message = 'Upscale failed caused by:\n\n' +
-                                           str(e) + '\n\n' +
-                                          'Please report the error on Github.com or Itch.io.' +
-                                          '\n\nThank you :)')
-
-def process_upscale_video_frames(input_video_path, AI_model, resize_factor, device,
-                                             tiles_resolution, target_file_extension, cpu_number,
-                                             half_precision):
-    try:
-        start = timer()
-
-        create_temp_dir(app_name + "_temp")
-
-        write_in_log_file('...')
-      
-        write_in_log_file('Extracting video frames...')
-        image_list = extract_frames_from_video(input_video_path, target_file_extension, cpu_number)
-        
-        write_in_log_file('Resizing video frames...')
-        image_list  = resize_frame_list(image_list, resize_factor, target_file_extension, cpu_number)
-
-        write_in_log_file('Upscaling...')
-        how_many_images = len(image_list)
-        done_images     = 0
-        frames_upscaled_list = []
-
-        model = prepare_model(AI_model, device, half_precision)
-
-        for img in image_list:
-            result_path = prepare_output_filename(img, AI_model, target_file_extension)
-            frames_upscaled_list.append(result_path)
-            upscale_image_and_save(img, model, result_path, tiles_resolution, 
-                                    target_file_extension, device, half_precision,
-                                    "video")
-            done_images += 1
-            write_in_log_file("Upscaled frame " + str(done_images) + "/" + str(how_many_images))
-
-        write_in_log_file("Processing upscaled video...")
-        
-        video_reconstruction_by_frames(input_video_path, frames_upscaled_list, AI_model)
-
-        write_in_log_file("Upscale video completed [" + str(round(timer() - start)) + " sec.]")
-
-        create_temp_dir(app_name + "_temp")
     except Exception as e:
         write_in_log_file('Error while upscaling' + '\n\n' + str(e)) 
         import tkinter as tk
@@ -862,8 +1057,7 @@ def file_drop_event(event):
             elif not multiple_files:
                 if not more_than_one_video:
                     input_video_path = str(event.data).replace("{", "").replace("}", "")
-                    
-                    show_video_info_with_drag_drop(input_video_path)
+                    show_video_in_GUI(input_video_path)
 
                     # reset variable
                     image_path = "none"
@@ -884,26 +1078,15 @@ def file_drop_event(event):
         elif all_supported:
             if multiple_files:
                 image_list_dropped = drop_event_to_image_list(event)
-
                 show_list_images_in_GUI(image_list_dropped)
-                
                 multi_img_list = image_list_dropped
-
-                place_clean_button()
-
                 # reset variable
                 image_path = "none"
                 video_frames_list = []
 
             elif single_file:
                 image_list_dropped = drop_event_to_image_list(event)
-
-                # convert images to target file extension
-                show_single_image_inGUI = threading.Thread(target = show_image_in_GUI,
-                                                         args=(str(image_list_dropped[0]), 1),
-                                                         daemon=True)
-                show_single_image_inGUI.start()
-
+                show_image_in_GUI(image_list_dropped[0])
                 multi_img_list = image_list_dropped
 
                 # reset variable
@@ -982,14 +1165,11 @@ def clear_app_background():
     drag_drop.place(x = left_bar_width + 50, y=0,
                     width = drag_drop_width, height = drag_drop_height)
 
-def show_video_info_with_drag_drop(video_path):
-    global image
-    
-    fist_frame = "temp.jpg"
-    
-    clear_app_background()
-    place_clean_button()
 
+def show_video_in_GUI(video_path):
+    clear_app_background()
+    
+    fist_frame   = "temp.jpg"
     cap          = cv2.VideoCapture(video_path)
     width        = round(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height       = round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -1003,69 +1183,99 @@ def show_video_info_with_drag_drop(video_path):
     
     while(cap.isOpened()):
         ret, frame = cap.read()
-        if ret == False:
-            break
+        if ret == False: break
         cv2.imwrite(fist_frame, frame)
         break
     cap.release()
 
-    image_to_show_resized = adapt_image_to_show(fist_frame)
+    resized_image_to_show = adapt_image_to_show(fist_frame)
 
-    image = tk.PhotoImage(file = image_to_show_resized)
-    drag_drop_and_images = ttk.Label(root,
-                                     image   = image,
-                                     ondrop  = file_drop_event,
-                                     anchor  = "center",
-                                     relief  = "flat",
-                                     justify = "center",
-                                     background = background_color,
-                                     foreground = "#202020")
-    drag_drop_and_images.place(x = 30 + left_bar_width + drag_drop_width/2 - show_image_width/2,
-                               y = drag_drop_height/2 - show_image_height/2 - 15,
-                               width  = show_image_width,
-                               height = show_image_height)
+    global image
+    image = tk.PhotoImage(file = resized_image_to_show)
+    resized_image_to_show_width = round(cv2.imread(resized_image_to_show).shape[1])
+    resized_image_to_show_height = round(cv2.imread(resized_image_to_show).shape[0])
+    image_x_center = 30 + left_bar_width + drag_drop_width/2 - resized_image_to_show_width/2
+    image_y_center = drag_drop_height/2 - resized_image_to_show_height/2
+
+    image_container = ttk.Notebook(root)
+    image_container.place(x = image_x_center - 20, 
+                            y = image_y_center - 20, 
+                            width  = resized_image_to_show_width + 40,
+                            height = resized_image_to_show_height + 40)
+
+    image_ = ttk.Label(root,
+                        text    = "",
+                        image   = image,
+                        ondrop  = file_drop_event,
+                        anchor  = "center",
+                        relief  = "flat",
+                        justify = "center",
+                        background = background_color,
+                        foreground = "#202020")
+    image_.place(x = image_x_center,
+                y = image_y_center,
+                width  = resized_image_to_show_width,
+                height = resized_image_to_show_height)
+
+    image_info_label = ttk.Label(root,
+                                  font       = bold11,
+                                  text       = ( video_name + "\n" + "[" + str(width) + "x" + str(height) + "]" + " | " + str(minutes) + 'm:' + str(round(seconds)) + "s | " + str(num_frames) + "frames | " + str(round(frame_rate)) + "fps" ),
+                                  relief     = "flat",
+                                  justify    = "center",
+                                  background = background_color,
+                                  foreground = "#D3D3D3",
+                                  anchor     = "center")
+
+    image_info_label.place(x = 30 + left_bar_width + drag_drop_width/2 - image_text_width/2,
+                            y = drag_drop_height - 85,
+                            width  = image_text_width,
+                            height = 40)
+
+    global clear_icon
+    clear_icon = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "clear_icon.png"))
+
+    clean_button = ttk.Button(root, 
+                            text     = '  CLEAN',
+                            image    = clear_icon,
+                            compound = 'left',
+                            style    = 'Bold.TButton')
+
+    clean_button.place(x = image_x_center - 20,
+                       y = image_y_center - 75,
+                       width  = 175,
+                       height = 40)
+    clean_button["command"] = lambda: place_drag_drop_widget()          
 
     os.remove(fist_frame)
-
-    file_description = ( video_name + "\n" + "[" + str(width) + "x" + str(height) + "]" + " | " + str(minutes) + 'm:' + str(round(seconds)) + "s | " + str(num_frames) + "frames | " + str(round(frame_rate)) + "fps")
-
-    video_info_width = drag_drop_width * 0.8
-
-    video_info_space = ttk.Label(root,
-                                 text    = file_description,
-                                 ondrop  = file_drop_event,
-                                 font    = bold11,
-                                 anchor  = "center",
-                                 relief  = "flat",
-                                 justify = "center",
-                                 background = background_color,
-                                 foreground = "#D3D3D3",
-                                 wraplength = video_info_width * 0.95)
-    video_info_space.place(x = 30 + left_bar_width + drag_drop_width/2 - video_info_width/2,
-                           y = drag_drop_height - 85,
-                           width  = video_info_width,
-                           height = 65)
-
-def show_list_images_in_GUI(image_list_prepared):
+              
+def show_list_images_in_GUI(image_list):
     clear_app_background()
-    place_clean_button()
+
+    global clear_icon
+    clear_icon = tk.PhotoImage(file = find_by_relative_path("Assets"  + os.sep  + "clear_icon.png"))
+    clean_button = ttk.Button(root, 
+                            text     = '  CLEAN',
+                            image    = clear_icon,
+                            compound = 'left',
+                            style    = 'Bold.TButton')
+
+    clean_button.place(x = left_bar_width + drag_drop_width/2 - 175/2,
+                       y = 125,
+                       width  = 175,
+                       height = 40)
+    clean_button["command"] = lambda: place_drag_drop_widget()
 
     final_string = "\n"
     counter_img = 0
-
-    for elem in image_list_prepared:
+    for elem in image_list:
         counter_img += 1
         if counter_img <= 8:
-            # add first 8 files in list
             img     = cv2.imread(elem.strip())
             width   = round(img.shape[1])
             height  = round(img.shape[0])
             img_name = str(elem.split("/")[-1])
 
-            final_string += (str(counter_img) 
-                            + ".  " 
-                            + img_name 
-                            + " | [" + str(width) + "x" + str(height) + "]" + "\n\n")
+            final_string += (str(counter_img) + ".  " + img_name + " | [" + str(width) + "x" + str(height) + "]" + "\n\n")
         else:
             final_string += "and others... \n"
             break
@@ -1073,7 +1283,7 @@ def show_list_images_in_GUI(image_list_prepared):
     list_height = 420
     list_width  = 750
 
-    images_list = ttk.Label(root,
+    images_list_label = ttk.Label(root,
                             text    = final_string,
                             ondrop  = file_drop_event,
                             font    = bold12,
@@ -1084,72 +1294,88 @@ def show_list_images_in_GUI(image_list_prepared):
                             foreground = "#D3D3D3",
                             wraplength = list_width)
 
-    images_list.place(x = 30 + left_bar_width + drag_drop_width/2 - list_width/2,
+    images_list_label.place(x = left_bar_width + drag_drop_width/2 - list_width/2,
                                y = drag_drop_height/2 - list_height/2 -25,
                                width  = list_width,
                                height = list_height)
 
     images_counter = ttk.Entry(root, 
                                 foreground = text_color,
-                                ondrop  = file_drop_event,
-                                font    = bold12, 
-                                justify = 'center')
-
-    images_counter.insert(0, str(len(image_list_prepared)) + ' images')
-
+                                ondrop     = file_drop_event,
+                                font       = bold12, 
+                                justify    = 'center')
+    images_counter.insert(0, str(len(image_list)) + ' images')
     images_counter.configure(state='disabled')
-
-    images_counter.place(x = left_bar_width + drag_drop_width/2 + 125,
-                        y = drag_drop_height/2 + 250,
-                        width  = 250,
+    images_counter.place(x = left_bar_width + drag_drop_width/2 - 175/2,
+                        y  = drag_drop_height/2 + 225,
+                        width  = 200,
                         height = 42)
 
-def show_image_in_GUI(image_to_show, _ ):
-    global image
-    image_to_show = image_to_show.replace('{', '').replace('}', '')
-
-    image_to_show_resized = adapt_image_to_show(image_to_show)
-
+def show_image_in_GUI(original_image):
     clear_app_background()
-    place_clean_button()
+    original_image = original_image.replace('{', '').replace('}', '')
+    resized_image_to_show = adapt_image_to_show(original_image)
 
-    image = tk.PhotoImage(file = image_to_show_resized)
-    drag_drop_and_images = ttk.Label(root,
-                                     text="",
-                                     image   = image,
-                                     ondrop  = file_drop_event,
-                                     anchor  = "center",
-                                     relief  = "flat",
-                                     justify = "center",
-                                     background = background_color,
-                                     foreground = "#202020")
-    drag_drop_and_images.place(x = 30 + left_bar_width + drag_drop_width/2 - show_image_width/2,
-                               y = drag_drop_height/2 - show_image_height/2,
-                               width  = show_image_width,
-                               height = show_image_height)
+    global image
+    image = tk.PhotoImage(file = resized_image_to_show)
+    resized_image_to_show_width = round(cv2.imread(resized_image_to_show).shape[1])
+    resized_image_to_show_height = round(cv2.imread(resized_image_to_show).shape[0])
+    image_x_center = 30 + left_bar_width + drag_drop_width/2 - resized_image_to_show_width/2
+    image_y_center = drag_drop_height/2 - resized_image_to_show_height/2
 
-    path_as_list = image_to_show.split("/")
-    img_name     = str(path_as_list[-1])
-    img          = cv2.imread(image_to_show)
-    width        = round(img.shape[1])
-    height       = round(img.shape[0])
+    image_container = ttk.Notebook(root)
+    image_container.place(x = image_x_center - 20, 
+                            y = image_y_center - 20, 
+                            width  = resized_image_to_show_width + 40,
+                            height = resized_image_to_show_height + 40)
 
-    single_image_path = (img_name + " | [" + str(width) + "x" + str(height) + "]")
-    single_image_info = ttk.Label(root,
-                                  font = bold11,
-                                  text = single_image_path,
-                                  relief  = "flat",
-                                  justify = "center",
+    image_ = ttk.Label(root,
+                        text    = "",
+                        image   = image,
+                        ondrop  = file_drop_event,
+                        anchor  = "center",
+                        relief  = "flat",
+                        justify = "center",
+                        background = background_color,
+                        foreground = "#202020")
+    image_.place(x = image_x_center,
+                      y = image_y_center,
+                      width  = resized_image_to_show_width,
+                      height = resized_image_to_show_height)
+
+    img_name     = str(original_image.split("/")[-1])
+    width        = round(cv2.imread(original_image).shape[1])
+    height       = round(cv2.imread(original_image).shape[0])
+
+    image_info_label = ttk.Label(root,
+                                  font       = bold11,
+                                  text       = (img_name + " | [" + str(width) + "x" + str(height) + "]"),
+                                  relief     = "flat",
+                                  justify    = "center",
                                   background = background_color,
                                   foreground = "#D3D3D3",
                                   anchor     = "center")
 
-    single_image_info.place(x = 30 + left_bar_width + drag_drop_width/2 - image_text_width/2,
+    image_info_label.place(x = 30 + left_bar_width + drag_drop_width/2 - image_text_width/2,
                             y = drag_drop_height - 70,
                             width  = image_text_width,
                             height = 40)
 
-    place_clean_button()
+    global clear_icon
+    clear_icon = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "clear_icon.png"))
+
+    clean_button = ttk.Button(root, 
+                            text     = '  CLEAN',
+                            image    = clear_icon,
+                            compound = 'left',
+                            style    = 'Bold.TButton')
+
+    clean_button.place(x = image_x_center - 20,
+                       y = image_y_center - 75,
+                       width  = 175,
+                       height = 40)
+    clean_button["command"] = lambda: place_drag_drop_widget()
+
 
 def place_drag_drop_widget():
     clear_input_variables()
@@ -1190,7 +1416,6 @@ def place_drag_drop_widget():
                          height = drag_drop_height * 0.50)
 
 
-
 def combobox_AI_selection(event):
     global AI_model
     selected = str(selected_AI.get())
@@ -1208,8 +1433,6 @@ def combobox_backend_selection(event):
     for obj in device_list:
         if obj.name == selected_option:
             device = obj.index
-
-
 
 def combobox_extension_selection(event):
     global target_file_extension
@@ -1322,8 +1545,6 @@ def place_file_extension_combobox():
     combobox_file_extension.set(target_file_extension)
 
 
-
-
 def place_resize_factor_spinbox():
     resize_factor_container = ttk.Notebook(root)
     resize_factor_container.place(x = 45 + left_bar_width/2 - 370/2, 
@@ -1427,7 +1648,6 @@ def place_cpu_number_spinbox():
                     height = 42)
 
 
-
 def place_advanced_option_button():
     global advanced_settings_icon
     advanced_settings_icon = tk.PhotoImage(file = find_by_relative_path("Assets" 
@@ -1444,24 +1664,6 @@ def place_advanced_option_button():
                                 y = 130,
                                 width  = 150,
                                 height = 40)
-
-def place_clean_button():
-    global clear_icon
-    clear_icon = tk.PhotoImage(file = find_by_relative_path("Assets" 
-                                                        + os.sep 
-                                                        + "clear_icon.png"))
-
-    clean_button = ttk.Button(root, 
-                            text     = '  CLEAN',
-                            image    = clear_icon,
-                            compound = 'left',
-                            style    = 'Bold.TButton')
-
-    clean_button.place(x = 45 + left_bar_width + drag_drop_width/2 - 175/2,
-                       y = 25,
-                       width  = 175,
-                       height = 40)
-    clean_button["command"] = lambda: place_drag_drop_widget()
 
 def place_app_title():
     Title = ttk.Label(root, 

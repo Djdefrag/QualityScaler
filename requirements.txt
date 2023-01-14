@@ -8,11 +8,10 @@ python-tkdnd
 ttkwidgets
 pywin32
 win32mica
-sv_ttk
+#sv_ttk
 
 #UTILS
 wheel
 pyinstaller==5.6.2
 pyinstaller-hooks-contrib
-split_image==1.7.0
 moviepy
