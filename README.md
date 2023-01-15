@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/208716221-83d7fde3-43fb-499d-8052-a1b0e950195c.PNG"> </a> 
+    <img src="https://user-images.githubusercontent.com/32263112/212532764-ba4197f5-7bb9-4b6d-8ab4-bb02d6d78c8a.PNG"> </a> 
 </div>
 
 ## What is QualityScaler?
