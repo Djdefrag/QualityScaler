@@ -32,12 +32,13 @@ BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
 
 ## How is made. 🛠
 
-QualityScaler is completely written in Python, from backend to frontend. External packages are:
-- [ ] AI  -> Pytorch-directml
-- [ ] GUI -> Tkinter / Tkdnd / Sv_ttk
-- [ ] Image/video -> OpenCV / Moviepy
-- [ ] Packaging   -> Pyinstaller
-- [ ] Miscellaneous -> Pywin32 / Win32mica / split_image
+QualityScaler is completely written in Python, from backend to frontend. 
+External packages are:
+- [ ] AI  -> torch / torch-directml
+- [ ] GUI -> tkinter / tkdnd / sv_ttk
+- [ ] Image/video -> openCV / moviepy
+- [ ] Packaging   -> pyinstaller
+- [ ] Miscellaneous -> pywin32 / win32mica
 
 ## Requirements. 🤓
 - [ ] Windows 11 / Windows 10
