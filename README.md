@@ -19,7 +19,7 @@ Qualityscaler is a Windows app that uses BSRGAN Artificial Intelligence to enhan
 
 https://github.com/Djdefrag/RealESRScaler / RealESRScaler - image/video AI upscaler app (Real-ESRGAN)
 
-https://github.com/Djdefrag/FluidFrames.RIFE - FluidFrames.RIFE - video AI interpolation app (RIFE-HDv3)
+https://github.com/Djdefrag/FluidFrames.RIFE / FluidFrames.RIFE - video AI interpolation app (RIFE-HDv3)
 
 
 ## Citations. ❤
