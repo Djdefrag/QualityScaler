@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/215465927-45ec708e-d156-4779-8836-1c6366483c2a.PNG"> </a> 
+    <img src="https://user-images.githubusercontent.com/32263112/220398451-6945d091-cdf1-4c9d-ba1d-ce0aeba24268.PNG"> </a> 
 </div>
 
 ## What is QualityScaler?
@@ -76,7 +76,7 @@ External packages are:
 ## Known bugs.
 - [x] Windows10 - the app starts with white colored navbar instead of dark
 - [x] Upscaling multiple images doesn't free GPU Vram, so the it is very likely that the process will fail when the gpu memory fills up
-- [ ] Filenames with non-latin symbols (for example kangy, cyrillic etc.) not supported - [Temp solution] rename files like "image" or "video"
+- [x] Filenames with non-latin symbols (for example kangy, cyrillic etc.) not supported - [Temp solution] rename files like "image" or "video"
 - [ ] When running QualityScaler as Administrator, drag&drop is not working
 
 ## Some Example.
