@@ -36,19 +36,19 @@ BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
 
 QualityScaler is completely written in Python, from backend to frontend. 
 External packages are:
-- [ ] AI  -> torch / torch-directml
-- [ ] GUI -> tkinter / tkdnd / sv_ttk
-- [ ] Image/video -> openCV / moviepy
-- [ ] Packaging   -> pyinstaller
-- [ ] Miscellaneous -> pywin32 / win32mica
+- AI  -> torch / torch-directml
+- GUI -> tkinter / tkdnd / sv_ttk
+- Image/video -> openCV / moviepy
+- Packaging   -> pyinstaller
+- Miscellaneous -> pywin32 / win32mica
 
 ## Requirements. 🤓
-- [ ] Windows 11 / Windows 10
-- [ ] RAM >= 8Gb
-- [ ] Directx12 compatible GPU:
-    - [ ] any AMD >= Radeon HD 7000 series
-    - [ ] any Intel HD Integrated >= 4th-gen core
-    - [ ] any NVIDIA >=  GTX 600 series
+- Windows 11 / Windows 10
+- RAM >= 8Gb
+- Directx12 compatible GPU:
+    - any AMD >= Radeon HD 7000 series
+    - any Intel HD Integrated >= 4th-gen core
+    - any NVIDIA >=  GTX 600 series
 
 ## Features.
 - [x] Easy to use GUI
@@ -71,7 +71,7 @@ External packages are:
 - [ ] Update libraries 
     - [x] Python 3.10 (expecting ~10% more performance) 
     - [ ] Python 3.11 (expecting ~30% more performance)
-    - [ ] following pytorch updates
+    - [ ] follow torch/torch-directml updates
 
 ## Known bugs.
 - [x] Windows10 - the app starts with white colored navbar instead of dark
