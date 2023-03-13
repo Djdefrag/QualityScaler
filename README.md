@@ -78,9 +78,6 @@ External packages are:
 
 
 ## Known bugs.
-- [x] Windows10 - the app starts with white colored navbar instead of dark
-- [x] Upscaling multiple images doesn't free GPU Vram, so the it is very likely that the process will fail when the gpu memory fills up
-- [x] Filenames with non-latin symbols (for example kangy, cyrillic etc.) not supported - [Temp solution] rename files like "image" or "video"
 - [ ] When running QualityScaler as Administrator, drag&drop is not working
 
 ## Some Example.
