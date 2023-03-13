@@ -69,7 +69,6 @@ External packages are:
     - [ ] a new completely redesigned graphical interface, with many more options for the user
     - [ ] upscaling of images and videos at once (currently it is possible to upscale a single image, a list of images or a single video)
     - [ ] upscale multiple videos at once
-
 - [x] Switch to Pytorch-directml to support all Directx12 compatible gpu (AMD, Intel, Nvidia)
 - [x] New GUI with Windows 11 style
 - [x] Include audio for upscaled video
