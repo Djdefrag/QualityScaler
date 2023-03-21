@@ -1,17 +1,13 @@
 #AI
 opencv-python-headless
 torch-directml
-torch
 
 #GUI
 python-tkdnd
 ttkwidgets
-pywin32
 win32mica
-#sv_ttk
 
 #UTILS
-wheel
-pyinstaller==5.6.2
+pyinstaller
 pyinstaller-hooks-contrib
 moviepy

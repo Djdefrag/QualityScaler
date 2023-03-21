@@ -1,3 +1,4 @@
+
 import ctypes
 import functools
 import itertools
@@ -12,7 +13,8 @@ import time
 import tkinter as tk
 import tkinter.font as tkFont
 import webbrowser
-from math import ceil, floor, sqrt
+from collections import Counter
+from math import sqrt
 from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 from tkinter import PhotoImage, ttk
@@ -32,38 +34,41 @@ from win32mica import MICAMODE, ApplyMica
 
 import sv_ttk
 
-version  = "v. 11.0"
+version  = "1.12"
 
-# Added a description for each widget, accessible via special button next to each widget
-# Fixed a bug that did not allow resources to be released upon upscale failure
-# when selecting 100% as Input Resolution, resizing phase will be skipped
-# Input Resolution will now accept > 100%:
-#   this means that images and video can be upscaled before passing through
-#   the AI, this may improve the quality of some images
-#   for example an image 1000x1000
-#   with Input Resolution 200% and any AI model *X4
-#   1000x1000 -> 2000x2000 -> 8000x8000
-# fix reading and writing to non-ascii characters @jaycalixto
-# updated libraries:
-#   Python 3.10.9 -> 3.10.10
-#   pytorch 1.13 -> 1.13.1
-#   torch-directml 1.13 -> 1.13.1
-#   and others...
-# upscale speed improvements
-# code cleaning
+# NEW
+# The app is now a single, portable .exe:
+#   - no more confusing directory with lots of files
+# Completely rewrote the image splitting function 
+#   - (when the whole image does not fit into gpu memory) (again)
+#   - this should reduce the vertical and horizontal lines that 
+#   - were encountered when this function was used
+# For video, frame splitting/joining functions also benefits from multithreading optimization
+#   - comparing with the previous algorithms 
+#   - tiling frames is at least x2 faster 
+#   - joining frames together after upscale is at least x4 faster
+#   - (can be even faster depending on the number of cpu selected)
+
+# GUI
+# Updated info widget texts
+
+# BUGFIX/IMPROVEMENTS
+# General bugfixes & improvements
+# Updated dependencies
+# Optimized AI models, will now use fewer resources
 
 global app_name
 app_name = "QualityScaler"
 
 models_array          = [ 'BSRGANx4', 'BSRGANx2', 'RealSR_JPEGx4' ]
 AI_model              = models_array[0]
+half_precision        = True
 
 image_path            = "none"
 device                = 0
 input_video_path      = ""
 target_file_extension = ".png"
 file_extension_list   = [ '.png', '.jpg', '.jp2', '.bmp', '.tiff' ]
-half_precision        = True
 single_image          = False
 multiple_images       = False
 video_file            = False
@@ -72,9 +77,9 @@ video_frames_list     = []
 frames_upscaled_list  = []
 vram_multiplier       = 1
 default_vram_limiter  = 8
-multiplier_num_tiles  = 4
+multiplier_num_tiles  = 2
 cpu_number            = 4
-interpolation_mode    = cv2.INTER_LINEAR
+resize_algorithm      = cv2.INTER_AREA
 windows_subversion    = int(platform.version().split('.')[2])
 compatible_gpus       = torch_directml.device_count()
 
@@ -94,6 +99,8 @@ for index in range(compatible_gpus):
 torch.autograd.set_detect_anomaly(False)
 torch.autograd.profiler.profile(False)
 torch.autograd.profiler.emit_nvtx(False)
+if sys.stdout is None: sys.stdout = open(os.devnull, "w")
+if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 
 githubme           = "https://github.com/Djdefrag/QualityScaler"
 itchme             = "https://jangystudio.itch.io/qualityscaler"
@@ -165,157 +172,168 @@ scaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
 font_scale = round(1/scaleFactor, 1)
 
 
-# ------------------- Slice functions -------------------
+# ------------------- Split functions -------------------
 
 
-class Tile(object):
-    def __init__(self, image, number, position, coords, filename=None):
-        self.image = image
-        self.number = number
-        self.position = position
-        self.coords = coords
-        self.filename = filename
+def split_image(image_path, 
+                rows, cols, 
+                should_cleanup, 
+                output_dir = None):
+    
+    im = Image.open(image_path)
+    im_width, im_height = im.size
+    row_width  = int(im_width / cols)
+    row_height = int(im_height / rows)
+    name, ext  = os.path.splitext(image_path)
+    name       = os.path.basename(name)
 
-    @property
-    def row(self): return self.position[0]
-
-    @property
-    def column(self): return self.position[1]
-
-    @property
-    def basename(self): return get_basename(self.filename)
-
-    def generate_filename(
-        self, directory=os.getcwd(), prefix="tile", format="png", path=True
-    ):
-        filename = prefix + "_{col:02d}_{row:02d}.{ext}".format(
-            col=self.column, row=self.row, ext=format.lower().replace("jpeg", "jpg")
-        )
-        if not path: return filename
-        return os.path.join(directory, filename)
-
-    def save(self, filename=None, format="png"):
-        if not filename: filename = self.generate_filename(format=format)
-        self.image.save(filename, format)
-        self.filename = filename
-
-    def __repr__(self):
-        """Show tile number, and if saved to disk, filename."""
-        if self.filename:
-            return "<Tile #{} - {}>".format(
-                self.number, os.path.basename(self.filename)
-            )
-        return "<Tile #{}>".format(self.number)
-
-def get_basename(filename):
-    return os.path.splitext(os.path.basename(filename))[0]
-
-def calc_columns_rows(n):
-    num_columns = int(ceil(sqrt(n)))
-    num_rows = int(ceil(n / float(num_columns)))
-    return (num_columns, num_rows)
-
-def get_combined_size(tiles):
-    # TODO: Refactor calculating layout to avoid repetition.
-    columns, rows = calc_columns_rows(len(tiles))
-    tile_size = tiles[0].image.size
-    return (tile_size[0] * columns, tile_size[1] * rows)
-
-def join(tiles):
-    im = Image.new("RGBA", get_combined_size(tiles), None)
-    for tile in tiles:
-        try:
-            im.paste(tile.image, tile.coords)
-        except IOError:
-            # do nothing, blank out the image
-            continue
-    return im
-
-def validate_image(image, number_tiles):
-    """Basic sanity checks prior to performing a split."""
-    TILE_LIMIT = 99 * 99
-
-    try:
-        number_tiles = int(number_tiles)
-    except BaseException:
-        raise ValueError("number_tiles could not be cast to integer.")
-
-    if number_tiles > TILE_LIMIT or number_tiles < 2:
-        raise ValueError(
-            "Number of tiles must be between 2 and {} (you \
-                          asked for {}).".format(
-                TILE_LIMIT, number_tiles
-            )
-        )
-
-def validate_image_col_row(image, col, row):
-    SPLIT_LIMIT = 99
-
-    try:
-        col = int(col)
-        row = int(row)
-    except BaseException:
-        raise ValueError("columns and rows values could not be cast to integer.")
-
-    if col < 1 or row < 1 or col > SPLIT_LIMIT or row > SPLIT_LIMIT:
-        raise ValueError(
-            f"Number of columns and rows must be between 1 and"
-            f"{SPLIT_LIMIT} (you asked for rows: {row} and col: {col})."
-        )
-    if col == 1 and row == 1:
-        raise ValueError("There is nothing to divide. You asked for the entire image.")
-
-def img_cutter(filename, number_tiles=None, col=None, row=None, save=True):
-    im = Image.open(filename)
-    im_w, im_h = im.size
-
-    columns = 0
-    rows = 0
-    if number_tiles:
-        validate_image(im, number_tiles)
-        columns, rows = calc_columns_rows(number_tiles)
+    if output_dir != None:
+        if not os.path.exists(output_dir): os.makedirs(output_dir)
     else:
-        validate_image_col_row(im, col, row)
-        columns = col
-        rows = row
+        output_dir = "./"
 
-    tile_w, tile_h = int(floor(im_w / columns)), int(floor(im_h / rows))
+    n = 0
+    for i in range(0, rows):
+        for j in range(0, cols):
+            box = (j * row_width, i * row_height, j * row_width +
+                   row_width, i * row_height + row_height)
+            outp = im.crop(box)
+            outp_path = name + "_" + str(n) + ext
+            outp_path = os.path.join(output_dir, outp_path)
+            outp.save(outp_path)
+            n += 1
 
-    tiles = []
-    number = 1
-    for pos_y in range(0, im_h - rows, tile_h):  # -rows for rounding error.
-        for pos_x in range(0, im_w - columns, tile_w):  # as above.
-            area = (pos_x, pos_y, pos_x + tile_w, pos_y + tile_h)
-            image = im.crop(area)
-            position = (int(floor(pos_x / tile_w)) + 1, int(floor(pos_y / tile_h)) + 1)
-            coords = (pos_x, pos_y)
-            tile = Tile(image, number, position, coords)
-            tiles.append(tile)
-            number += 1
-    if save:
-        save_tiles(tiles, prefix=get_basename(filename), directory=os.path.dirname(filename))
-    return tiles
+    if should_cleanup: os.remove(image_path)
 
-def save_tiles(tiles, prefix="", directory=os.getcwd(), format="png"):
-    for tile in tiles:
-        tile.save(
-            filename=tile.generate_filename(
-                prefix=prefix, directory=directory, format=format
-            ),
-            format=format,
-        )
-    return tuple(tiles)
+def reverse_split(paths_to_merge, 
+                  rows, cols, 
+                  image_path, 
+                  should_cleanup):
+    
+    if len(paths_to_merge) == 0:
+        print("No images to merge!")
+        return
+    for index, path in enumerate(paths_to_merge):
+        path_number = int(path.split("_")[-1].split(".")[0])
+        if path_number != index:
+            print("Warning: Image " + path + " has a number that does not match its index!")
+            print("Please rename it first to match the rest of the images.")
+            return
+        
+    images_to_merge = [Image.open(p) for p in paths_to_merge]
+    image1    = images_to_merge[0]
+    new_width  = image1.size[0] * cols
+    new_height = image1.size[1] * rows
+    new_image = Image.new(image1.mode, (new_width, new_height))
 
-def reunion_image(tiles):
-    image = join(tiles)
-    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    return image
+    for i in range(0, rows):
+        for j in range(0, cols):
+            image = images_to_merge[i * cols + j]
+            new_image.paste(image, (j * image.size[0], i * image.size[1]))
+    new_image.save(image_path)
+
+    if should_cleanup:
+        for p in paths_to_merge:
+            os.remove(p)
+
+def determine_bg_color(im):
+    im_width, im_height = im.size
+    rgb_im = im.convert('RGBA')
+    all_colors = []
+    areas = [[(0, 0), (im_width, im_height / 10)],
+             [(0, 0), (im_width / 10, im_height)],
+             [(im_width * 9 / 10, 0), (im_width, im_height)],
+             [(0, im_height * 9 / 10), (im_width, im_height)]]
+    for area in areas:
+        start = area[0]
+        end = area[1]
+        for x in range(int(start[0]), int(end[0])):
+            for y in range(int(start[1]), int(end[1])):
+                pix = rgb_im.getpixel((x, y))
+                all_colors.append(pix)
+    return Counter(all_colors).most_common(1)[0][0]
+
+def get_tiles_paths_after_split(original_image, rows, cols):
+    number_of_tiles = rows * cols
+
+    tiles_paths = []
+    for index in range(number_of_tiles):
+        tile_path      = os.path.splitext(original_image)[0]
+        tile_extension = os.path.splitext(original_image)[1]
+
+        tile_path = tile_path + "_" + str(index) + tile_extension
+        tiles_paths.append(tile_path)
+
+    return tiles_paths
+
+def check_number_of_tiles(num_tiles, multiplier_num_tiles):
+    num_tiles = round(num_tiles)
+    if (num_tiles % 2) != 0: num_tiles += 1
+    num_tiles = round(sqrt(num_tiles * multiplier_num_tiles))
+
+    return num_tiles
+
+def video_need_tiles(frame, tiles_resolution):
+    img_tmp             = image_read(frame)
+    image_resolution    = max(img_tmp.shape[1], img_tmp.shape[0])
+    needed_tiles        = image_resolution/tiles_resolution
+
+    if needed_tiles <= 1:
+        return False
+    else:
+        return True
+
+def split_frames_list_in_tiles(frame_list, tiles_resolution, cpu_number):
+    list_of_tiles_list = [] # list of list of tiles, to rejoin
+    tiles_to_upscale   = [] # list of all tiles to upscale
+    
+    img_tmp          = image_read(frame_list[0])
+    image_resolution = max(img_tmp.shape[1], img_tmp.shape[0])
+    num_tiles        = image_resolution/tiles_resolution
+
+    num_tiles = check_number_of_tiles(num_tiles, multiplier_num_tiles)
+    frame_directory_path = os.path.dirname(os.path.abspath(frame_list[0]))
+
+    with ThreadPool(cpu_number) as pool:
+        pool.starmap(split_image, zip(frame_list, 
+                                  itertools.repeat(num_tiles), 
+                                  itertools.repeat(num_tiles), 
+                                  itertools.repeat(False),
+                                  itertools.repeat(frame_directory_path)))
+
+    for frame in frame_list:    
+        tiles_list = get_tiles_paths_after_split(frame, num_tiles, num_tiles)
+
+        list_of_tiles_list.append(tiles_list)
+
+        for tile in tiles_list:
+            tiles_to_upscale.append(tile)
+
+    return tiles_to_upscale, list_of_tiles_list, num_tiles
+
+def reverse_split_multiple_frames(list_of_tiles_list, 
+                                  frames_upscaled_list, 
+                                  num_tiles, 
+                                  cpu_number):
+    
+    with ThreadPool(cpu_number) as pool:
+        pool.starmap(reverse_split, zip(list_of_tiles_list, 
+                                    itertools.repeat(num_tiles), 
+                                    itertools.repeat(num_tiles), 
+                                    frames_upscaled_list,
+                                    itertools.repeat(False)))
 
 
-# ------------------ / Slice functions ------------------
+
+# ------------------ / Split functions ------------------
 
 # ------------------------ Utils ------------------------
 
+def remove_dir(name_dir):
+    if os.path.exists(name_dir): shutil.rmtree(name_dir)
+
+def remove_file(name_file):
+    if os.path.exists(name_file): os.remove(name_file)
 
 def create_temp_dir(name_dir):
     if os.path.exists(name_dir): shutil.rmtree(name_dir)
@@ -343,7 +361,7 @@ def adapt_image_to_show(image_to_prepare):
         new_height       = round(old_image.shape[0]/downscale_factor)
         resized_image    = cv2.resize(old_image,
                                    (new_width, new_height),
-                                   interpolation = interpolation_mode)
+                                   interpolation = resize_algorithm)
         image_write("temp.png", resized_image)
         return "temp.png"
     else:
@@ -351,7 +369,7 @@ def adapt_image_to_show(image_to_prepare):
         new_height       = round(old_image.shape[0])
         resized_image    = cv2.resize(old_image,
                                    (new_width, new_height),
-                                   interpolation = interpolation_mode)
+                                   interpolation = resize_algorithm)
         image_write("temp.png", resized_image)
         return "temp.png"
 
@@ -367,12 +385,12 @@ def delete_list_of_files(list_to_delete):
                 os.remove(to_delete)
 
 def write_in_log_file(text_to_insert):
-    log_file_name   = app_name + ".log"
+    log_file_name   = find_by_relative_path(app_name + ".log")
     with open(log_file_name,'w') as log_file: log_file.write(text_to_insert) 
     log_file.close()
 
 def read_log_file():
-    log_file_name   = app_name + ".log"
+    log_file_name   = find_by_relative_path(app_name + ".log")
     with open(log_file_name,'r') as log_file: step = log_file.readline()
     log_file.close()
     return step
@@ -395,8 +413,9 @@ def resize_image(image_path, resize_factor, target_file_extension):
     new_width  = int(old_image.shape[1] * resize_factor)
     new_height = int(old_image.shape[0] * resize_factor)
 
-    resized_image = cv2.resize(old_image, (new_width, new_height), 
-                                interpolation = interpolation_mode)    
+    resized_image = cv2.resize(old_image, 
+                               (new_width, new_height), 
+                                interpolation = resize_algorithm)    
     image_write(new_image_path, resized_image)
 
 def resize_image_list(image_list, resize_factor, target_file_extension):
@@ -424,7 +443,7 @@ def resize_image_list(image_list, resize_factor, target_file_extension):
 def extract_frames_from_video(video_path):
     video_frames_list = []
     cap          = cv2.VideoCapture(video_path)
-    frame_rate   = float(cap.get(cv2.CAP_PROP_FPS))
+    frame_rate   = int(cap.get(cv2.CAP_PROP_FPS))
     cap.release()
 
     # extract frames
@@ -455,11 +474,13 @@ def video_reconstruction_by_frames(input_video_path, frames_upscaled_list, AI_mo
     clip = ImageSequenceClip.ImageSequenceClip(frames_upscaled_list, fps = frame_rate)
     if os.path.exists(audio_file):
         clip.write_videofile(upscaled_video_path,
+                            fps     = frame_rate,
                             audio   = audio_file,
                             threads = cpu_number)
     else:
         clip.write_videofile(upscaled_video_path,
-                            threads = cpu_number)       
+                             fps     = frame_rate,
+                             threads = cpu_number)       
 
 def resize_frame(image_path, new_width, new_height, target_file_extension):
     new_image_path = image_path.replace('.jpg', "" + target_file_extension)
@@ -467,7 +488,7 @@ def resize_frame(image_path, new_width, new_height, target_file_extension):
     old_image = cv2.imread(image_path.strip(), cv2.IMREAD_UNCHANGED)
 
     resized_image = cv2.resize(old_image, (new_width, new_height), 
-                                interpolation = interpolation_mode)    
+                                interpolation = resize_algorithm)    
     image_write(new_image_path, resized_image)
 
 def resize_frame_list(image_list, resize_factor, target_file_extension, cpu_number):
@@ -596,7 +617,6 @@ class RRDBNet(nn.Module):
 
 # ----------------------- Core ------------------------
 
-
 def thread_check_steps_for_images( not_used_var, not_used_var2 ):
     time.sleep(3)
     try:
@@ -701,57 +721,43 @@ def enhance(model, img, backend, half_precision):
 
 
 
-def reverse_split_multiple_frames(list_of_tiles_list, frames_upscaled_list):
-    for index in range(len(frames_upscaled_list)):
-        image_write(frames_upscaled_list[index], 
-                    reunion_image(list_of_tiles_list[index]))              
+def upscale_tiles(tile, 
+                model, 
+                device,
+                half_precision):
 
-def upscale_frame_and_save(frame, model, result_path, 
-                            tiles_resolution, device, 
-                            half_precision, list_of_tiles_list):
+    backend = torch.device(torch_directml.device(device))
 
-    used_tiles       = False
-    backend          = torch.device(torch_directml.device(device))
+    with torch.no_grad():
+        tile_adapted     = image_read(tile, cv2.IMREAD_UNCHANGED)
+        tile_upscaled, _ = enhance(model, tile_adapted, backend, half_precision)
+        image_write(tile, tile_upscaled)
 
-    img_tmp          = image_read(frame)
-    image_resolution = max(img_tmp.shape[1], img_tmp.shape[0])
-    num_tiles        = image_resolution/tiles_resolution
+def upscale_single_frame(frame, 
+                         model, 
+                         result_path,
+                         device,
+                         half_precision):
 
-    if num_tiles <= 1:
-        with torch.no_grad():
-            img_adapted     = image_read(frame, cv2.IMREAD_UNCHANGED)
-            img_upscaled, _ = enhance(model, img_adapted, backend, half_precision)
-            image_write(result_path, img_upscaled)
-    else:
-        used_tiles = True
+    backend = torch.device(torch_directml.device(device))
 
-        num_tiles  = round(num_tiles)
-        if (num_tiles % 2) != 0: num_tiles += 1
-        num_tiles  = round(num_tiles * multiplier_num_tiles)
+    with torch.no_grad():
+        img_adapted     = image_read(frame, cv2.IMREAD_UNCHANGED)
+        img_upscaled, _ = enhance(model, img_adapted, backend, half_precision)
+        image_write(result_path, img_upscaled)
 
-        tiles = img_cutter(frame, num_tiles)
-        with torch.no_grad():
-            for tile in tiles:
-                tile_adapted     = image_read(tile.filename, cv2.IMREAD_UNCHANGED)
-                tile_upscaled, _ = enhance(model, tile_adapted, backend, half_precision)
-                image_write(tile.filename, tile_upscaled)
-                tile.image = Image.open(tile.filename)
-                tile.coords = (tile.coords[0] * 4, 
-                                tile.coords[1] * 4)
-
-        list_of_tiles_list.append(tiles)
-
-    return list_of_tiles_list, used_tiles
-
-def process_upscale_video_frames(input_video_path, AI_model, resize_factor, device,
-                                tiles_resolution, target_file_extension, cpu_number,
-                                half_precision):
+def process_upscale_video_frames(input_video_path, 
+                                 AI_model, 
+                                 resize_factor, 
+                                 device,
+                                 tiles_resolution, 
+                                 target_file_extension, 
+                                 cpu_number,
+                                 half_precision):
     try:
         start = timer()
 
         create_temp_dir(app_name + "_temp")
-
-        write_in_log_file('...')
       
         write_in_log_file('Extracting video frames...')
         frame_list = extract_frames_from_video(input_video_path)
@@ -762,60 +768,79 @@ def process_upscale_video_frames(input_video_path, AI_model, resize_factor, devi
                                             resize_factor, 
                                             target_file_extension, 
                                             cpu_number)
+            
+        model= prepare_model(AI_model, device, half_precision)   
 
         write_in_log_file('Upscaling...')
-        how_many_images = len(frame_list)
-        done_images     = 0
         frames_upscaled_list = []
-        list_of_tiles_list   = []
+        need_tiles           = video_need_tiles(frame_list[0], tiles_resolution)
 
-        model = prepare_model(AI_model, device, half_precision)
-
+        # prepare upscaled frames file paths
         for frame in frame_list:
             result_path = prepare_output_filename(frame, AI_model, target_file_extension)
-            frames_upscaled_list.append(result_path)
+            frames_upscaled_list.append(result_path) 
 
-            list_of_tiles_list, used_tiles = upscale_frame_and_save(frame, 
-                                                                    model, 
-                                                                    result_path, 
-                                                                    tiles_resolution, 
-                                                                    device, 
-                                                                    half_precision,
-                                                                    list_of_tiles_list)
-            done_images += 1
-            write_in_log_file("Upscaled frame " + str(done_images) + "/" + str(how_many_images))
+        if need_tiles:
+            write_in_log_file('Tiling frames...')
+            tiles_to_upscale, list_of_tiles_list, num_tiles = split_frames_list_in_tiles(frame_list, 
+                                                                                         tiles_resolution,
+                                                                                         cpu_number)
+            
+            done_tiles     = 0
+            how_many_tiles = len(tiles_to_upscale)
+            
+            for tile in tiles_to_upscale:
+                upscale_tiles(tile, model, device, half_precision)
+                done_tiles += 1
+                write_in_log_file("Upscaled tiles " + str(done_tiles) + "/" + str(how_many_tiles))
 
-        if used_tiles: 
-            write_in_log_file("Reconstructing frames from tiles...")
-            reverse_split_multiple_frames(list_of_tiles_list, frames_upscaled_list)
+            write_in_log_file("Reconstructing frames by tiles...")
+            reverse_split_multiple_frames(list_of_tiles_list, 
+                                          frames_upscaled_list, 
+                                          num_tiles, 
+                                          cpu_number)
+
+        else:
+            how_many_images  = len(frame_list)
+            done_images      = 0
+
+            for frame in frame_list:
+                upscale_single_frame(frame, 
+                                     model, 
+                                     prepare_output_filename(frame, AI_model, target_file_extension), 
+                                     device, 
+                                     half_precision)
+
+                done_images += 1
+                write_in_log_file("Upscaled frame " + str(done_images) + "/" + str(how_many_images))
 
         write_in_log_file("Processing upscaled video...")
         video_reconstruction_by_frames(input_video_path, frames_upscaled_list, AI_model, cpu_number)
-
         write_in_log_file("Upscale video completed [" + str(round(timer() - start)) + " sec.]")
 
-        create_temp_dir(app_name + "_temp")
+        remove_dir(app_name + "_temp")
+        remove_file("temp.png")
 
     except Exception as e:
         write_in_log_file('Error while upscaling' + '\n\n' + str(e)) 
         import tkinter as tk
-        error_root = tk.Tk()
-        error_root.withdraw()
         tk.messagebox.showerror(title   = 'Error', 
                                 message = 'Upscale failed caused by:\n\n' +
                                            str(e) + '\n\n' +
                                           'Please report the error on Github.com or Itch.io.' +
                                           '\n\nThank you :)')
-        error_root.destroy()
 
 
 
-def upscale_image_and_save(image, model, result_path, 
-                            tiles_resolution, 
-                            upscale_factor, 
-                            device, half_precision):
+def upscale_image_and_save(image, 
+                           model, 
+                           result_path, 
+                           tiles_resolution,
+                           upscale_factor,
+                           device, 
+                           half_precision):
 
-    backend          = torch.device(torch_directml.device(device))
+    backend = torch.device(torch_directml.device(device))
 
     original_image          = image_read(image)
     original_image_width    = original_image.shape[1]
@@ -825,38 +850,48 @@ def upscale_image_and_save(image, model, result_path,
     num_tiles        = image_resolution/tiles_resolution
 
     if num_tiles <= 1:
+        # not using tiles
         with torch.no_grad():
             img_adapted     = image_read(image, cv2.IMREAD_UNCHANGED)
             img_upscaled, _ = enhance(model, img_adapted, backend, half_precision)
             image_write(result_path, img_upscaled)
     else:
-        num_tiles = round(num_tiles)
-        if (num_tiles % 2) != 0: num_tiles += 1
-        num_tiles = round(num_tiles * multiplier_num_tiles)
+        # using tiles
+        num_tiles = check_number_of_tiles(num_tiles, multiplier_num_tiles)
+        image_directory_path = os.path.dirname(os.path.abspath(image))
 
-        tiles = img_cutter(image, num_tiles)
+        split_image(image_path = image, 
+                    rows       = num_tiles, 
+                    cols       = num_tiles, 
+                    should_cleanup = False, 
+                    output_dir     = image_directory_path)
+
+        tiles_list = get_tiles_paths_after_split(image, num_tiles, num_tiles)
         
         with torch.no_grad():
-            for tile in tiles:
-                tile_adapted     = image_read(tile.filename, cv2.IMREAD_UNCHANGED)
+            for tile in tiles_list:
+                tile_adapted     = image_read(tile, cv2.IMREAD_UNCHANGED)
                 tile_upscaled, _ = enhance(model, tile_adapted, backend, half_precision)
-                image_write(tile.filename, tile_upscaled)
-                tile.image = Image.open(tile.filename)
-                tile.coords = (tile.coords[0] * upscale_factor, 
-                                tile.coords[1] * upscale_factor)
-    
-        image_write(result_path, reunion_image(tiles))
+                image_write(tile, tile_upscaled)
 
-        to_delete = []
-        for tile in tiles: to_delete.append(tile.filename)
-        delete_list_of_files(to_delete)
+        reverse_split(paths_to_merge = tiles_list, 
+                      rows = num_tiles, 
+                      cols = num_tiles, 
+                      image_path     = result_path, 
+                      should_cleanup = False)
 
-def process_upscale_multiple_images(image_list, AI_model, resize_factor, device, 
-                                    tiles_resolution, target_file_extension, 
+        delete_list_of_files(tiles_list)
+
+def process_upscale_multiple_images(image_list, 
+                                    AI_model, 
+                                    resize_factor, 
+                                    device, 
+                                    tiles_resolution, 
+                                    target_file_extension, 
                                     half_precision):
+    
     try:
         start = timer()
-        write_in_log_file('...')
 
         if "x2" in AI_model: upscale_factor = 2
         elif "x4" in AI_model: upscale_factor = 4        
@@ -879,17 +914,17 @@ def process_upscale_multiple_images(image_list, AI_model, resize_factor, device,
         write_in_log_file("Upscale completed [" + str(round(timer() - start)) + " sec.]")
 
         delete_list_of_files(files_to_delete)
+        remove_file("temp.png")
+
     except Exception as e:
         write_in_log_file('Error while upscaling' + '\n\n' + str(e)) 
         import tkinter as tk
-        error_root = tk.Tk()
-        error_root.withdraw()
         tk.messagebox.showerror(title   = 'Error', 
                                 message = 'Upscale failed caused by:\n\n' +
                                            str(e) + '\n\n' +
                                           'Please report the error on Github.com or Itch.io.' +
                                           '\n\nThank you :)')
-        error_root.destroy()
+
 
 
 # ----------------------- /Core ------------------------
@@ -921,12 +956,11 @@ a compatible gpu, try updating your video card driver :)"""
 
     info_window = tk.Tk()
     info_window.withdraw()
-    tk.messagebox.showinfo(title   = 'AI backend', message = info)
+    tk.messagebox.showinfo(title = 'AI device', message = info)
     info_window.destroy()
 
-    
 def open_info_file_extension():
-    info = """This widget allows you to choose the output file extension for images and video frames.\n
+    info = """This widget allows you to choose the extension of the file generated by AI.\n
 - png | very good quality | supports transparent images
 - jpg | good quality | very fast
 - jpg2 (jpg2000) | very good quality | not very popular
@@ -935,29 +969,28 @@ def open_info_file_extension():
 
     info_window = tk.Tk()
     info_window.withdraw()
-    tk.messagebox.showinfo(title   = 'AI output extension', message = info)
+    tk.messagebox.showinfo(title = 'AI output extension', message = info)
     info_window.destroy()
-
 
 def open_info_resize():
     info = """This widget allows you to choose the percentage of the resolution input to the AI.\n
-For example: 
-- a 100x100 image
-- Input resolution set to 50%
-- image in input to the AI 100x100px * 50% => 50x50px """
+For example for a 100x100px image:
+- Input resolution 50% => input to AI 50x50px
+- Input resolution 100% => input to AI 100x100px
+- Input resolution 200% => input to AI 200x200px """
 
     info_window = tk.Tk()
     info_window.withdraw()
     tk.messagebox.showinfo(title   = 'Input resolution %', message = info)
     info_window.destroy()
 
-
 def open_info_vram_limiter():
     info = """This widget allows you to set a limit on the gpu's VRAM memory usage. \n
-- For a gpu with 4 GB of Vram you must select 4.
-- For a gpu with 6 GB of Vram you must select 6 and so on.
-- For integrated gpus (all Intel HD gpu's | Vega 3,5,7 etc.) 
-  that do not have dedicated memory, you must select 1 or 2. \n
+- For a gpu with 4 GB of Vram you must select 4
+- For a gpu with 6 GB of Vram you must select 6
+- For a gpu with 8 GB of Vram you must select 8
+- For integrated gpus (Intel-HD series | Vega 3,5,7) 
+  that do not have dedicated memory, you must select 2 \n
 Selecting a value greater than the actual amount of gpu VRAM may result in upscale failure. """
 
     info_window = tk.Tk()
@@ -968,15 +1001,14 @@ Selecting a value greater than the actual amount of gpu VRAM may result in upsca
 def open_info_cpu():
     info = """This widget allows you to choose how much cpu to devote to the app.\n
 Where possible the app will use the number of processors you select, for example:
-- Extracting frames from videos.
-- The resizing of images and frames from videos.
-- The reconstruction of the enhanced video."""
+- Extracting frames from videos
+- Resizing frames from videos
+- Recostructing final video"""
 
     info_window = tk.Tk()
     info_window.withdraw()
     tk.messagebox.showinfo(title   = 'Cpu number', message = info)
-    info_window.destroy()
-
+    info_window.destroy() 
 
 def user_input_checks():
     global tiles_resolution
@@ -1027,7 +1059,6 @@ def user_input_checks():
 
     return is_ready
 
-
 def upscale_button_command():
     global image_path
     global multiple_images
@@ -1043,7 +1074,10 @@ def upscale_button_command():
     global cpu_number
     global half_precision
 
-    info_string.set("...")
+    remove_file(app_name + ".log")
+
+    info_string.set("Loading...")
+    write_in_log_file("Loading...")
 
     is_ready = user_input_checks()
 
@@ -1087,7 +1121,6 @@ def upscale_button_command():
         elif "none" in image_path:
             info_string.set("No file selected")
   
-
 def stop_button_command():
     global process_upscale
     process_upscale.terminate()
@@ -1095,7 +1128,6 @@ def stop_button_command():
     
     # this will stop thread that check upscaling steps
     write_in_log_file("Stopped upscaling") 
-
 
 def drop_event_to_image_list(event):
     image_list = str(event.data).replace("{", "").replace("}", "")
@@ -1441,7 +1473,6 @@ def show_image_in_GUI(original_image):
                        height = 40)
     clean_button["command"] = lambda: place_drag_drop_widget()
 
-
 def place_drag_drop_widget():
     clear_input_variables()
 
@@ -1480,7 +1511,6 @@ def place_drag_drop_widget():
                          width  = drag_drop_width * 0.50, 
                          height = drag_drop_height * 0.50)
 
-
 def combobox_AI_selection(event):
     global AI_model
     selected = str(selected_AI.get())
@@ -1495,8 +1525,8 @@ def combobox_backend_selection(event):
     combo_box_backend.set('')
     combo_box_backend.set(selected_option)
 
-    for obj in device_list:
-        if obj.name == selected_option:
+    for obj in device_list: 
+        if obj.name == selected_option: 
             device = obj.index
 
 def combobox_extension_selection(event):
@@ -1564,7 +1594,7 @@ def place_backend_combobox():
                             foreground = text_color, 
                             justify    = 'left', 
                             relief     = 'flat', 
-                            text       = " AI backend  ")
+                            text       = " AI device ")
     backend_label.place(x = 90,
                         y = button2_y - 2,
                         width  = 155,
@@ -1779,7 +1809,6 @@ def place_cpu_number_spinbox():
     cpu_spinbox_info_button["command"] = lambda: open_info_cpu()
 
 
-
 def place_app_title():
     Title = ttk.Label(root, 
                       font       = bold21,
@@ -1852,9 +1881,6 @@ def place_upscale_button():
     Upscale_button["command"] = lambda: upscale_button_command()
 
 def place_stop_button():
-    Upsc_Butt_Style = ttk.Style()
-    Upsc_Butt_Style.configure("Bold.TButton", font = bold11)
-
     Stop_button = ttk.Button(root, 
                                 text  = '  STOP UPSCALE ',
                                 image = stop_icon,
@@ -1952,17 +1978,15 @@ if __name__ == "__main__":
     bold21 = tkFont.Font(family = default_font, size   = round(21 * font_scale), weight = 'bold')
 
     global stop_icon
-    global settings_icon
     global clear_icon
     global play_icon
     global logo_itch
     global logo_git
-    logo_git      = PhotoImage(file = find_by_relative_path( "Assets" + os.sep + "github_logo.png"))
-    logo_itch     = PhotoImage(file = find_by_relative_path( "Assets" + os.sep + "itch_logo.png"))
+    logo_git      = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "github_logo.png"))
+    logo_itch     = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "itch_logo.png"))
     stop_icon     = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "stop_icon.png"))
     play_icon     = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "upscale_icon.png"))
     clear_icon    = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "clear_icon.png"))
-    settings_icon = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "advanced_settings_icon.png"))
 
     app = App(root)
     root.update()
