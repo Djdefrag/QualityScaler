@@ -34,28 +34,7 @@ from win32mica import MICAMODE, ApplyMica
 
 import sv_ttk
 
-version  = "1.12"
-
-# NEW
-# The app is now a single, portable .exe:
-#   - no more confusing directory with lots of files
-# Completely rewrote the image splitting function 
-#   - (when the whole image does not fit into gpu memory) (again)
-#   - this should reduce the vertical and horizontal lines that 
-#   - were encountered when this function was used
-# For video, frame splitting/joining functions also benefits from multithreading optimization
-#   - comparing with the previous algorithms 
-#   - tiling frames is at least x2 faster 
-#   - joining frames together after upscale is at least x4 faster
-#   - (can be even faster depending on the number of cpu selected)
-
-# GUI
-# Updated info widget texts
-
-# BUGFIX/IMPROVEMENTS
-# General bugfixes & improvements
-# Updated dependencies
-# Optimized AI models, will now use fewer resources
+version  = "1.13"
 
 global app_name
 app_name = "QualityScaler"
@@ -79,7 +58,7 @@ vram_multiplier       = 1
 default_vram_limiter  = 8
 multiplier_num_tiles  = 2
 cpu_number            = 4
-resize_algorithm      = cv2.INTER_AREA
+resize_algorithm      = cv2.INTER_LINEAR
 windows_subversion    = int(platform.version().split('.')[2])
 compatible_gpus       = torch_directml.device_count()
 
@@ -236,22 +215,7 @@ def reverse_split(paths_to_merge,
         for p in paths_to_merge:
             os.remove(p)
 
-def determine_bg_color(im):
-    im_width, im_height = im.size
-    rgb_im = im.convert('RGBA')
-    all_colors = []
-    areas = [[(0, 0), (im_width, im_height / 10)],
-             [(0, 0), (im_width / 10, im_height)],
-             [(im_width * 9 / 10, 0), (im_width, im_height)],
-             [(0, im_height * 9 / 10), (im_width, im_height)]]
-    for area in areas:
-        start = area[0]
-        end = area[1]
-        for x in range(int(start[0]), int(end[0])):
-            for y in range(int(start[1]), int(end[1])):
-                pix = rgb_im.getpixel((x, y))
-                all_colors.append(pix)
-    return Counter(all_colors).most_common(1)[0][0]
+
 
 def get_tiles_paths_after_split(original_image, rows, cols):
     number_of_tiles = rows * cols
@@ -337,7 +301,7 @@ def remove_file(name_file):
 
 def create_temp_dir(name_dir):
     if os.path.exists(name_dir): shutil.rmtree(name_dir)
-    if not os.path.exists(name_dir): os.makedirs(name_dir)
+    if not os.path.exists(name_dir): os.makedirs(name_dir, mode=0o777)
 
 def find_by_relative_path(relative_path):
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
@@ -385,13 +349,17 @@ def delete_list_of_files(list_to_delete):
                 os.remove(to_delete)
 
 def write_in_log_file(text_to_insert):
-    log_file_name   = find_by_relative_path(app_name + ".log")
-    with open(log_file_name,'w') as log_file: log_file.write(text_to_insert) 
+    log_file_name = app_name + ".log"
+    with open(log_file_name,'w') as log_file: 
+        os.chmod(log_file_name, 0o777)
+        log_file.write(text_to_insert) 
     log_file.close()
 
 def read_log_file():
-    log_file_name   = find_by_relative_path(app_name + ".log")
-    with open(log_file_name,'r') as log_file: step = log_file.readline()
+    log_file_name = app_name + ".log"
+    with open(log_file_name,'r') as log_file: 
+        os.chmod(log_file_name, 0o777)
+        step = log_file.readline()
     log_file.close()
     return step
 
@@ -616,6 +584,8 @@ class RRDBNet(nn.Module):
 
 
 # ----------------------- Core ------------------------
+
+
 
 def thread_check_steps_for_images( not_used_var, not_used_var2 ):
     time.sleep(3)
