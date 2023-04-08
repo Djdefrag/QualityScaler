@@ -13,7 +13,6 @@ import time
 import tkinter as tk
 import tkinter.font as tkFont
 import webbrowser
-from collections import Counter
 from math import sqrt
 from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
@@ -34,7 +33,13 @@ from win32mica import MICAMODE, ApplyMica
 
 import sv_ttk
 
-version  = "1.13"
+version  = "1.14"
+
+# image/frame tilling improvements:
+#   the vram limit is now more accurate
+#   the image or frame is less likely to be split this results in higher image quality
+# updated dependencies
+# code cleaning
 
 global app_name
 app_name = "QualityScaler"
@@ -58,7 +63,7 @@ vram_multiplier       = 1
 default_vram_limiter  = 8
 multiplier_num_tiles  = 2
 cpu_number            = 4
-resize_algorithm      = cv2.INTER_LINEAR
+resize_algorithm      = cv2.INTER_AREA
 windows_subversion    = int(platform.version().split('.')[2])
 compatible_gpus       = torch_directml.device_count()
 
@@ -185,25 +190,16 @@ def split_image(image_path,
     if should_cleanup: os.remove(image_path)
 
 def reverse_split(paths_to_merge, 
-                  rows, cols, 
+                  rows, 
+                  cols, 
                   image_path, 
                   should_cleanup):
-    
-    if len(paths_to_merge) == 0:
-        print("No images to merge!")
-        return
-    for index, path in enumerate(paths_to_merge):
-        path_number = int(path.split("_")[-1].split(".")[0])
-        if path_number != index:
-            print("Warning: Image " + path + " has a number that does not match its index!")
-            print("Please rename it first to match the rest of the images.")
-            return
         
     images_to_merge = [Image.open(p) for p in paths_to_merge]
-    image1    = images_to_merge[0]
+    image1     = images_to_merge[0]
     new_width  = image1.size[0] * cols
     new_height = image1.size[1] * rows
-    new_image = Image.new(image1.mode, (new_width, new_height))
+    new_image  = Image.new(image1.mode, (new_width, new_height))
 
     for i in range(0, rows):
         for j in range(0, cols):
@@ -214,8 +210,6 @@ def reverse_split(paths_to_merge,
     if should_cleanup:
         for p in paths_to_merge:
             os.remove(p)
-
-
 
 def get_tiles_paths_after_split(original_image, rows, cols):
     number_of_tiles = rows * cols
@@ -230,50 +224,56 @@ def get_tiles_paths_after_split(original_image, rows, cols):
 
     return tiles_paths
 
-def check_number_of_tiles(num_tiles, multiplier_num_tiles):
-    num_tiles = round(num_tiles)
-    if (num_tiles % 2) != 0: num_tiles += 1
-    num_tiles = round(sqrt(num_tiles * multiplier_num_tiles))
-
-    return num_tiles
 
 def video_need_tiles(frame, tiles_resolution):
     img_tmp             = image_read(frame)
-    image_resolution    = max(img_tmp.shape[1], img_tmp.shape[0])
-    needed_tiles        = image_resolution/tiles_resolution
+    image_pixels        = (img_tmp.shape[1] * img_tmp.shape[0])
+    tile_pixels         = (tiles_resolution * tiles_resolution)
 
-    if needed_tiles <= 1:
-        return False
+    n_tiles = image_pixels/tile_pixels
+
+    if n_tiles <= 1:
+        return False, 0
     else:
-        return True
+        if (n_tiles % 2) != 0: n_tiles += 1
+        n_tiles = round(sqrt(n_tiles * multiplier_num_tiles))
 
-def split_frames_list_in_tiles(frame_list, tiles_resolution, cpu_number):
-    list_of_tiles_list = [] # list of list of tiles, to rejoin
-    tiles_to_upscale   = [] # list of all tiles to upscale
+        return True, n_tiles
+
+def image_need_tiles(image, tiles_resolution):
+    img_tmp             = image_read(image)
+    image_pixels        = (img_tmp.shape[1] * img_tmp.shape[0])
+    tile_pixels         = (tiles_resolution * tiles_resolution)
+
+    n_tiles = image_pixels/tile_pixels
+
+    if n_tiles <= 1: 
+        return False, 0
+    else:
+        if (n_tiles % 2) != 0: n_tiles += 1
+        n_tiles = round(sqrt(n_tiles * multiplier_num_tiles))
+
+        return True, n_tiles
+
+def split_frames_list_in_tiles(frame_list, n_tiles, cpu_number):
+    list_of_tiles_list = []   # list of list of tiles, to rejoin
+    tiles_to_upscale   = []   # list of all tiles to upscale
     
-    img_tmp          = image_read(frame_list[0])
-    image_resolution = max(img_tmp.shape[1], img_tmp.shape[0])
-    num_tiles        = image_resolution/tiles_resolution
-
-    num_tiles = check_number_of_tiles(num_tiles, multiplier_num_tiles)
     frame_directory_path = os.path.dirname(os.path.abspath(frame_list[0]))
 
     with ThreadPool(cpu_number) as pool:
         pool.starmap(split_image, zip(frame_list, 
-                                  itertools.repeat(num_tiles), 
-                                  itertools.repeat(num_tiles), 
+                                  itertools.repeat(n_tiles), 
+                                  itertools.repeat(n_tiles), 
                                   itertools.repeat(False),
                                   itertools.repeat(frame_directory_path)))
 
     for frame in frame_list:    
-        tiles_list = get_tiles_paths_after_split(frame, num_tiles, num_tiles)
-
+        tiles_list = get_tiles_paths_after_split(frame, n_tiles, n_tiles)
         list_of_tiles_list.append(tiles_list)
+        for tile in tiles_list: tiles_to_upscale.append(tile)
 
-        for tile in tiles_list:
-            tiles_to_upscale.append(tile)
-
-    return tiles_to_upscale, list_of_tiles_list, num_tiles
+    return tiles_to_upscale, list_of_tiles_list
 
 def reverse_split_multiple_frames(list_of_tiles_list, 
                                   frames_upscaled_list, 
@@ -743,7 +743,7 @@ def process_upscale_video_frames(input_video_path,
 
         write_in_log_file('Upscaling...')
         frames_upscaled_list = []
-        need_tiles           = video_need_tiles(frame_list[0], tiles_resolution)
+        need_tiles, n_tiles  = video_need_tiles(frame_list[0], tiles_resolution)
 
         # prepare upscaled frames file paths
         for frame in frame_list:
@@ -752,9 +752,9 @@ def process_upscale_video_frames(input_video_path,
 
         if need_tiles:
             write_in_log_file('Tiling frames...')
-            tiles_to_upscale, list_of_tiles_list, num_tiles = split_frames_list_in_tiles(frame_list, 
-                                                                                         tiles_resolution,
-                                                                                         cpu_number)
+            tiles_to_upscale, list_of_tiles_list = split_frames_list_in_tiles(frame_list, 
+                                                                              n_tiles, 
+                                                                              cpu_number)
             
             done_tiles     = 0
             how_many_tiles = len(tiles_to_upscale)
@@ -767,7 +767,7 @@ def process_upscale_video_frames(input_video_path,
             write_in_log_file("Reconstructing frames by tiles...")
             reverse_split_multiple_frames(list_of_tiles_list, 
                                           frames_upscaled_list, 
-                                          num_tiles, 
+                                          n_tiles, 
                                           cpu_number)
 
         else:
@@ -811,32 +811,19 @@ def upscale_image_and_save(image,
                            half_precision):
 
     backend = torch.device(torch_directml.device(device))
+    need_tiles, n_tiles = image_need_tiles(image, tiles_resolution)
 
-    original_image          = image_read(image)
-    original_image_width    = original_image.shape[1]
-    original_image_height   = original_image.shape[0]
-
-    image_resolution = max(original_image_width, original_image_height)
-    num_tiles        = image_resolution/tiles_resolution
-
-    if num_tiles <= 1:
-        # not using tiles
-        with torch.no_grad():
-            img_adapted     = image_read(image, cv2.IMREAD_UNCHANGED)
-            img_upscaled, _ = enhance(model, img_adapted, backend, half_precision)
-            image_write(result_path, img_upscaled)
-    else:
-        # using tiles
-        num_tiles = check_number_of_tiles(num_tiles, multiplier_num_tiles)
+    if need_tiles:
+       # using tiles
         image_directory_path = os.path.dirname(os.path.abspath(image))
 
         split_image(image_path = image, 
-                    rows       = num_tiles, 
-                    cols       = num_tiles, 
+                    rows       = n_tiles, 
+                    cols       = n_tiles, 
                     should_cleanup = False, 
                     output_dir     = image_directory_path)
 
-        tiles_list = get_tiles_paths_after_split(image, num_tiles, num_tiles)
+        tiles_list = get_tiles_paths_after_split(image, n_tiles, n_tiles)
         
         with torch.no_grad():
             for tile in tiles_list:
@@ -845,12 +832,18 @@ def upscale_image_and_save(image,
                 image_write(tile, tile_upscaled)
 
         reverse_split(paths_to_merge = tiles_list, 
-                      rows = num_tiles, 
-                      cols = num_tiles, 
+                      rows = n_tiles, 
+                      cols = n_tiles, 
                       image_path     = result_path, 
                       should_cleanup = False)
 
         delete_list_of_files(tiles_list)
+    else:
+        # not using tiles
+        with torch.no_grad():
+            img_adapted     = image_read(image, cv2.IMREAD_UNCHANGED)
+            img_upscaled, _ = enhance(model, img_adapted, backend, half_precision)
+            image_write(result_path, img_upscaled)
 
 def process_upscale_multiple_images(image_list, 
                                     AI_model, 
