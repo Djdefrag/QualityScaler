@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/226848063-e3790351-5dc7-46c7-835a-1898af1614f4.PNG"> </a> 
+    <img src="https://user-images.githubusercontent.com/32263112/233322637-f907a988-8367-42a8-afe0-31e05044208a.PNG"> </a> 
 </div>
 
 ## What is QualityScaler?
@@ -47,9 +47,7 @@ External packages are:
 
 ## Features.
 - [x] Easy to use GUI
-- [x] Image/list of images upscale
-- [x] Video upscale
-- [x] Drag&drop files [image / multiple images / video]
+- [x] Images and Videos upscale
 - [x] Automatic image tiling and merging to avoid gpu VRAM limitation
 - [x] Resize image/video before upscaling
 - [x] Multiple Gpu support
@@ -65,15 +63,15 @@ External packages are:
     - [x] Multi GPU support (for pc with double GPU, integrated + dedicated)
     - [x] Python 3.10 (expecting ~10% more performance)
 - [ ] 2.X versions (now under development)
+    - [x] New, completely redesigned graphical interface based on @customtkinter
+    - [x] Upscaling images and videos at once (currently it is possible to upscale images or single video)
+    - [x] Upscale multiple videos at once
     - [ ] Python 3.11 (expecting ~30% more performance)
     - [ ] Torch/torch-directml 2.0 (expecting ~20% more performance)
-    - [ ] New, completely redesigned graphical interface, with more options for the user
-    - [ ] Upscaling images and videos at once (currently it is possible to upscale images or single video)
-    - [ ] Upscale multiple videos at once
 
 
 ## Known bugs.
-- [ ] When running QualityScaler as Administrator, drag&drop is not working
+
 
 ## Some Example.
 
