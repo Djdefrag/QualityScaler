@@ -1,117 +1,156 @@
-
 import ctypes
 import functools
 import itertools
 import multiprocessing
-import os
 import os.path
 import platform
 import shutil
 import sys
 import threading
 import time
+import tkinter
 import tkinter as tk
-import tkinter.font as tkFont
 import webbrowser
 from math import sqrt
 from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
-from tkinter import PhotoImage, ttk
 
 import cv2
 import numpy as np
-import tkinterDnD
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 import torch_directml
+from customtkinter import (CTk, CTkButton, CTkEntry, CTkFont, CTkImage,
+                           CTkLabel, CTkOptionMenu, CTkScrollableFrame,
+                           filedialog, set_appearance_mode,
+                           set_default_color_theme)
 from moviepy.editor import VideoFileClip
 from moviepy.video.io import ImageSequenceClip
 from PIL import Image
 from win32mica import MICAMODE, ApplyMica
 
-import sv_ttk
+# CHANGELOG
+# NEW
+# - It is now possible to upscale images and videos in one shot
+# - The message box is now more "conversational," having added many more messages
+# - Now the app will save the upscaled files by adding the chosen resolution % tag. This allows you to try different % resolutions without the produced file overwriting the previous one. 
+#   - For example, an image with BSRGANx4 and Resolution 70%:
+#   - QualityScaler 1.14 => image_BSRGANx4.png
+#   - QualityScaler 2.0 => image_BSRGANx4_70%.png
+# - New GUI based on the splendid work of @customtkinter:
+#   - it is now possible to select files via a "Select files" button instead of the Drag&Drop function that presented several problems
+#   - this new library allows for much more organized and optimized code
+#   - the new interface is fully resizable and so adaptable to any screen 
+#   - the new interface also allows more space to add new widgets (in the future) to customize the upscale operations 
+# BUGFIX & IMPROVEMENTS
+# - A comprehensive restructuring of the code and many micro-optimizations:
+#   - more than 50% of the code has been restructured to be faster and more readable
+# - Updated all dependencies
+# FOR DEVS
+# - With the new GUI based on @customtkinter, it is easier to run the app via python script and should give less headaches than the old GUI which needed more 3/4 different libraries
+# - Many more logs have been added in console (for those who use the app via Python code) 
 
-version  = "1.14"
+# I want to sincerely thank the people who support and will support this work (financially and otherwise). 
+# Thank you for allowing me to learn how to develop these projects and at the same time be able to help my parents financially. ❤
 
-# image/frame tilling improvements:
-#   the vram limit is now more accurate
-#   the image or frame is less likely to be split this results in higher image quality
-# updated dependencies
-# code cleaning
 
-global app_name
-app_name = "QualityScaler"
 
-models_array          = [ 'BSRGANx4', 'BSRGANx2', 'RealSR_JPEGx4' ]
-AI_model              = models_array[0]
-half_precision        = True
+app_name  = "QualityScaler"
+version   = "2.0"
 
-image_path            = "none"
-device                = 0
-input_video_path      = ""
-target_file_extension = ".png"
-file_extension_list   = [ '.png', '.jpg', '.jp2', '.bmp', '.tiff' ]
-single_image          = False
-multiple_images       = False
-video_file            = False
-multi_img_list        = []
-video_frames_list     = []
-frames_upscaled_list  = []
-vram_multiplier       = 1
-default_vram_limiter  = 8
-multiplier_num_tiles  = 2
-cpu_number            = 4
-resize_algorithm      = cv2.INTER_AREA
-windows_subversion    = int(platform.version().split('.')[2])
-compatible_gpus       = torch_directml.device_count()
+githubme             = "https://github.com/Djdefrag/QualityScaler"
+itchme               = "https://jangystudio.itch.io/qualityscaler"
 
-device_list_names     = []
-device_list           = []
+AI_models_list       = [ 'BSRGANx4', 'BSRGANx2', 'RealSR_JPEGx4' ]
+file_extension_list  = [ '.png', '.jpg', '.jp2', '.bmp', '.tiff' ]
+device_list_names    = []
+device_list          = []
+half_precision       = True
+vram_multiplier      = 1
+multiplier_num_tiles = 4
+windows_subversion   = int(platform.version().split('.')[2])
+resize_algorithm     = cv2.INTER_AREA
+
+offset_y_options = 0.1125
+option_y_1       = 0.705
+option_y_2       = option_y_1 + offset_y_options
+option_y_3       = option_y_2 + offset_y_options
+option_y_4       = option_y_1
+option_y_5       = option_y_4 + offset_y_options
+option_y_6       = option_y_5 + offset_y_options
+
+transparent_color = "#080808"
+
+# Classes and utils -------------------
 
 class Gpu:
-    def __init__(self, name, index):
-        self.name = name
-        self.index = index
+    def __init__(self, index, name):
+        self.name   = name
+        self.index  = index
 
-for index in range(compatible_gpus): 
-    gpu = Gpu(name = torch_directml.device_name(index), index = index)
+class ScrollableImagesTextFrame(CTkScrollableFrame):
+    def __init__(self, master, command=None, **kwargs):
+        super().__init__(master, **kwargs)
+        self.grid_columnconfigure(0, weight=1)
+        self.label_list  = []
+        self.button_list = []
+        self.file_list   = []
+
+    def get_selected_file_list(self): 
+        return self.file_list
+
+    def add_clean_button(self):
+        label = CTkLabel(self, text = "")
+        button = CTkButton(self, 
+                            font  = bold11,
+                            text  = "CLEAN", 
+                            fg_color   = "#282828",
+                            text_color = "#E0E0E0",
+                            image    = clear_icon,
+                            compound = "left",
+                            width    = 85, 
+                            height   = 27,
+                            corner_radius = 25)
+        button.configure(command=lambda: self.clean_all_items())
+        button.grid(row = len(self.button_list), column=1, pady=(0, 10), padx = 5)
+        self.label_list.append(label)
+        self.button_list.append(button)
+
+    def add_item(self, text_to_show, file_element, image = None):
+        label = CTkLabel(self, 
+                        text  = text_to_show,
+                        font  = bold11,
+                        image = image, 
+                        #fg_color   = "#282828",
+                        text_color = "#E0E0E0",
+                        compound = "left", 
+                        padx     = 10,
+                        pady     = 5,
+                        corner_radius = 25,
+                        anchor   = "center")
+                        
+        label.grid(row  = len(self.label_list), column = 0, 
+                   pady = (3, 3), padx = (3, 3), sticky = "w")
+        self.label_list.append(label)
+        self.file_list.append(file_element)    
+
+    def clean_all_items(self):
+        self.label_list  = []
+        self.button_list = []
+        self.file_list   = []
+        place_up_background()
+        place_loadFile_section()
+
+for index in range(torch_directml.device_count()): 
+    gpu_name = torch_directml.device_name(index)
+
+    gpu = Gpu(index = index, name = gpu_name)
     device_list.append(gpu)
     device_list_names.append(gpu.name)
 
-torch.autograd.set_detect_anomaly(False)
-torch.autograd.profiler.profile(False)
-torch.autograd.profiler.emit_nvtx(False)
-if sys.stdout is None: sys.stdout = open(os.devnull, "w")
-if sys.stderr is None: sys.stderr = open(os.devnull, "w")
-
-githubme           = "https://github.com/Djdefrag/QualityScaler"
-itchme             = "https://jangystudio.itch.io/qualityscaler"
-
-default_font          = 'Segoe UI'
-background_color      = "#181818"
-text_color            = "#DCDCDC"
-selected_button_color = "#ffbf00"
-window_width          = 1300
-window_height         = 850
-left_bar_width        = 410
-left_bar_height       = window_height
-drag_drop_width       = window_width - left_bar_width
-drag_drop_height      = window_height
-show_image_width      = drag_drop_width * 0.8
-show_image_height     = drag_drop_width * 0.6
-image_text_width      = drag_drop_width * 0.8
-support_button_height = 95 
-button1_y             = 170
-button2_y             = button1_y + 90
-button3_y             = button2_y + 90
-button4_y             = button3_y + 90
-button5_y             = button4_y + 90
-button6_y             = button5_y + 90
-
-
-supported_file_list     = ['.jpg', '.jpeg', '.JPG', '.JPEG',
+supported_file_extensions = ['.jpg', '.jpeg', '.JPG', '.JPEG',
                             '.png', '.PNG',
                             '.webp', '.WEBP',
                             '.bmp', '.BMP',
@@ -126,38 +165,26 @@ supported_file_list     = ['.jpg', '.jpeg', '.JPG', '.JPEG',
                             '.mov', '.MOV',
                             '.qt', '.3gp', '.mpg', '.mpeg']
 
-supported_video_list    = ['.mp4', '.MP4',
-                            '.webm', '.WEBM',
-                            '.mkv', '.MKV',
-                            '.flv', '.FLV',
-                            '.gif', '.GIF',
-                            '.m4v', ',M4V',
-                            '.avi', '.AVI',
-                            '.mov', '.MOV',
-                            '.qt',
-                            '.3gp', '.mpg', '.mpeg']
+supported_video_extensions  = ['.mp4', '.MP4',
+                                '.webm', '.WEBM',
+                                '.mkv', '.MKV',
+                                '.flv', '.FLV',
+                                '.gif', '.GIF',
+                                '.m4v', ',M4V',
+                                '.avi', '.AVI',
+                                '.mov', '.MOV',
+                                '.qt',
+                                '.3gp', '.mpg', '.mpeg']
 
-not_supported_file_list = ['.txt', '.exe', '.xls', '.xlsx', '.pdf',
-                           '.odt', '.html', '.htm', '.doc', '.docx',
-                           '.ods', '.ppt', '.pptx', '.aiff', '.aif',
-                           '.au', '.bat', '.java', '.class',
-                           '.csv', '.cvs', '.dbf', '.dif', '.eps',
-                           '.fm3', '.psd', '.psp', '.qxd',
-                           '.ra', '.rtf', '.sit', '.tar', '.zip',
-                           '.7zip', '.wav', '.mp3', '.rar', '.aac',
-                           '.adt', '.adts', '.bin', '.dll', '.dot',
-                           '.eml', '.iso', '.jar', '.py',
-                           '.m4a', '.msi', '.ini', '.pps', '.potx',
-                           '.ppam', '.ppsx', '.pptm', '.pst', '.pub',
-                           '.sys', '.tmp', '.xlt', '.avif']
-
-ctypes.windll.shcore.SetProcessDpiAwareness(True)
-scaleFactor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
-font_scale = round(1/scaleFactor, 1)
+torch.autograd.set_detect_anomaly(False)
+torch.autograd.profiler.profile(False)
+torch.autograd.profiler.emit_nvtx(False)
+if sys.stdout is None: sys.stdout = open(os.devnull, "w")
+if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 
 
-# ------------------- Split functions -------------------
 
+#  Slice functions -------------------
 
 def split_image(image_path, 
                 rows, cols, 
@@ -224,7 +251,6 @@ def get_tiles_paths_after_split(original_image, rows, cols):
 
     return tiles_paths
 
-
 def video_need_tiles(frame, tiles_resolution):
     img_tmp             = image_read(frame)
     image_pixels        = (img_tmp.shape[1] * img_tmp.shape[0])
@@ -289,64 +315,18 @@ def reverse_split_multiple_frames(list_of_tiles_list,
 
 
 
-# ------------------ / Split functions ------------------
+# Utils functions ------------------------
 
-# ------------------------ Utils ------------------------
+def opengithub(): webbrowser.open(githubme, new=1)
 
-def remove_dir(name_dir):
-    if os.path.exists(name_dir): shutil.rmtree(name_dir)
-
-def remove_file(name_file):
-    if os.path.exists(name_file): os.remove(name_file)
+def openitch(): webbrowser.open(itchme, new=1)
 
 def create_temp_dir(name_dir):
     if os.path.exists(name_dir): shutil.rmtree(name_dir)
     if not os.path.exists(name_dir): os.makedirs(name_dir, mode=0o777)
 
-def find_by_relative_path(relative_path):
-    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base_path, relative_path)
-
-def adapt_image_to_show(image_to_prepare):
-    old_image     = image_read(image_to_prepare)
-    actual_width  = old_image.shape[1]
-    actual_height = old_image.shape[0]
-
-    if actual_width >= actual_height:
-        max_val = actual_width
-        max_photo_resolution = show_image_width
-    else:
-        max_val = actual_height
-        max_photo_resolution = show_image_height
-
-    if max_val >= max_photo_resolution:
-        downscale_factor = max_val/max_photo_resolution
-        new_width        = round(old_image.shape[1]/downscale_factor)
-        new_height       = round(old_image.shape[0]/downscale_factor)
-        resized_image    = cv2.resize(old_image,
-                                   (new_width, new_height),
-                                   interpolation = resize_algorithm)
-        image_write("temp.png", resized_image)
-        return "temp.png"
-    else:
-        new_width        = round(old_image.shape[1])
-        new_height       = round(old_image.shape[0])
-        resized_image    = cv2.resize(old_image,
-                                   (new_width, new_height),
-                                   interpolation = resize_algorithm)
-        image_write("temp.png", resized_image)
-        return "temp.png"
-
-def prepare_output_filename(img, AI_model, target_file_extension):
-    result_path = (img.replace("_resized" + target_file_extension, "").replace(target_file_extension, "") 
-                    + "_"  + AI_model + target_file_extension)
-    return result_path
-
-def delete_list_of_files(list_to_delete):
-    if len(list_to_delete) > 0:
-        for to_delete in list_to_delete:
-            if os.path.exists(to_delete):
-                os.remove(to_delete)
+def remove_dir(name_dir):
+    if os.path.exists(name_dir): shutil.rmtree(name_dir)
 
 def write_in_log_file(text_to_insert):
     log_file_name = app_name + ".log"
@@ -363,8 +343,39 @@ def read_log_file():
     log_file.close()
     return step
 
+def find_by_relative_path(relative_path):
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
 
-# IMAGE
+def prepare_output_image_filename(image_path, selected_AI_model, resize_factor, selected_output_file_extension):
+    # remove extension
+    result_path = os.path.splitext(image_path)[0]
+
+    resize_percentage = str(int(resize_factor * 100)) + "%"
+    to_append = "_"  + selected_AI_model + "_" + resize_percentage + selected_output_file_extension
+
+    if "_resized" in result_path: 
+        result_path = result_path.replace("_resized", "") 
+        result_path = result_path + to_append
+    else:
+        result_path = result_path + to_append
+
+    return result_path
+
+def prepare_output_video_filename(video_path, selected_AI_model, resize_factor):
+    result_video_path = os.path.splitext(video_path)[0] # remove extension
+
+    resize_percentage = str(int(resize_factor * 100)) + "%"
+    to_append = "_"  + selected_AI_model + "_" + resize_percentage + ".mp4"
+    result_video_path = result_video_path + to_append
+
+    return result_video_path
+
+def delete_list_of_files(list_to_delete):
+    if len(list_to_delete) > 0:
+        for to_delete in list_to_delete:
+            if os.path.exists(to_delete):
+                os.remove(to_delete)
 
 def image_write(path, image_data):
     _, file_extension = os.path.splitext(path)
@@ -374,39 +385,18 @@ def image_write(path, image_data):
 def image_read(image_to_prepare, flags=cv2.IMREAD_COLOR):
     return cv2.imdecode(np.fromfile(image_to_prepare, dtype=np.uint8), flags)
 
-def resize_image(image_path, resize_factor, target_file_extension):
-    new_image_path = (os.path.splitext(image_path)[0] + "_resized" + target_file_extension).strip()
+def resize_image(image_path, resize_factor, selected_output_file_extension):
+    new_image_path = (os.path.splitext(image_path)[0] 
+                      + "_resized" 
+                      + selected_output_file_extension)
 
-    old_image  = image_read(image_path.strip(), cv2.IMREAD_UNCHANGED)
+    old_image  = image_read(image_path, cv2.IMREAD_UNCHANGED)
     new_width  = int(old_image.shape[1] * resize_factor)
     new_height = int(old_image.shape[0] * resize_factor)
 
-    resized_image = cv2.resize(old_image, 
-                               (new_width, new_height), 
-                                interpolation = resize_algorithm)    
+    resized_image = cv2.resize(old_image, (new_width, new_height), interpolation = resize_algorithm)    
     image_write(new_image_path, resized_image)
-
-def resize_image_list(image_list, resize_factor, target_file_extension):
-    files_to_delete   = []
-    downscaled_images = []
-    how_much_images = len(image_list)
-
-    index = 1
-    for image in image_list:
-        resized_image_path = (os.path.splitext(image)[0] + "_resized" + target_file_extension).strip()
-        
-        resize_image(image.strip(), resize_factor, target_file_extension)
-        write_in_log_file("Resizing image " + str(index) + "/" + str(how_much_images)) 
-
-        downscaled_images.append(resized_image_path)
-        files_to_delete.append(resized_image_path)
-
-        index += 1
-
-    return downscaled_images, files_to_delete
-
-
-#VIDEO
+    return new_image_path
 
 def extract_frames_from_video(video_path):
     video_frames_list = []
@@ -420,23 +410,18 @@ def extract_frames_from_video(video_path):
     video_frames_list = video.write_images_sequence(img_sequence, logger = 'bar', fps = frame_rate)
     
     # extract audio
-    try:
-        video.audio.write_audiofile(app_name + "_temp" + os.sep + "audio.mp3")
-    except Exception as e:
-        pass
+    try: video.audio.write_audiofile(app_name + "_temp" + os.sep + "audio.mp3")
+    except Exception as e: pass
 
     return video_frames_list
 
-def video_reconstruction_by_frames(input_video_path, frames_upscaled_list, AI_model, cpu_number):
+def video_reconstruction_by_frames(input_video_path, frames_upscaled_list, 
+                                   selected_AI_model, resize_factor, cpu_number):
     cap          = cv2.VideoCapture(input_video_path)
     frame_rate   = int(cap.get(cv2.CAP_PROP_FPS))
-    path_as_list = input_video_path.split("/")
-    video_name   = str(path_as_list[-1])
-    only_path    = input_video_path.replace(video_name, "")
-    for video_type in supported_video_list: video_name = video_name.replace(video_type, "")
-    upscaled_video_path = (only_path + video_name + "_" + AI_model + ".mp4")
     cap.release()
 
+    upscaled_video_path = prepare_output_video_filename(input_video_path, selected_AI_model, resize_factor)
     audio_file = app_name + "_temp" + os.sep + "audio.mp3"
 
     clip = ImageSequenceClip.ImageSequenceClip(frames_upscaled_list, fps = frame_rate)
@@ -479,13 +464,23 @@ def resize_frame_list(image_list, resize_factor, target_file_extension, cpu_numb
 
     return downscaled_images
 
+def is_Windows11():
+    if windows_subversion >= 22000: return True
 
+def remove_file(name_file):
+    if os.path.exists(name_file): os.remove(name_file)
 
-# ----------------------- /Utils ------------------------
+def show_error(exception):
+    import tkinter as tk
+    tk.messagebox.showerror(title   = 'Error', 
+                            message = 'Upscale failed caused by:\n\n' +
+                                        str(exception) + '\n\n' +
+                                        'Please report the error on Github.com or Itch.io.' +
+                                        '\n\nThank you :)')
+
 
 
 # ------------------ AI ------------------
-
 
 def initialize_weights(net_l, scale=1):
     if not isinstance(net_l, list):
@@ -579,61 +574,7 @@ class RRDBNet(nn.Module):
 
         return out
 
-
-# ------------------ /AI ------------------
-
-
-# ----------------------- Core ------------------------
-
-
-
-def thread_check_steps_for_images( not_used_var, not_used_var2 ):
-    time.sleep(3)
-    try:
-        while True:
-            step = read_log_file()
-            if "Upscale completed" in step or "Error while upscaling" in step or "Stopped upscaling" in step:
-                info_string.set(step)
-                stop = 1 + "x"
-            info_string.set(step)
-            time.sleep(2)
-    except:
-        place_upscale_button()
-
-def thread_check_steps_for_videos( not_used_var, not_used_var2 ):
-    time.sleep(3)
-    try:
-        while True:
-            step = read_log_file()
-            if "Upscale video completed" in step or "Error while upscaling" in step or "Stopped upscaling" in step:
-                info_string.set(step)
-                stop = 1 + "x"
-            info_string.set(step)
-            time.sleep(2)
-    except:
-        place_upscale_button()
-
-
-def prepare_model(AI_model, device, half_precision):
-    backend = torch.device(torch_directml.device(device))
-
-    model_path = find_by_relative_path("AI" + os.sep + AI_model + ".pth")
-
-    if "x2" in AI_model: upscale_factor = 2
-    elif "x4" in AI_model: upscale_factor = 4
-
-    model = RRDBNet(in_nc = 3, out_nc = 3, nf = 64, nb = 23, gc = 32, sf = upscale_factor)
-    model.load_state_dict(torch.load(model_path), strict=True)
-    model.eval()
-
-    for _, v in model.named_parameters(): v.requires_grad = False
-        
-    if half_precision: model = model.half()
-    model = model.to(backend)
-
-    return model
-
-def enhance(model, img, backend, half_precision):
+def AI_enhance(model, img, backend, half_precision):
     img = img.astype(np.float32)
 
     if np.max(img) > 256: max_range = 65535 # 16 bit images
@@ -656,10 +597,10 @@ def enhance(model, img, backend, half_precision):
     # ------------------- process image (without the alpha channel) ------------------- #
     
     img = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()
-    img = img.unsqueeze(0).to(backend)
-    if half_precision: img = img.half()
+    if half_precision: img = img.unsqueeze(0).half().to(backend, non_blocking = True)
+    else: img = img.unsqueeze(0).to(backend, non_blocking = True)
 
-    output = model(img) ## model
+    output = model(img)
     
     output_img = output.data.squeeze().float().cpu().clamp_(0, 1).numpy()
     output_img = np.transpose(output_img[[2, 1, 0], :, :], (1, 2, 0))
@@ -670,8 +611,8 @@ def enhance(model, img, backend, half_precision):
     
     if img_mode == 'RGBA':
         alpha = torch.from_numpy(np.transpose(alpha, (2, 0, 1))).float()
-        alpha = alpha.unsqueeze(0).to(backend)
-        if half_precision: alpha = alpha.half()
+        if half_precision: alpha = alpha.unsqueeze(0).half().to(backend, non_blocking = True)
+        else: alpha = alpha.unsqueeze(0).to(backend, non_blocking = True)
 
         output_alpha = model(alpha) ## model
 
@@ -687,216 +628,499 @@ def enhance(model, img, backend, half_precision):
     if max_range == 65535: output = (output_img * 65535.0).round().astype(np.uint16) # 16-bit image
     else: output = (output_img * 255.0).round().astype(np.uint8)
 
-    return output, img_mode
+    return output
 
+def prepare_model(AI_model, device, half_precision, upscale_factor):
+    backend    = torch.device(torch_directml.device(device))
+    model_path = find_by_relative_path("AI" + os.sep + AI_model + ".pth")
 
+    model = RRDBNet(in_nc = 3, out_nc = 3, nf = 64, nb = 23, gc = 32, sf = upscale_factor)
+    model.load_state_dict(torch.load(model_path), strict=True)
+    model.eval()
 
-def upscale_tiles(tile, 
-                model, 
-                device,
-                half_precision):
-
-    backend = torch.device(torch_directml.device(device))
-
-    with torch.no_grad():
-        tile_adapted     = image_read(tile, cv2.IMREAD_UNCHANGED)
-        tile_upscaled, _ = enhance(model, tile_adapted, backend, half_precision)
-        image_write(tile, tile_upscaled)
-
-def upscale_single_frame(frame, 
-                         model, 
-                         result_path,
-                         device,
-                         half_precision):
-
-    backend = torch.device(torch_directml.device(device))
-
-    with torch.no_grad():
-        img_adapted     = image_read(frame, cv2.IMREAD_UNCHANGED)
-        img_upscaled, _ = enhance(model, img_adapted, backend, half_precision)
-        image_write(result_path, img_upscaled)
-
-def process_upscale_video_frames(input_video_path, 
-                                 AI_model, 
-                                 resize_factor, 
-                                 device,
-                                 tiles_resolution, 
-                                 target_file_extension, 
-                                 cpu_number,
-                                 half_precision):
-    try:
-        start = timer()
-
-        create_temp_dir(app_name + "_temp")
-      
-        write_in_log_file('Extracting video frames...')
-        frame_list = extract_frames_from_video(input_video_path)
+    for _, v in model.named_parameters(): v.requires_grad = False
         
-        if resize_factor != 1:
-            write_in_log_file('Resizing video frames...')
-            frame_list  = resize_frame_list(frame_list, 
-                                            resize_factor, 
-                                            target_file_extension, 
-                                            cpu_number)
-            
-        model= prepare_model(AI_model, device, half_precision)   
+    if half_precision: model = model.half()
+    model = model.to(backend, non_blocking = True)
 
-        write_in_log_file('Upscaling...')
-        frames_upscaled_list = []
-        need_tiles, n_tiles  = video_need_tiles(frame_list[0], tiles_resolution)
-
-        # prepare upscaled frames file paths
-        for frame in frame_list:
-            result_path = prepare_output_filename(frame, AI_model, target_file_extension)
-            frames_upscaled_list.append(result_path) 
-
-        if need_tiles:
-            write_in_log_file('Tiling frames...')
-            tiles_to_upscale, list_of_tiles_list = split_frames_list_in_tiles(frame_list, 
-                                                                              n_tiles, 
-                                                                              cpu_number)
-            
-            done_tiles     = 0
-            how_many_tiles = len(tiles_to_upscale)
-            
-            for tile in tiles_to_upscale:
-                upscale_tiles(tile, model, device, half_precision)
-                done_tiles += 1
-                write_in_log_file("Upscaled tiles " + str(done_tiles) + "/" + str(how_many_tiles))
-
-            write_in_log_file("Reconstructing frames by tiles...")
-            reverse_split_multiple_frames(list_of_tiles_list, 
-                                          frames_upscaled_list, 
-                                          n_tiles, 
-                                          cpu_number)
-
-        else:
-            how_many_images  = len(frame_list)
-            done_images      = 0
-
-            for frame in frame_list:
-                upscale_single_frame(frame, 
-                                     model, 
-                                     prepare_output_filename(frame, AI_model, target_file_extension), 
-                                     device, 
-                                     half_precision)
-
-                done_images += 1
-                write_in_log_file("Upscaled frame " + str(done_images) + "/" + str(how_many_images))
-
-        write_in_log_file("Processing upscaled video...")
-        video_reconstruction_by_frames(input_video_path, frames_upscaled_list, AI_model, cpu_number)
-        write_in_log_file("Upscale video completed [" + str(round(timer() - start)) + " sec.]")
-
-        remove_dir(app_name + "_temp")
-        remove_file("temp.png")
-
-    except Exception as e:
-        write_in_log_file('Error while upscaling' + '\n\n' + str(e)) 
-        import tkinter as tk
-        tk.messagebox.showerror(title   = 'Error', 
-                                message = 'Upscale failed caused by:\n\n' +
-                                           str(e) + '\n\n' +
-                                          'Please report the error on Github.com or Itch.io.' +
-                                          '\n\nThank you :)')
+    return model
 
 
+
+# Core functions ------------------------
+
+def stop_thread():
+    # to stop a thread execution
+    stop = 1 + "x"
+
+def check_upscale_steps(not_used1, not_used2):
+    time.sleep(3)
+    try:
+        while True:
+            step = read_log_file()
+            if "All files completed" in step:
+                info_message.set(step)
+                stop_thread()
+            elif "Error while upscaling" in step:
+                info_message.set("Error while upscaling :(")
+                stop_thread()
+            elif "Stopped upscaling" in step:
+                info_message.set("Stopped upscaling")
+                stop_thread()
+            else:
+                info_message.set(step)
+            time.sleep(2)
+    except:
+        place_upscale_button()
+
+def update_process_status(actual_process_phase):
+    print("> " + actual_process_phase)
+    write_in_log_file(actual_process_phase) 
+
+def stop_button_command():
+    global process_upscale_orchestrator
+    process_upscale_orchestrator.terminate()
+    process_upscale_orchestrator.join()
+    
+    # this will stop thread that check upscaling steps
+    write_in_log_file("Stopped upscaling") 
+
+def upscale_button_function(): 
+    global selected_file_list
+    global selected_AI_model
+    global selected_AI_device 
+    global selected_output_file_extension
+    global tiles_resolution
+    global resize_factor
+    global cpu_number
+
+    global process_upscale_orchestrator
+
+    remove_file(app_name + ".log")
+    
+    if user_input_checks():
+        update_process_status('Loading...')
+        info_message.set("Loading...")
+
+        print("=================================================")
+        print("> Starting upscale:")
+        print("   Files to upscale: " + str(len(selected_file_list)))
+        print("   AI model: "         + str(selected_AI_model))
+        print("   AI device: "        + str(selected_AI_device))
+        print("   Output extension: " + str(selected_output_file_extension))
+        print("   GPU vram: "         + str(int(tiles_resolution/100)) + "GB" + " => " + "tiles resolution: " + str(tiles_resolution) + "x" + str(tiles_resolution) + "px")
+        print("   Resize factor: "    + str(int(resize_factor*100)) + "%")
+        print("   Cpu number: "       + str(cpu_number))
+        print("=================================================")
+
+        place_stop_button()
+
+        process_upscale_orchestrator = multiprocessing.Process(
+                                            target = upscale_orchestrator,
+                                            args   = (selected_file_list,
+                                                    selected_AI_model,
+                                                    selected_AI_device, 
+                                                    selected_output_file_extension,
+                                                    tiles_resolution,
+                                                    resize_factor,
+                                                    cpu_number,
+                                                    half_precision))
+        process_upscale_orchestrator.start()
+
+        thread_wait = threading.Thread(
+                                target = check_upscale_steps,
+                                args   = (1, 2), 
+                                daemon = True)
+        thread_wait.start()
+
+def upscale_image(image_path,
+                  AI_model, 
+                  selected_AI_model,
+                  upscale_factor,
+                  selected_AI_device, 
+                  selected_output_file_extension, 
+                  tiles_resolution,
+                  resize_factor,
+                  cpu_number,
+                  half_precision):
+    
+    # if image need resize before AI work
+    if resize_factor != 1:
+        image_path = resize_image(image_path, 
+                                   resize_factor, 
+                                   selected_output_file_extension)
+
+    result_path = prepare_output_image_filename(image_path, selected_AI_model, resize_factor, selected_output_file_extension)
+    upscale_image_and_save(image_path, 
+                            AI_model, 
+                            result_path, 
+                            tiles_resolution,
+                            upscale_factor, 
+                            selected_AI_device, 
+                            half_precision)
+    
+    # if the image was sized before the AI work
+    if resize_factor != 1: remove_file(image_path)
 
 def upscale_image_and_save(image, 
-                           model, 
+                           AI_model, 
                            result_path, 
-                           tiles_resolution,
-                           upscale_factor,
-                           device, 
+                           tiles_resolution, 
+                           upscale_factor, 
+                           selected_AI_device, 
                            half_precision):
 
-    backend = torch.device(torch_directml.device(device))
+    backend = torch.device(torch_directml.device(selected_AI_device))
     need_tiles, n_tiles = image_need_tiles(image, tiles_resolution)
 
     if need_tiles:
-       # using tiles
-        image_directory_path = os.path.dirname(os.path.abspath(image))
-
-        split_image(image_path = image, 
-                    rows       = n_tiles, 
-                    cols       = n_tiles, 
+        split_image(image_path     = image, 
+                    rows           = n_tiles, 
+                    cols           = n_tiles, 
                     should_cleanup = False, 
-                    output_dir     = image_directory_path)
+                    output_dir     = os.path.dirname(os.path.abspath(image)))
 
         tiles_list = get_tiles_paths_after_split(image, n_tiles, n_tiles)
-        
+
         with torch.no_grad():
             for tile in tiles_list:
-                tile_adapted     = image_read(tile, cv2.IMREAD_UNCHANGED)
-                tile_upscaled, _ = enhance(model, tile_adapted, backend, half_precision)
+                tile_adapted  = image_read(tile, cv2.IMREAD_UNCHANGED)
+                tile_upscaled = AI_enhance(AI_model, tile_adapted, backend, half_precision)
                 image_write(tile, tile_upscaled)
 
         reverse_split(paths_to_merge = tiles_list, 
-                      rows = n_tiles, 
-                      cols = n_tiles, 
+                      rows           = n_tiles, 
+                      cols           = n_tiles, 
                       image_path     = result_path, 
                       should_cleanup = False)
 
         delete_list_of_files(tiles_list)
     else:
-        # not using tiles
         with torch.no_grad():
-            img_adapted     = image_read(image, cv2.IMREAD_UNCHANGED)
-            img_upscaled, _ = enhance(model, img_adapted, backend, half_precision)
+            img_adapted  = image_read(image, cv2.IMREAD_UNCHANGED)
+            img_upscaled = AI_enhance(AI_model, img_adapted, backend, half_precision)
             image_write(result_path, img_upscaled)
 
-def process_upscale_multiple_images(image_list, 
-                                    AI_model, 
-                                    resize_factor, 
-                                    device, 
-                                    tiles_resolution, 
-                                    target_file_extension, 
-                                    half_precision):
+def upscale_video(video_path,
+                 AI_model,
+                 selected_AI_model,
+                 upscale_factor,
+                 selected_AI_device,
+                 selected_output_file_extension,
+                 tiles_resolution,
+                 resize_factor,
+                 cpu_number,
+                 half_precision):
     
+    remove_file("temp.png")
+
+    create_temp_dir(app_name + "_temp")
+    
+    update_process_status("Extracting video frames")
+    frame_list = extract_frames_from_video(video_path)
+    
+    if resize_factor != 1:
+        update_process_status("Resizing video frames")
+        frame_list  = resize_frame_list(frame_list, 
+                                        resize_factor, 
+                                        selected_output_file_extension, 
+                                        cpu_number)
+
+    upscale_video_and_save(video_path, frame_list, AI_model,  
+                           tiles_resolution, selected_AI_model, selected_AI_device, 
+                           resize_factor, selected_output_file_extension, 
+                           half_precision, cpu_number)
+    
+    remove_dir(app_name + "_temp")
+
+def upscale_video_and_save(video_path, frame_list, AI_model,  
+                           tiles_resolution, selected_AI_model, selected_AI_device,
+                           resize_factor, selected_output_file_extension, 
+                           half_precision, cpu_number):
+    
+    update_process_status("Upscaling video")
+    frames_upscaled_list = []
+    need_tiles, n_tiles  = video_need_tiles(frame_list[0], tiles_resolution)
+
+    # Prepare upscaled frames file paths
+    for frame in frame_list:
+        result_path = prepare_output_image_filename(frame, selected_AI_model, resize_factor, selected_output_file_extension)
+        frames_upscaled_list.append(result_path) 
+
+    if need_tiles:
+        update_process_status("Tiling frames...")
+        tiles_to_upscale, list_of_tiles_list = split_frames_list_in_tiles(frame_list, n_tiles, cpu_number)
+        how_many_tiles = len(tiles_to_upscale)
+        
+        for index in range(how_many_tiles):
+            upscale_tiles(tiles_to_upscale[index], 
+                          AI_model, 
+                          selected_AI_device, 
+                          half_precision)
+            if (index % 4) == 0: update_process_status("Upscaled tiles " + str( index + 1 ) + "/" + str(how_many_tiles))
+
+        update_process_status("Reconstructing frames by tiles...")
+        reverse_split_multiple_frames(list_of_tiles_list, frames_upscaled_list, n_tiles, cpu_number)
+
+    else:
+        how_many_frames = len(frame_list)
+
+        for index in range(how_many_frames):
+            upscale_single_frame(frame_list[index], 
+                                    AI_model, 
+                                    frames_upscaled_list[index], 
+                                    selected_AI_device, 
+                                    half_precision)
+            if (index % 4) == 0: update_process_status("Upscaled frames " + str( index + 1 ) + "/" + str(how_many_frames))
+    
+    # Reconstruct the video with upscaled frames
+    update_process_status("Processing upscaled video")
+    video_reconstruction_by_frames(video_path, frames_upscaled_list, selected_AI_model, 
+                                   resize_factor, cpu_number)
+
+def upscale_tiles(tile, AI_model, selected_AI_device, half_precision):
+    backend = torch.device(torch_directml.device(selected_AI_device))
+
+    with torch.no_grad():
+        tile_adapted  = image_read(tile, cv2.IMREAD_UNCHANGED)
+        tile_upscaled = AI_enhance(AI_model, tile_adapted, backend, half_precision)
+        image_write(tile, tile_upscaled)
+
+def upscale_single_frame(frame, AI_model, result_path, selected_AI_device, half_precision):
+    backend = torch.device(torch_directml.device(selected_AI_device))
+
+    with torch.no_grad():
+        img_adapted  = image_read(frame, cv2.IMREAD_UNCHANGED)
+        img_upscaled = AI_enhance(AI_model, img_adapted, backend, half_precision)
+        image_write(result_path, img_upscaled)
+
+def upscale_orchestrator(selected_file_list,
+                         selected_AI_model,
+                         selected_AI_device, 
+                         selected_output_file_extension,
+                         tiles_resolution,
+                         resize_factor,
+                         cpu_number,
+                         half_precision):
+    
+    start = timer()
+
+    update_process_status("Preparing AI model")
+    if   "x2" in selected_AI_model: upscale_factor = 2
+    elif "x4" in selected_AI_model: upscale_factor = 4 
+
     try:
-        start = timer()
+        AI_model = prepare_model(selected_AI_model, selected_AI_device, half_precision, upscale_factor)
 
-        if "x2" in AI_model: upscale_factor = 2
-        elif "x4" in AI_model: upscale_factor = 4        
+        how_many_files = len(selected_file_list)
+        for index in range(how_many_files):
+            update_process_status("Upscaling " + str(index + 1) + "/" + str(how_many_files))
+            file_element = selected_file_list[index]
+            if check_if_file_is_video(file_element):
+                upscale_video(file_element, AI_model, 
+                              selected_AI_model, upscale_factor, 
+                              selected_AI_device, selected_output_file_extension,
+                              tiles_resolution, resize_factor, 
+                              cpu_number, half_precision)
+            else:
+                upscale_image(file_element, AI_model, 
+                              selected_AI_model, upscale_factor, 
+                              selected_AI_device, selected_output_file_extension, 
+                              tiles_resolution, resize_factor, 
+                              cpu_number, half_precision)
 
-        write_in_log_file('Resizing images...')
-        image_list, files_to_delete = resize_image_list(image_list, resize_factor, target_file_extension)
+        update_process_status("All files completed (" + str(round(timer() - start)) + " sec.)")
 
-        how_many_images = len(image_list)
-        done_images     = 0
-
-        write_in_log_file('Upscaling...')
-        model = prepare_model(AI_model, device, half_precision)
-        for img in image_list:
-            result_path = prepare_output_filename(img, AI_model, target_file_extension)
-            upscale_image_and_save(img, model, result_path, tiles_resolution, 
-                                    upscale_factor, device, half_precision)
-            done_images += 1
-            write_in_log_file("Upscaled images " + str(done_images) + "/" + str(how_many_images))
-                
-        write_in_log_file("Upscale completed [" + str(round(timer() - start)) + " sec.]")
-
-        delete_list_of_files(files_to_delete)
-        remove_file("temp.png")
-
-    except Exception as e:
-        write_in_log_file('Error while upscaling' + '\n\n' + str(e)) 
-        import tkinter as tk
-        tk.messagebox.showerror(title   = 'Error', 
-                                message = 'Upscale failed caused by:\n\n' +
-                                           str(e) + '\n\n' +
-                                          'Please report the error on Github.com or Itch.io.' +
-                                          '\n\nThank you :)')
+    except Exception as exception:
+        write_in_log_file('Error while upscaling' + '\n\n' + str(exception)) 
+        show_error(exception)
 
 
 
-# ----------------------- /Core ------------------------
+# GUI utils function ---------------------------
 
-# ---------------------- GUI related ----------------------
+def user_input_checks():
+    global selected_file_list
+    global selected_AI_model
+    global selected_AI_device 
+    global selected_output_file_extension
+    global tiles_resolution
+    global resize_factor
+    global cpu_number
 
-def opengithub(): webbrowser.open(githubme, new=1)
+    is_ready = True
 
-def openitch(): webbrowser.open(itchme, new=1)
+    # files -------------------------------------------------
+    try: selected_file_list = scrollable_frame_file_list.get_selected_file_list()
+    except:
+        info_message.set("No file selected. Please select a file")
+        is_ready = False
+
+    if len(selected_file_list) <= 0:
+        info_message.set("No file selected. Please select a file")
+        is_ready = False
+
+    # resize factor -------------------------------------------------
+    try: resize_factor = int(float(str(selected_resize_factor.get())))
+    except:
+        info_message.set("Resize % must be a numeric value")
+        is_ready = False
+
+    if resize_factor > 0: resize_factor = resize_factor/100
+    else:
+        info_message.set("Resize % must be a value > 0")
+        is_ready = False
+
+    
+    # vram limiter -------------------------------------------------
+    try: tiles_resolution = 100 * int(float(str(selected_VRAM_limiter.get())))
+    except:
+        info_message.set("VRAM/RAM value must be a numeric value")
+        is_ready = False 
+
+    if tiles_resolution > 0: 
+        selected_vram = (vram_multiplier * int(float(str(selected_VRAM_limiter.get()))))
+        tiles_resolution = 100 * selected_vram
+    else:
+        info_message.set("VRAM/RAM value must be > 0")
+        is_ready = False
+
+
+    # cpu number -------------------------------------------------
+    try: cpu_number = int(float(str(selected_cpu_number.get())))
+    except:
+        info_message.set("Cpu number must be a numeric value")
+        is_ready = False 
+
+    if cpu_number <= 0:         
+        info_message.set("Cpu number value must be > 0")
+        is_ready = False
+    else: cpu_number = int(cpu_number)
+
+
+    return is_ready
+
+def extract_image_info(image_file):
+    image_name = str(image_file.split("/")[-1])
+
+    image  = image_read(image_file, cv2.IMREAD_UNCHANGED)
+    width  = int(image.shape[1])
+    height = int(image.shape[0])
+
+    image_label = ( "IMAGE" + " | " + image_name + " | " + str(width) + "x" + str(height) )
+
+    ctkimage = CTkImage(Image.open(image_file), size = (25, 25))
+
+    return image_label, ctkimage
+
+def extract_video_info(video_file):
+    cap          = cv2.VideoCapture(video_file)
+    width        = round(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height       = round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    num_frames   = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_rate   = cap.get(cv2.CAP_PROP_FPS)
+    duration     = num_frames/frame_rate
+    minutes      = int(duration/60)
+    seconds      = duration % 60
+    video_name   = str(video_file.split("/")[-1])
+    
+    while(cap.isOpened()):
+        ret, frame = cap.read()
+        if ret == False: break
+        image_write("temp.jpg", frame)
+        break
+    cap.release()
+
+    video_label = ( "VIDEO" + " | " + video_name + " | " + str(width) + "x" 
+                   + str(height) + " | " + str(minutes) + 'm:' 
+                   + str(round(seconds)) + "s | " + str(num_frames) 
+                   + "frames | " + str(round(frame_rate)) + "fps" )
+
+    ctkimage = CTkImage(Image.open("temp.jpg"), size = (25, 25))
+    
+    return video_label, ctkimage
+
+def check_if_file_is_video(file):
+    for video_extension in supported_video_extensions:
+        if video_extension in file:
+            return True
+
+def check_supported_selected_files(uploaded_file_list):
+    supported_files_list = []
+
+    for file in uploaded_file_list:
+        for supported_extension in supported_file_extensions:
+            if supported_extension in file:
+                supported_files_list.append(file)
+
+    return supported_files_list
+
+def open_files_action():
+    info_message.set("Selecting files...")
+
+    uploaded_files_list = list(filedialog.askopenfilenames())
+    uploaded_files_counter = len(uploaded_files_list)
+
+    supported_files_list = check_supported_selected_files(uploaded_files_list)
+    supported_files_counter = len(supported_files_list)
+    
+    print("> Uploaded files: " + str(uploaded_files_counter) + " => Supported files: " + str(supported_files_counter))
+
+    if supported_files_counter > 0:
+        place_up_background()
+
+        global scrollable_frame_file_list
+        scrollable_frame_file_list = ScrollableImagesTextFrame(master = window, 
+                                                               fg_color = transparent_color, 
+                                                               bg_color = transparent_color)
+        scrollable_frame_file_list.place(relx = 0.5, 
+                                         rely = 0.25, 
+                                         relwidth = 1.0, 
+                                         relheight = 0.475, 
+                                         anchor = tkinter.CENTER)
+        
+        scrollable_frame_file_list.add_clean_button()
+
+        for index in range(supported_files_counter):
+            actual_file = supported_files_list[index]
+            if check_if_file_is_video(actual_file):
+                # video
+                video_label, ctkimage = extract_video_info(actual_file)
+                scrollable_frame_file_list.add_item(text_to_show = video_label, 
+                                                    image = ctkimage,
+                                                    file_element = actual_file)
+            else:
+                # image
+                image_label, ctkimage = extract_image_info(actual_file)
+                scrollable_frame_file_list.add_item(text_to_show = image_label, 
+                                                    image = ctkimage,
+                                                    file_element = actual_file)
+    
+        info_message.set("Ready")
+    else: 
+        info_message.set("Not supported files :(")
+
+
+# GUI select from menus functions ---------------------------
+
+def select_AI_from_menu(new_value: str):
+    global selected_AI_model    
+    selected_AI_model = new_value
+
+def select_AI_device_from_menu(new_value: str):
+    global selected_AI_device    
+
+    for device in device_list:
+        if device.name == new_value:
+            selected_AI_device = device.index
+
+def select_output_file_extension_from_menu(new_value: str):
+    global selected_output_file_extension    
+    selected_output_file_extension = new_value
+
+
+
+# GUI info functions ---------------------------
 
 def open_info_ai_model():
     info = """This widget allows you to choose between different AIs: \n
@@ -905,35 +1129,26 @@ def open_info_ai_model():
 - RealSR_JPEG | good upscale quality | slow | enlarge by 4. \n
 Try them all and find the one that meets your needs :)""" 
     
-    info_window = tk.Tk()
-    info_window.withdraw()
-    tk.messagebox.showinfo(title   = 'AI model', message = info )
-    info_window.destroy()
+    tk.messagebox.showinfo(title = 'AI model', message = info)
     
-def open_info_backend():
+def open_info_device():
     info = """This widget allows you to choose the gpu on which to run your chosen AI. \n 
 Keep in mind that the more powerful your gpu is, 
 the faster the upscale will be. \n
 If the list is empty it means the app couldn't find 
 a compatible gpu, try updating your video card driver :)"""
 
-    info_window = tk.Tk()
-    info_window.withdraw()
     tk.messagebox.showinfo(title = 'AI device', message = info)
-    info_window.destroy()
 
 def open_info_file_extension():
     info = """This widget allows you to choose the extension of the file generated by AI.\n
 - png | very good quality | supports transparent images
 - jpg | good quality | very fast
-- jpg2 (jpg2000) | very good quality | not very popular
+- jp2 (jpg2000) | very good quality | not very popular
 - bmp | highest quality | slow
 - tiff | highest quality | very slow"""
 
-    info_window = tk.Tk()
-    info_window.withdraw()
     tk.messagebox.showinfo(title = 'AI output extension', message = info)
-    info_window.destroy()
 
 def open_info_resize():
     info = """This widget allows you to choose the percentage of the resolution input to the AI.\n
@@ -942,10 +1157,7 @@ For example for a 100x100px image:
 - Input resolution 100% => input to AI 100x100px
 - Input resolution 200% => input to AI 200x200px """
 
-    info_window = tk.Tk()
-    info_window.withdraw()
-    tk.messagebox.showinfo(title   = 'Input resolution %', message = info)
-    info_window.destroy()
+    tk.messagebox.showinfo(title = 'Input resolution %', message = info)
 
 def open_info_vram_limiter():
     info = """This widget allows you to set a limit on the gpu's VRAM memory usage. \n
@@ -956,10 +1168,7 @@ def open_info_vram_limiter():
   that do not have dedicated memory, you must select 2 \n
 Selecting a value greater than the actual amount of gpu VRAM may result in upscale failure. """
 
-    info_window = tk.Tk()
-    info_window.withdraw()
-    tk.messagebox.showinfo(title   = 'VRAM limiter GB', message = info)
-    info_window.destroy()
+    tk.messagebox.showinfo(title = 'VRAM limiter GB', message = info)
     
 def open_info_cpu():
     info = """This widget allows you to choose how much cpu to devote to the app.\n
@@ -968,989 +1177,400 @@ Where possible the app will use the number of processors you select, for example
 - Resizing frames from videos
 - Recostructing final video"""
 
-    info_window = tk.Tk()
-    info_window.withdraw()
-    tk.messagebox.showinfo(title   = 'Cpu number', message = info)
-    info_window.destroy() 
+    tk.messagebox.showinfo(title = 'Cpu number', message = info)
 
-def user_input_checks():
-    global tiles_resolution
-    global resize_factor
-    global cpu_number
 
-    is_ready = True
 
-    if compatible_gpus == 0:
-        tk.messagebox.showerror(title   = 'Error', 
-                                message = 'Sorry, your gpu is not compatible with QualityScaler :(')
-        is_ready = False
-
-    # resize factor
-    try: resize_factor = int(float(str(selected_resize_factor.get())))
-    except:
-        info_string.set("Resize % must be a numeric value")
-        is_ready = False
-
-    #if resize_factor > 0 and resize_factor <= 100: resize_factor = resize_factor/100
-    if resize_factor > 0: resize_factor = resize_factor/100
-    else:
-        info_string.set("Resize % must be a value > 0")
-        is_ready = False
+# GUI place functions ---------------------------
+        
+def place_up_background():
+    up_background = CTkLabel(master  = window, 
+                            text    = "",
+                            fg_color = transparent_color,
+                            font     = bold12,
+                            anchor   = "w")
     
-    # vram limiter
-    try: tiles_resolution = 100 * int(float(str(selected_VRAM_limiter.get())))
-    except:
-        info_string.set("VRAM/RAM value must be a numeric value")
-        is_ready = False 
+    up_background.place(relx = 0.5, 
+                        rely = 0.0, 
+                        relwidth = 1.0,  
+                        relheight = 1.0,  
+                        anchor = tkinter.CENTER)
 
-    if tiles_resolution > 0: tiles_resolution = 100 * (vram_multiplier * int(float(str(selected_VRAM_limiter.get()))))    
-    else:
-        info_string.set("VRAM/RAM value must be > 0")
-        is_ready = False
-
-    # cpu number
-    try: cpu_number = int(float(str(selected_cpu_number.get())))
-    except:
-        info_string.set("Cpu number must be a numeric value")
-        is_ready = False 
-
-    if cpu_number <= 0:         
-        info_string.set("Cpu number value must be > 0")
-        is_ready = False
-    elif cpu_number == 1: cpu_number = 1
-    else: cpu_number = int(cpu_number)
-
-    return is_ready
-
-def upscale_button_command():
-    global image_path
-    global multiple_images
-    global process_upscale
-    global thread_wait
-    global video_frames_list
-    global video_file
-    global frames_upscaled_list
-    global input_video_path
-    global device
-    global tiles_resolution
-    global target_file_extension
-    global cpu_number
-    global half_precision
-
-    remove_file(app_name + ".log")
-
-    info_string.set("Loading...")
-    write_in_log_file("Loading...")
-
-    is_ready = user_input_checks()
-
-    if is_ready:
-        if video_file:
-            place_stop_button()
-
-            process_upscale = multiprocessing.Process(target = process_upscale_video_frames,
-                                                    args   = (input_video_path, 
-                                                                AI_model, 
-                                                                resize_factor, 
-                                                                device,
-                                                                tiles_resolution,
-                                                                target_file_extension,
-                                                                cpu_number,
-                                                                half_precision))
-            process_upscale.start()
-
-            thread_wait = threading.Thread(target = thread_check_steps_for_videos,
-                                        args   = (1, 2), 
-                                        daemon = True)
-            thread_wait.start()
-
-        elif multiple_images or single_image:
-            place_stop_button()
-            
-            process_upscale = multiprocessing.Process(target = process_upscale_multiple_images,
-                                                        args   = (multi_img_list, 
-                                                                AI_model, 
-                                                                resize_factor, 
-                                                                device,
-                                                                tiles_resolution,
-                                                                target_file_extension,
-                                                                half_precision))
-            process_upscale.start()
-
-            thread_wait = threading.Thread(target = thread_check_steps_for_images,
-                                            args   = (1, 2), daemon = True)
-            thread_wait.start()
-
-        elif "none" in image_path:
-            info_string.set("No file selected")
-  
-def stop_button_command():
-    global process_upscale
-    process_upscale.terminate()
-    process_upscale.join()
+def place_app_name():
+    app_name_label = CTkLabel(master     = window, 
+                              text       = app_name + " " + version,
+                              text_color = "#DA70D6",
+                              font       = bold20,
+                              anchor     = "w")
     
-    # this will stop thread that check upscaling steps
-    write_in_log_file("Stopped upscaling") 
-
-def drop_event_to_image_list(event):
-    image_list = str(event.data).replace("{", "").replace("}", "")
-
-    for file_type in supported_file_list: image_list = image_list.replace(file_type, file_type+"\n")
-
-    image_list = image_list.split("\n")
-    image_list.pop() 
-
-    return image_list
-
-def file_drop_event(event):
-    global image_path
-    global multiple_images
-    global multi_img_list
-    global video_file
-    global single_image
-    global input_video_path
-
-    supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number = count_files_dropped(event)
-    all_supported, single_image, multiple_images, video_file, more_than_one_video = check_compatibility(supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number)
-
-    if video_file:
-        # video section
-        if not all_supported:
-            info_string.set("Some files are not supported")
-            return
-        elif all_supported:
-            if multiple_images:
-                info_string.set("Only one video supported")
-                return
-            elif not multiple_images:
-                if not more_than_one_video:
-                    input_video_path = str(event.data).replace("{", "").replace("}", "")
-                    show_video_in_GUI(input_video_path)
-
-                    # reset variable
-                    image_path = "none"
-                    multi_img_list = []
-
-                elif more_than_one_video:
-                    info_string.set("Only one video supported")
-                    return
-    else:
-        # image section
-        if not all_supported:
-            if multiple_images:
-                info_string.set("Some files are not supported")
-                return
-            elif single_image:
-                info_string.set("This file is not supported")
-                return
-        elif all_supported:
-            if multiple_images:
-                image_list_dropped = drop_event_to_image_list(event)
-                show_list_images_in_GUI(image_list_dropped)
-                multi_img_list = image_list_dropped
-                # reset variable
-                image_path = "none"
-                video_frames_list = []
-
-            elif single_image:
-                image_list_dropped = drop_event_to_image_list(event)
-                show_image_in_GUI(image_list_dropped[0])
-                multi_img_list = image_list_dropped
-
-                # reset variable
-                image_path = "none"
-                video_frames_list = []
-
-def check_compatibility(supported_file_dropped_number, not_supported_file_dropped_number, 
-                        supported_video_dropped_number):
-    all_supported  = True
-    single_image    = False
-    multiple_images = False
-    video_file    = False
-    more_than_one_video = False
-
-    if not_supported_file_dropped_number > 0:
-        all_supported = False
-
-    if supported_file_dropped_number + not_supported_file_dropped_number == 1:
-        single_image = True
-    elif supported_file_dropped_number + not_supported_file_dropped_number > 1:
-        multiple_images = True
-
-    if supported_video_dropped_number == 1:
-        video_file = True
-        more_than_one_video = False
-    elif supported_video_dropped_number > 1:
-        video_file = True
-        more_than_one_video = True
-
-    return all_supported, single_image, multiple_images, video_file, more_than_one_video
-
-def count_files_dropped(event):
-    supported_file_dropped_number = 0
-    not_supported_file_dropped_number = 0
-    supported_video_dropped_number = 0
-
-    # count compatible images files
-    for file_type in supported_file_list:
-        supported_file_dropped_number = supported_file_dropped_number + \
-            str(event.data).count(file_type)
-
-    # count compatible video files
-    for file_type in supported_video_list:
-        supported_video_dropped_number = supported_video_dropped_number + \
-            str(event.data).count(file_type)
-
-    # count not supported files
-    for file_type in not_supported_file_list:
-        not_supported_file_dropped_number = not_supported_file_dropped_number + \
-            str(event.data).count(file_type)
-
-    return supported_file_dropped_number, not_supported_file_dropped_number, supported_video_dropped_number
-
-def clear_input_variables():
-    global image_path
-    global multi_img_list
-    global video_frames_list
-    global single_image
-    global multiple_images
-    global video_file
-
-    # reset variable
-    image_path        = "none"
-    multi_img_list    = []
-    video_frames_list = []
-    single_image       = False
-    multiple_images    = False
-    video_file       = False
-
-def clear_app_background():
-    drag_drop = ttk.Label(root,
-                          ondrop = file_drop_event,
-                          relief = "flat",
-                          background = background_color,
-                          foreground = text_color)
-    drag_drop.place(x = left_bar_width + 50, y=0,
-                    width = drag_drop_width, height = drag_drop_height)
-
-
-def show_video_in_GUI(video_path):
-    clear_app_background()
-    
-    fist_frame   = "temp.jpg"
-    cap          = cv2.VideoCapture(video_path)
-    width        = round(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height       = round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    num_frames   = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frame_rate   = cap.get(cv2.CAP_PROP_FPS)
-    duration     = num_frames/frame_rate
-    minutes      = int(duration/60)
-    seconds      = duration % 60
-    path_as_list = video_path.split("/")
-    video_name   = str(path_as_list[-1])
-    
-    while(cap.isOpened()):
-        ret, frame = cap.read()
-        if ret == False: break
-        image_write(fist_frame, frame)
-        break
-    cap.release()
-
-    resized_image_to_show = adapt_image_to_show(fist_frame)
-
-    global image
-    image = tk.PhotoImage(file = resized_image_to_show)
-    resized_image_to_show_width = round(image_read(resized_image_to_show).shape[1])
-    resized_image_to_show_height = round(image_read(resized_image_to_show).shape[0])
-    image_x_center = 30 + left_bar_width + drag_drop_width/2 - resized_image_to_show_width/2
-    image_y_center = drag_drop_height/2 - resized_image_to_show_height/2
-
-    image_container = ttk.Notebook(root)
-    image_container.place(x = image_x_center - 20, 
-                            y = image_y_center - 20, 
-                            width  = resized_image_to_show_width + 40,
-                            height = resized_image_to_show_height + 40)
-
-    image_ = ttk.Label(root,
-                        text    = "",
-                        image   = image,
-                        ondrop  = file_drop_event,
-                        anchor  = "center",
-                        relief  = "flat",
-                        justify = "center",
-                        background = background_color,
-                        foreground = "#202020")
-    image_.place(x = image_x_center,
-                y = image_y_center,
-                width  = resized_image_to_show_width,
-                height = resized_image_to_show_height)
-
-    image_info_label = ttk.Label(root,
-                                  font       = bold11,
-                                  text       = ( video_name + "\n" + "[" + str(width) + "x" + str(height) + "]" + " | " + str(minutes) + 'm:' + str(round(seconds)) + "s | " + str(num_frames) + "frames | " + str(round(frame_rate)) + "fps" ),
-                                  relief     = "flat",
-                                  justify    = "center",
-                                  background = background_color,
-                                  foreground = "#D3D3D3",
-                                  anchor     = "center")
-
-    image_info_label.place(x = 30 + left_bar_width + drag_drop_width/2 - image_text_width/2,
-                            y = drag_drop_height - 85,
-                            width  = image_text_width,
-                            height = 40)
-
-    clean_button = ttk.Button(root, 
-                            text     = '  CLEAN',
-                            image    = clear_icon,
-                            compound = 'left',
-                            style    = 'Bold.TButton')
-
-    clean_button.place(x = image_x_center - 20,
-                       y = image_y_center - 75,
-                       width  = 175,
-                       height = 40)
-    clean_button["command"] = lambda: place_drag_drop_widget()          
-
-    os.remove(fist_frame)
-              
-def show_list_images_in_GUI(image_list):
-    clear_app_background()
-
-    clean_button = ttk.Button(root, 
-                            text     = '  CLEAN',
-                            image    = clear_icon,
-                            compound = 'left',
-                            style    = 'Bold.TButton')
-
-    clean_button.place(x = left_bar_width + drag_drop_width/2 - 175/2,
-                       y = 125,
-                       width  = 175,
-                       height = 40)
-    clean_button["command"] = lambda: place_drag_drop_widget()
-
-    final_string = "\n"
-    counter_img = 0
-    for elem in image_list:
-        counter_img += 1
-        if counter_img <= 8:
-            img     = image_read(elem.strip())
-            width   = round(img.shape[1])
-            height  = round(img.shape[0])
-            img_name = str(elem.split("/")[-1])
-
-            final_string += (str(counter_img) + ".  " + img_name + " | [" + str(width) + "x" + str(height) + "]" + "\n\n")
-        else:
-            final_string += "and others... \n"
-            break
-
-    list_height = 420
-    list_width  = 750
-
-    images_list_label = ttk.Label(root,
-                            text    = final_string,
-                            ondrop  = file_drop_event,
-                            font    = bold12,
-                            anchor  = "n",
-                            relief  = "flat",
-                            justify = "left",
-                            background = background_color,
-                            foreground = "#D3D3D3",
-                            wraplength = list_width)
-
-    images_list_label.place(x = left_bar_width + drag_drop_width/2 - list_width/2,
-                               y = drag_drop_height/2 - list_height/2 -25,
-                               width  = list_width,
-                               height = list_height)
-
-    images_counter = ttk.Entry(root, 
-                                foreground = text_color,
-                                ondrop     = file_drop_event,
-                                font       = bold12, 
-                                justify    = 'center')
-    images_counter.insert(0, str(len(image_list)) + ' images')
-    images_counter.configure(state='disabled')
-    images_counter.place(x = left_bar_width + drag_drop_width/2 - 175/2,
-                        y  = drag_drop_height/2 + 225,
-                        width  = 200,
-                        height = 42)
-
-def show_image_in_GUI(original_image):
-    clear_app_background()
-    original_image = original_image.replace('{', '').replace('}', '')
-    resized_image_to_show = adapt_image_to_show(original_image)
-
-    global image
-    image = tk.PhotoImage(file = resized_image_to_show)
-    resized_image_to_show_width = round(image_read(resized_image_to_show).shape[1])
-    resized_image_to_show_height = round(image_read(resized_image_to_show).shape[0])
-    image_x_center = 30 + left_bar_width + drag_drop_width/2 - resized_image_to_show_width/2
-    image_y_center = drag_drop_height/2 - resized_image_to_show_height/2
-
-    image_container = ttk.Notebook(root)
-    image_container.place(x = image_x_center - 20, 
-                            y = image_y_center - 20, 
-                            width  = resized_image_to_show_width + 40,
-                            height = resized_image_to_show_height + 40)
-
-    image_ = ttk.Label(root,
-                        text    = "",
-                        image   = image,
-                        ondrop  = file_drop_event,
-                        anchor  = "center",
-                        relief  = "flat",
-                        justify = "center",
-                        background = background_color,
-                        foreground = "#202020")
-    image_.place(x = image_x_center,
-                      y = image_y_center,
-                      width  = resized_image_to_show_width,
-                      height = resized_image_to_show_height)
-
-    img_name     = str(original_image.split("/")[-1])
-    width        = round(image_read(original_image).shape[1])
-    height       = round(image_read(original_image).shape[0])
-
-    image_info_label = ttk.Label(root,
-                                  font       = bold11,
-                                  text       = (img_name + " | [" + str(width) + "x" + str(height) + "]"),
-                                  relief     = "flat",
-                                  justify    = "center",
-                                  background = background_color,
-                                  foreground = "#D3D3D3",
-                                  anchor     = "center")
-
-    image_info_label.place(x = 30 + left_bar_width + drag_drop_width/2 - image_text_width/2,
-                            y = drag_drop_height - 70,
-                            width  = image_text_width,
-                            height = 40)
-
-    clean_button = ttk.Button(root, 
-                            text     = '  CLEAN',
-                            image    = clear_icon,
-                            compound = 'left',
-                            style    = 'Bold.TButton')
-
-    clean_button.place(x = image_x_center - 20,
-                       y = image_y_center - 75,
-                       width  = 175,
-                       height = 40)
-    clean_button["command"] = lambda: place_drag_drop_widget()
-
-def place_drag_drop_widget():
-    clear_input_variables()
-
-    clear_app_background()
-
-    text_drop = (" DROP FILES HERE \n\n"
-                + " ⥥ \n\n"
-                + " IMAGE   - jpg png tif bmp webp \n\n"
-                + " IMAGE LIST   - jpg png tif bmp webp \n\n"
-                + " VIDEO   - mp4 webm mkv flv gif avi mov mpg qt 3gp \n\n")
-
-    drag_drop = ttk.Notebook(root, ondrop  = file_drop_event)
-
-    x_center = 30 + left_bar_width + drag_drop_width/2 - (drag_drop_width * 0.75)/2
-    y_center = drag_drop_height/2 - (drag_drop_height * 0.75)/2
-
-    drag_drop.place(x = x_center, 
-                    y = y_center, 
-                    width  = drag_drop_width * 0.75, 
-                    height = drag_drop_height * 0.75)
-
-    drag_drop_text = ttk.Label(root,
-                            text    = text_drop,
-                            ondrop  = file_drop_event,
-                            font    = bold12,
-                            anchor  = "center",
-                            relief  = 'flat',
-                            justify = "center",
-                            foreground = text_color)
-
-    x_center = 30 + left_bar_width + drag_drop_width/2 - (drag_drop_width * 0.5)/2
-    y_center = drag_drop_height/2 - (drag_drop_height * 0.5)/2
-    
-    drag_drop_text.place(x = x_center, 
-                         y = y_center, 
-                         width  = drag_drop_width * 0.50, 
-                         height = drag_drop_height * 0.50)
-
-def combobox_AI_selection(event):
-    global AI_model
-    selected = str(selected_AI.get())
-    AI_model = selected
-    combo_box_AI.set('')
-    combo_box_AI.set(selected)
-
-def combobox_backend_selection(event):
-    global device
-
-    selected_option = str(selected_backend.get())
-    combo_box_backend.set('')
-    combo_box_backend.set(selected_option)
-
-    for obj in device_list: 
-        if obj.name == selected_option: 
-            device = obj.index
-
-def combobox_extension_selection(event):
-    global target_file_extension
-    selected = str(selected_file_extension.get()).strip()
-    target_file_extension = selected
-    combobox_file_extension.set('')
-    combobox_file_extension.set(selected)
-
-
-def place_AI_combobox():
-    Ai_container = ttk.Notebook(root)
-    Ai_container.place(x = 45 + left_bar_width/2 - 370/2, 
-                        y = button1_y - 17, 
-                        width  = 370,
-                        height = 75)
-
-    Ai_label = ttk.Label(root, 
-                    font       = bold11, 
-                    foreground = text_color, 
-                    justify    = 'left', 
-                    relief     = 'flat', 
-                    text       = " AI model ")
-    Ai_label.place(x = 90,
-                    y = button1_y - 2,
-                    width  = 130,
-                    height = 42)
-
-    global combo_box_AI
-    combo_box_AI = ttk.Combobox(root, 
-                        textvariable = selected_AI, 
-                        justify      = 'center',
-                        foreground   = text_color,
-                        values       = models_array,
-                        state        = 'readonly',
-                        takefocus    = False,
-                        font         = bold10)
-    combo_box_AI.place(x = 10 + left_bar_width/2, 
-                        y = button1_y, 
-                        width  = 200, 
-                        height = 40)
-    combo_box_AI.bind('<<ComboboxSelected>>', combobox_AI_selection)
-    combo_box_AI.set(AI_model)
-
-    Ai_combobox_info_button = ttk.Button(root,
-                               padding = '0 0 0 0',
-                               text    = "i",
-                               compound = 'left',
-                               style    = 'Bold.TButton')
-    Ai_combobox_info_button.place(x = 50,
-                                y = button1_y + 6,
-                                width  = 30,
-                                height = 30)
-    Ai_combobox_info_button["command"] = lambda: open_info_ai_model()
-
-def place_backend_combobox():
-    backend_container = ttk.Notebook(root)
-    backend_container.place(x = 45 + left_bar_width/2 - 370/2, 
-                            y = button2_y - 17, 
-                            width  = 370,
-                            height = 75)
-
-    backend_label = ttk.Label(root, 
-                            font       = bold11, 
-                            foreground = text_color, 
-                            justify    = 'left', 
-                            relief     = 'flat', 
-                            text       = " AI device ")
-    backend_label.place(x = 90,
-                        y = button2_y - 2,
-                        width  = 155,
-                        height = 42)
-
-    global combo_box_backend
-    combo_box_backend = ttk.Combobox(root, 
-                            textvariable = selected_backend, 
-                            justify      = 'center',
-                            foreground   = text_color,
-                            values       = device_list_names,
-                            state        = 'readonly',
-                            takefocus    = False,
-                            font         = bold10)
-    combo_box_backend.place(x = 10 + left_bar_width/2, 
-                            y = button2_y, 
-                            width  = 200, 
-                            height = 40)
-    combo_box_backend.bind('<<ComboboxSelected>>', combobox_backend_selection)
-    combo_box_backend.set(device_list_names[0])
-
-    backend_combobox_info_button = ttk.Button(root,
-                               padding = '0 0 0 0',
-                               text    = "i",
-                               compound = 'left',
-                               style    = 'Bold.TButton')
-    backend_combobox_info_button.place(x = 50,
-                                    y = button2_y + 6,
-                                    width  = 30,
-                                    height = 30)
-    backend_combobox_info_button["command"] = lambda: open_info_backend()
-
-def place_file_extension_combobox():
-    file_extension_container = ttk.Notebook(root)
-    file_extension_container.place(x = 45 + left_bar_width/2 - 370/2, 
-                        y = button3_y - 17, 
-                        width  = 370,
-                        height = 75)
-
-    file_extension_label = ttk.Label(root, 
-                        font       = bold11, 
-                        foreground = text_color, 
-                        justify    = 'left', 
-                        relief     = 'flat', 
-                        text       = " AI output extension ")
-    file_extension_label.place(x = 90,
-                            y = button3_y - 2,
-                            width  = 155,
-                            height = 42)
-
-    global combobox_file_extension
-    combobox_file_extension = ttk.Combobox(root, 
-                        textvariable = selected_file_extension, 
-                        justify      = 'center',
-                        foreground   = text_color,
-                        values       = file_extension_list,
-                        state        = 'readonly',
-                        takefocus    = False,
-                        font         = bold11)
-    combobox_file_extension.place(x = 65 + left_bar_width/2, 
-                        y = button3_y, 
-                        width  = 145, 
-                        height = 40)
-    combobox_file_extension.bind('<<ComboboxSelected>>', combobox_extension_selection)
-    combobox_file_extension.set(target_file_extension)
-
-    file_extension_combobox_info_button = ttk.Button(root,
-                               padding = '0 0 0 0',
-                               text    = "i",
-                               compound = 'left',
-                               style    = 'Bold.TButton')
-    file_extension_combobox_info_button.place(x = 50,
-                                    y = button3_y + 6,
-                                    width  = 30,
-                                    height = 30)
-    file_extension_combobox_info_button["command"] = lambda: open_info_file_extension()
-
-
-def place_resize_factor_spinbox():
-    resize_factor_container = ttk.Notebook(root)
-    resize_factor_container.place(x = 45 + left_bar_width/2 - 370/2, 
-                               y = button4_y - 17, 
-                               width  = 370,
-                               height = 75)
-
-    global spinbox_resize_factor
-    spinbox_resize_factor = ttk.Spinbox(root,  
-                                        from_        = 1, 
-                                        to           = 100, 
-                                        increment    = 1,
-                                        textvariable = selected_resize_factor, 
-                                        justify      = 'center',
-                                        foreground   = text_color,
-                                        takefocus    = False,
-                                        font         = bold12)
-    spinbox_resize_factor.place(x = 65 + left_bar_width/2, 
-                                y = button4_y, 
-                                width  = 145, 
-                                height = 40)
-    spinbox_resize_factor.insert(0, '70')
-
-    resize_factor_label = ttk.Label(root, 
-                                    font       = bold11, 
-                                    foreground = text_color, 
-                                    justify    = 'left', 
-                                    relief     = 'flat', 
-                                    text       = " Input resolution | % ")
-    resize_factor_label.place(x = 90,
-                            y = button4_y - 2,
-                            width  = 155,
-                            height = 42)
-    
-    resize_spinbox_info_button = ttk.Button(root,
-                               padding = '0 0 0 0',
-                               text    = "i",
-                               compound = 'left',
-                               style    = 'Bold.TButton')
-    resize_spinbox_info_button.place(x = 50,
-                                    y = button4_y + 6,
-                                    width  = 30,
-                                    height = 30)
-    resize_spinbox_info_button["command"] = lambda: open_info_resize()
-
-def place_VRAM_spinbox():
-    vram_container = ttk.Notebook(root)
-    vram_container.place(x = 45 + left_bar_width/2 - 370/2, 
-                        y = button5_y - 17, 
-                        width  = 370,
-                        height = 75)
-
-    global spinbox_VRAM
-    spinbox_VRAM = ttk.Spinbox(root,  
-                                from_     = 1, 
-                                to        = 100, 
-                                increment = 1,
-                                textvariable = selected_VRAM_limiter, 
-                                justify      = 'center',
-                                foreground   = text_color,
-                                takefocus    = False,
-                                font         = bold12)
-    spinbox_VRAM.place(x = 65 + left_bar_width/2, 
-                        y = button5_y, 
-                        width  = 145, 
-                        height = 40)
-    spinbox_VRAM.insert(0, str(default_vram_limiter))
-
-    vram_label = ttk.Label(root, 
-                            font       = bold11, 
-                            foreground = text_color, 
-                            justify    = 'left', 
-                            relief     = 'flat', 
-                            text       = " Vram limiter | GB ")
-    vram_label.place(x = 90,
-                    y = button5_y - 2,
-                    width  = 155,
-                    height = 42)
-    
-    vram_spinbox_info_button = ttk.Button(root,
-                               padding = '0 0 0 0',
-                               text    = "i",
-                               compound = 'left',
-                               style    = 'Bold.TButton')
-    vram_spinbox_info_button.place(x = 50,
-                                    y = button5_y + 6,
-                                    width  = 30,
-                                    height = 30)
-    vram_spinbox_info_button["command"] = lambda: open_info_vram_limiter()
-
-def place_cpu_number_spinbox():
-    cpu_number_container = ttk.Notebook(root)
-    cpu_number_container.place(x = 45 + left_bar_width/2 - 370/2, 
-                        y = button6_y - 17, 
-                        width  = 370,
-                        height = 75)
-
-    global spinbox_cpus
-    spinbox_cpus = ttk.Spinbox(root,  
-                                from_     = 1, 
-                                to        = 100, 
-                                increment = 1,
-                                textvariable = selected_cpu_number, 
-                                justify      = 'center',
-                                foreground   = text_color,
-                                takefocus    = False,
-                                font         = bold12)
-    spinbox_cpus.place(x = 65 + left_bar_width/2, 
-                        y = button6_y, 
-                        width  = 145, 
-                        height = 40)
-    spinbox_cpus.insert(0, str(cpu_number))
-
-    cpus_label = ttk.Label(root, 
-                            font       = bold11, 
-                            foreground = text_color, 
-                            justify    = 'left', 
-                            relief     = 'flat', 
-                            text       = " Cpu number ")
-    cpus_label.place(x = 90,
-                    y = button6_y - 2,
-                    width  = 155,
-                    height = 42)
-    
-    cpu_spinbox_info_button = ttk.Button(root,
-                               padding = '0 0 0 0',
-                               text    = "i",
-                               compound = 'left',
-                               style    = 'Bold.TButton')
-    cpu_spinbox_info_button.place(x = 50,
-                                    y = button6_y + 6,
-                                    width  = 30,
-                                    height = 30)
-    cpu_spinbox_info_button["command"] = lambda: open_info_cpu()
-
-
-def place_app_title():
-    Title = ttk.Label(root, 
-                      font       = bold21,
-                      foreground = "#DA70D6", 
-                      background = background_color,
-                      anchor     = 'w', 
-                      text       = app_name)
-    Title.place(x = 75,
-                y = 40,
-                width  = 300,
-                height = 55)
-
-
-    version_button = ttk.Button(root,
-                               image = logo_itch,
-                               padding = '0 0 0 0',
-                               text    = " " + version,
-                               compound = 'left',
-                               style    = 'Bold.TButton')
-    version_button.place(x = (left_bar_width + 45) - (125 + 30),
-                        y = 30,
-                        width  = 125,
-                        height = 35)
-    version_button["command"] = lambda: openitch()
-
-    ft = tkFont.Font(family = default_font)
-    Butt_Style = ttk.Style()
-    Butt_Style.configure("Bold.TButton", font = ft)
-
-    github_button = ttk.Button(root,
-                               image = logo_git,
-                               padding = '0 0 0 0',
-                               text    = ' Github',
-                               compound = 'left',
-                               style    = 'Bold.TButton')
-    github_button.place(x = (left_bar_width + 45) - (125 + 30),
-                        y = 75,
-                        width  = 125,
-                        height = 35)
-    github_button["command"] = lambda: opengithub()
-
-def place_message_box():
-    message_label = ttk.Label(root,
+    app_name_label.place(relx = 0.5, rely = 0.56, anchor = tkinter.CENTER)
+
+def place_itch_button(): 
+    itch_button = CTkButton(master     = window, 
+                            width      = 30,
+                            height     = 30,
+                            fg_color   = "black",
+                            text       = "", 
                             font       = bold11,
-                            textvar    = info_string,
-                            relief     = "flat",
-                            justify    = "center",
-                            background = background_color,
-                            foreground = "#ffbf00",
-                            anchor     = "center")
-    message_label.place(x = 45 + left_bar_width/2 - left_bar_width/2,
-                        y = window_height - 120,
-                        width  = left_bar_width,
-                        height = 30)
+                            image      = logo_itch,
+                            command    = openitch)
+    itch_button.place(relx = 0.045, rely = 0.55, anchor = tkinter.CENTER)
 
-def place_upscale_button():    
-    button_Style = ttk.Style()
-    button_Style.configure("Bold.TButton",  font = bold11, foreground = text_color)
+def place_github_button():
+    git_button = CTkButton(master      = window, 
+                            width      = 30,
+                            height     = 30,
+                            fg_color   = "black",
+                            text       = "", 
+                            font       = bold11,
+                            image      = logo_git,
+                            command    = opengithub)
+    git_button.place(relx = 0.045, rely = 0.61, anchor = tkinter.CENTER)
 
-    Upscale_button = ttk.Button(root, 
-                                text  = ' UPSCALE',
-                                image = play_icon,
-                                compound = tk.LEFT,
-                                style = "Bold.TButton")
+def place_upscale_button(): 
+    upscale_button = CTkButton(master    = window, 
+                                width      = 140,
+                                height     = 30,
+                                fg_color   = "#282828",
+                                text_color = "#E0E0E0",
+                                text       = "UPSCALE", 
+                                font       = bold11,
+                                image      = play_icon,
+                                command    = upscale_button_function)
+    upscale_button.place(relx = 0.8, rely = option_y_6, anchor = tkinter.CENTER)
+    
+def place_stop_button(): 
+    stop_button = CTkButton(master   = window, 
+                            width      = 140,
+                            height     = 30,
+                            fg_color   = "#282828",
+                            text_color = "#E0E0E0",
+                            text       = "STOP", 
+                            font       = bold11,
+                            image      = stop_icon,
+                            command    = stop_button_command)
+    stop_button.place(relx = 0.8, rely = option_y_6, anchor = tkinter.CENTER)
 
-    Upscale_button.place(x      = 45 + left_bar_width/2 - 275/2,  
-                         y      = left_bar_height - 80,
-                         width  = 280,
-                         height = 47)
-    Upscale_button["command"] = lambda: upscale_button_command()
+def place_AI_menu():
+    AI_menu_label = CTkLabel(master  = window, 
+                            text    = "AI model",
+                            width   = 140,
+                            height  = 30,
+                            font    = bold12,
+                            anchor  = "w")
 
-def place_stop_button():
-    Stop_button = ttk.Button(root, 
-                                text  = '  STOP UPSCALE ',
-                                image = stop_icon,
-                                compound = tk.LEFT,
-                                style    = 'Bold.TButton')
+    AI_menu = CTkOptionMenu(master  = window, 
+                            values  = AI_models_list,
+                            width      = 140,
+                            font       = bold11,
+                            height     = 30,
+                            fg_color   = "#000000",
+                            anchor     = "center",
+                            command    = select_AI_from_menu)
 
-    Stop_button.place(x      = 45 + left_bar_width/2 - 275/2,  
-                      y      = left_bar_height - 80,
-                      width  = 280,
-                      height = 47)
+    AI_menu_info_button = CTkButton(master   = window, 
+                                    width      = 16,
+                                    height     = 16,
+                                    fg_color     = "#ffbf00",
+                                    text_color   = "#000000",
+                                    text       = "info", 
+                                    font       = bold9,
+                                    border_spacing = 0,
+                                    corner_radius  = 25,
+                                    command        = open_info_ai_model)
+    
+    AI_menu_label.place(relx = 0.20, rely = option_y_1 - 0.05, anchor = tkinter.CENTER)
+    AI_menu.place(relx = 0.20, rely = option_y_1, anchor = tkinter.CENTER)
+    AI_menu_info_button.place(relx = 0.235, rely = option_y_1 - 0.05, anchor = tkinter.CENTER)
 
-    Stop_button["command"] = lambda: stop_button_command()
+def place_AI_device_menu():
+    AI_device_menu_label = CTkLabel(master  = window, 
+                                    text    = "AI device",
+                                    width   = 140,
+                                    height  = 30,
+                                    font    = bold12,
+                                    anchor  = "w")
 
-def place_background():
-    background = ttk.Label(root, background = background_color, relief = 'flat')
-    background.place(x = 0, 
-                     y = 0, 
-                     width  = window_width,
-                     height = window_height)
+    AI_device_menu = CTkOptionMenu(master  = window, 
+                                    values   = device_list_names,
+                                    width      = 140,
+                                    font       = bold9,
+                                    height     = 30,
+                                    fg_color   = "#000000",
+                                    anchor     = "center",
+                                    dynamic_resizing = False,
+                                    command    = select_AI_device_from_menu)
+    
+    AI_device_menu_info_button = CTkButton(master   = window, 
+                                            width      = 16,
+                                            height     = 16,
+                                            fg_color     = "#ffbf00",
+                                            text_color   = "#000000",
+                                            text       = "info", 
+                                            font       = bold9,
+                                            border_spacing = 0,
+                                            corner_radius  = 25,
+                                            command        = open_info_device)
+    
+    AI_device_menu_label.place(relx = 0.20, rely = option_y_2 - 0.05, anchor = tkinter.CENTER)
+    AI_device_menu.place(relx = 0.20, rely = option_y_2, anchor = tkinter.CENTER)
+    AI_device_menu_info_button.place(relx = 0.235, rely = option_y_2 - 0.05, anchor = tkinter.CENTER)
 
+def place_file_extension_menu():
+    file_extension_menu_label = CTkLabel(master  = window, 
+                                        text    = "AI output",
+                                        width   = 140,
+                                        height  = 30,
+                                        font    = bold12,
+                                        anchor  = "w")
 
-# ---------------------- /GUI related ----------------------
+    file_extension_menu = CTkOptionMenu(master  = window, 
+                                        values     = file_extension_list,
+                                        width      = 140,
+                                        font       = bold11,
+                                        height     = 30,
+                                        fg_color   = "#000000",
+                                        anchor     = "center",
+                                        command    = select_output_file_extension_from_menu)
+    
+    file_extension_menu_info_button = CTkButton(master   = window, 
+                                                width      = 16,
+                                                height     = 16,
+                                                fg_color     = "#ffbf00",
+                                                text_color   = "#000000",
+                                                text       = "info", 
+                                                font       = bold9,
+                                                border_spacing = 0,
+                                                corner_radius  = 25,
+                                                command        = open_info_file_extension)
 
+    file_extension_menu_label.place(relx = 0.20, rely = option_y_3 - 0.05, anchor = tkinter.CENTER)
+    file_extension_menu.place(relx = 0.20, rely = option_y_3, anchor = tkinter.CENTER)
+    file_extension_menu_info_button.place(relx = 0.235, rely = option_y_3 - 0.05, anchor = tkinter.CENTER)
 
-def apply_windows_dark_bar(window_root):
-    window_root.update()
-    DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-    set_window_attribute          = ctypes.windll.dwmapi.DwmSetWindowAttribute
-    get_parent                    = ctypes.windll.user32.GetParent
-    hwnd                          = get_parent(window_root.winfo_id())
-    rendering_policy              = DWMWA_USE_IMMERSIVE_DARK_MODE
-    value                         = 2
-    value                         = ctypes.c_int(value)
-    set_window_attribute(hwnd, rendering_policy, ctypes.byref(value), ctypes.sizeof(value))    
+def place_resize_factor_textbox():
+    resize_factor_label = CTkLabel(master   = window, 
+                                    text    = "Resolution%",
+                                    width   = 140,
+                                    height  = 30,
+                                    font    = bold12,
+                                    anchor  = "w")
 
-    #Changes the window size
-    window_root.geometry(str(window_root.winfo_width()+1) + "x" + str(window_root.winfo_height()+1))
-    #Returns to original size
-    window_root.geometry(str(window_root.winfo_width()-1) + "x" + str(window_root.winfo_height()-1))
+    resize_factor_textbox = CTkEntry(master    = window, 
+                                    width      = 140,
+                                    font       = bold11,
+                                    height     = 30,
+                                    fg_color   = "#000000",
+                                    textvariable = selected_resize_factor)
+    
+    resize_factor_info_button = CTkButton(master   = window, 
+                                        width      = 16,
+                                        height     = 16,
+                                        fg_color     = "#ffbf00",
+                                        text_color   = "#000000",
+                                        text       = "info", 
+                                        font       = bold9,
+                                        border_spacing = 0,
+                                        corner_radius  = 25,
+                                        command        = open_info_resize)
+    
+    resize_factor_label.place(relx = 0.5, rely = option_y_4 - 0.05, anchor = tkinter.CENTER)
+    resize_factor_textbox.place(relx = 0.5, rely  = option_y_4, anchor = tkinter.CENTER)
+    resize_factor_info_button.place(relx = 0.535, rely = option_y_4 - 0.05, anchor = tkinter.CENTER)
+
+def place_vram_textbox():
+    vram_label = CTkLabel(master  = window, 
+                        text    = "GPU Vram",
+                        width   = 140,
+                        height  = 30,
+                        font    = bold12,
+                        anchor  = "w")
+
+    vram_textbox = CTkEntry(master      = window, 
+                            width      = 140,
+                            font       = bold11,
+                            height     = 30,
+                            fg_color   = "#000000",
+                            textvariable = selected_VRAM_limiter)
+    
+    vram_info_button = CTkButton(master   = window, 
+                                width      = 16,
+                                height     = 16,
+                                fg_color     = "#ffbf00",
+                                text_color   = "#000000",
+                                text       = "info", 
+                                font       = bold9,
+                                border_spacing = 0,
+                                corner_radius  = 25,
+                                command        = open_info_vram_limiter)
+
+    vram_label.place(relx = 0.5, rely = option_y_5 - 0.05, anchor = tkinter.CENTER)
+    vram_textbox.place(relx = 0.5, rely  = option_y_5, anchor = tkinter.CENTER)
+    vram_info_button.place(relx = 0.535, rely = option_y_5 - 0.05, anchor = tkinter.CENTER)
+
+def place_cpu_textbox():
+    cpu_label = CTkLabel(master  = window, 
+                        text    = "CPU",
+                        width   = 140,
+                        height  = 30,
+                        font    = bold12,
+                        anchor  = "w")
+
+    cpu_textbox = CTkEntry(master    = window, 
+                            width      = 140,
+                            font       = bold11,
+                            height     = 30,
+                            fg_color   = "#000000",
+                            textvariable = selected_cpu_number)
+    
+    cpu_info_button = CTkButton(master   = window, 
+                                width      = 16,
+                                height     = 16,
+                                fg_color     = "#ffbf00",
+                                text_color   = "#000000",
+                                text       = "info", 
+                                font       = bold9,
+                                border_spacing = 0,
+                                corner_radius  = 25,
+                                command        = open_info_cpu)
+
+    cpu_label.place(relx = 0.5, rely = option_y_6 - 0.05, anchor = tkinter.CENTER)
+    cpu_textbox.place(relx = 0.5, rely  = option_y_6, anchor = tkinter.CENTER)
+    cpu_info_button.place(relx = 0.535, rely = option_y_6 - 0.05, anchor = tkinter.CENTER)
+
+def place_loadFile_section():
+
+    text_drop = """SUPPORTED FILES
+
+IMAGE - jpg png tif bmp webp
+ VIDEO - mp4 webm mkv flv gif
+         avi mov mpg qt 3gp"""
+
+    input_file_text = CTkLabel(master    = window, 
+                                text     = text_drop,
+                                fg_color = transparent_color,
+                                bg_color = transparent_color,
+                                width   = 300,
+                                height  = 150,
+                                font    = bold12,
+                                anchor  = "center")
+    
+    input_file_button = CTkButton(master = window, 
+                                width    = 140,
+                                height   = 30,
+                                text     = "SELECT FILES", 
+                                font     = bold11,
+                                border_spacing = 0,
+                                command        = open_files_action)
+
+    input_file_text.place(relx = 0.5, rely = 0.22,  anchor = tkinter.CENTER)
+    input_file_button.place(relx = 0.5, rely = 0.4, anchor = tkinter.CENTER)
+
+def place_message_label():
+    message_label = CTkLabel(master  = window, 
+                            textvariable = info_message,
+                            height       = 25,
+                            font         = bold10,
+                            fg_color     = "#ffbf00",
+                            text_color   = "#000000",
+                            anchor       = "center",
+                            corner_radius = 25)
+    message_label.place(relx = 0.8, rely = 0.56, anchor = tkinter.CENTER)
 
 def apply_windows_transparency_effect(window_root):
-    window_root.wm_attributes("-transparent", background_color)
+    window_root.wm_attributes("-transparent", transparent_color)
     hwnd = ctypes.windll.user32.GetParent(window_root.winfo_id())
     ApplyMica(hwnd, MICAMODE.DARK )
 
 
-class App:
-    def __init__(self, root):
-        sv_ttk.use_dark_theme()
-        
-        root.title('')
-        width        = window_width
-        height       = window_height
-        screenwidth  = root.winfo_screenwidth()
-        screenheight = root.winfo_screenheight()
-        alignstr     = '%dx%d+%d+%d' % (width, height, (screenwidth - width) / 2, (screenheight - height) / 2)
-        root.geometry(alignstr)
-        root.resizable(width=False, height=False)
-        root.iconphoto(False, PhotoImage(file = find_by_relative_path("Assets"  + os.sep + "logo.png")))
 
-        if windows_subversion >= 22000: apply_windows_transparency_effect(root) # Windows 11
-        apply_windows_dark_bar(root)
+class App():
+    def __init__(self, window):
+        window.title('')
+        width        = 650
+        height       = 600
+        window.geometry("650x600")
+        window.minsize(width, height)
+        window.iconbitmap(find_by_relative_path("Assets" + os.sep + "logo.ico"))
 
-        place_background()                                  # Background
-        place_app_title()                                   # App title
-        place_AI_combobox()                                 # AI models widget
-        place_resize_factor_spinbox()                       # Upscale factor widget
-        place_VRAM_spinbox()                                # VRAM widget
-        place_backend_combobox()                            # Backend widget
-        place_file_extension_combobox()
-        place_cpu_number_spinbox()
-        place_message_box()                                 # Message box
-        place_upscale_button()                              # Upscale button
-        place_drag_drop_widget()                            # Drag&Drop widget
-        
+        place_up_background()
+        place_app_name()
+        place_itch_button()
+        place_github_button()
+
+        place_AI_menu()
+        place_AI_device_menu()
+        place_file_extension_menu()
+
+        place_resize_factor_textbox()
+        place_vram_textbox()
+        place_cpu_textbox()
+
+        place_message_label()
+        place_upscale_button()
+
+        place_loadFile_section()
+
+        if is_Windows11(): apply_windows_transparency_effect(window)
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
-    root        = tkinterDnD.Tk()
-    info_string = tk.StringVar()
-    selected_AI = tk.StringVar()
+    set_appearance_mode("Dark")
+    set_default_color_theme("dark-blue")
+
+    window = CTk() 
+
+    global selected_file_list
+
+    global selected_AI_model
+    global selected_AI_device 
+    global selected_output_file_extension
+
+    global tiles_resolution
+    global resize_factor
+    global cpu_number
+
+
+    selected_file_list = []
+    selected_AI_model  = AI_models_list[0]
+    selected_output_file_extension = file_extension_list[0]
+    selected_AI_device = 0
+
+    info_message = tk.StringVar()
+    selected_AI  = tk.StringVar()
     selected_resize_factor  = tk.StringVar()
     selected_VRAM_limiter   = tk.StringVar()
     selected_backend        = tk.StringVar()
     selected_file_extension = tk.StringVar()
     selected_cpu_number     = tk.StringVar()
 
-    bold10 = tkFont.Font(family = default_font, size   = round(10 * font_scale), weight = 'bold')
-    bold11 = tkFont.Font(family = default_font, size   = round(11 * font_scale), weight = 'bold')
-    bold12 = tkFont.Font(family = default_font, size   = round(12 * font_scale), weight = 'bold')
-    bold13 = tkFont.Font(family = default_font, size   = round(13 * font_scale), weight = 'bold')
-    bold14 = tkFont.Font(family = default_font, size   = round(14 * font_scale), weight = 'bold')
-    bold15 = tkFont.Font(family = default_font, size   = round(15 * font_scale), weight = 'bold')
-    bold20 = tkFont.Font(family = default_font, size   = round(20 * font_scale), weight = 'bold')
-    bold21 = tkFont.Font(family = default_font, size   = round(21 * font_scale), weight = 'bold')
+    info_message.set("Hi :)")
+
+    selected_resize_factor.set("70")
+    selected_VRAM_limiter.set("8")
+    selected_cpu_number.set("4")
+
+    bold8  = CTkFont(family = "Segoe UI", size = 8, weight = "bold")
+    bold9  = CTkFont(family = "Segoe UI", size = 9, weight = "bold")
+    bold10 = CTkFont(family = "Segoe UI", size = 10, weight = "bold")
+    bold11 = CTkFont(family = "Segoe UI", size = 11, weight = "bold")
+    bold12 = CTkFont(family = "Segoe UI", size = 12, weight = "bold")
+    bold20 = CTkFont(family = "Segoe UI", size = 20, weight = "bold")
+    bold21 = CTkFont(family = "Segoe UI", size = 21, weight = "bold")
+
 
     global stop_icon
     global clear_icon
     global play_icon
     global logo_itch
     global logo_git
-    logo_git      = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "github_logo.png"))
-    logo_itch     = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "itch_logo.png"))
-    stop_icon     = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "stop_icon.png"))
-    play_icon     = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "upscale_icon.png"))
-    clear_icon    = tk.PhotoImage(file = find_by_relative_path("Assets" + os.sep + "clear_icon.png"))
+    logo_git   = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "github_logo.png")), size=(15, 15))
+    logo_itch  = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "itch_logo.png")),  size=(13, 13))
+    stop_icon  = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "stop_icon.png")), size=(15, 15))
+    play_icon  = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "upscale_icon.png")), size=(15, 15))
+    clear_icon = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "clear_icon.png")), size=(15, 15))
 
-    app = App(root)
-    root.update()
-    root.mainloop()
+    app = App(window)
+    window.update()
+    window.mainloop()
