@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://user-images.githubusercontent.com/32263112/233322637-f907a988-8367-42a8-afe0-31e05044208a.PNG"> </a> 
+    <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/8155bdc8-21ef-4d2b-8409-6ab4e37ad00f"> </a> 
 </div>
 
 ## What is QualityScaler?
@@ -67,14 +67,6 @@ External packages are:
     - [x] Upscale multiple videos at once
     - [ ] Python 3.11 (expecting ~30% more performance)
     - [ ] Torch/torch-directml 2.0 (expecting ~20% more performance)
-
-
-## Benchmarks.
-
-<img width="582" alt="dati" src="https://user-images.githubusercontent.com/32263112/233957702-f495d6bb-f4d3-4689-a8f0-77ad69d4e6ec.PNG">
-
-<img width="723" alt="aaaa" src="https://user-images.githubusercontent.com/32263112/233957721-f4bda04a-8cc1-46ae-85fb-51d6d5773c6a.PNG">
-
 
 ## Some Example.
 
