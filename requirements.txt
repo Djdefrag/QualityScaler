@@ -1,5 +1,5 @@
 #AI
-torch-directml
+torch-directml==0.1.13.1.dev230301
 
 #GUI
 customtkinter
