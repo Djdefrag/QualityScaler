@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/8155bdc8-21ef-4d2b-8409-6ab4e37ad00f"> </a> 
+    <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/d84ed9e6-2d47-428a-9107-c538863f4790"> </a> 
 </div>
 
 ## What is QualityScaler?
@@ -39,10 +39,7 @@ External packages are:
 ## Requirements. 🤓
 - Windows 11 / Windows 10
 - RAM >= 8Gb
-- Directx12 compatible GPU:
-    - any AMD >= Radeon HD 7000 series
-    - any Intel HD Integrated >= 4th-gen core
-    - any NVIDIA >=  GTX 600 series
+- Any Directx12 compatible GPU with  >=  4GB VRAM
 
 ## Features.
 - [x] Easy to use GUI
