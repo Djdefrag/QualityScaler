@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/d84ed9e6-2d47-428a-9107-c538863f4790"> </a> 
+    <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/7dc459e7-fdfe-4903-83a3-fbf6380ef8e3"> </a> 
 </div>
 
 ## What is QualityScaler?
@@ -32,7 +32,7 @@ BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
 QualityScaler is completely written in Python, from backend to frontend. 
 External packages are:
 - AI  -> torch / torch-directml
-- GUI -> customtkinter / win32mica
+- GUI -> customtkinter
 - Image/video -> openCV / moviepy
 - Packaging   -> pyinstaller / upx
 
@@ -62,6 +62,7 @@ External packages are:
     - [x] New, completely redesigned graphical interface based on @customtkinter
     - [x] Upscaling images and videos at once (currently it is possible to upscale images or single video)
     - [x] Upscale multiple videos at once
+    - [x] Choose upscaled video extension
     - [ ] Python 3.11 (expecting ~30% more performance)
     - [ ] Torch/torch-directml 2.0 (expecting ~20% more performance)
 
