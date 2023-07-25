@@ -1,9 +1,6 @@
-import ctypes
-import functools
 import itertools
 import multiprocessing
 import os.path
-import platform
 import shutil
 import sys
 import threading
@@ -11,7 +8,6 @@ import time
 import tkinter
 import tkinter as tk
 import webbrowser
-from math import sqrt
 from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
@@ -36,26 +32,59 @@ from customtkinter import (CTk,
 from moviepy.editor import VideoFileClip
 from moviepy.video.io import ImageSequenceClip
 from PIL import Image
-from win32mica import MICAMODE, ApplyMica
+
+
+"""
+NEW
+Completely rewrote the tile management algorithm:
+- cutting an image into tiles is ~60% faster
+- tiles now also support transparent images
+- tiles are no longer saved as files, to save disk space and time
+- now the image/frame upscaled as a result of tiles is interpolated with the original image/frame: this reduces graphical defects while maintaining upscale quality
+
+Added "Video output" widget that allows you to choose the extension of the upscaled video:
+- .mp4, produces well compressed and good quality video
+- .avi, produces very high quality video without compression
+- .webm, produces very compressed and very light video with no audio
+
+GUI
+The app will now tell how many tiles the images are divided into during upscaling
+Removed Mica effect (transparency) due to incompatibilities: often did not allow to select, zoom, and move the application window
+
+IMPROVEMENTS
+By default AI precision is set to "Half precision"
+By default now "Input resolution %" is set to 50%
+Partially rewrote and cleaned up more than 50% of the code
+Updated all dependencies
+"""
+
+
 
 
 app_name  = "QualityScaler"
-version   = "2.2"
+version   = "2.3"
 
 githubme             = "https://github.com/Djdefrag/QualityScaler"
 itchme               = "https://jangystudio.itch.io/qualityscaler"
 telegramme           = "https://linktr.ee/j3ngystudio"
 
-AI_models_list       = [ 'BSRGANx4', 'BSRNetx4', 'RealSR_JPEGx4', 
-                        'RealSR_DPEDx4', 'RRDBx4', 'ESRGANx4', 
-                        'FSSR_JPEGx4', 'FSSR_DPEDx4' ]
+AI_models_list       = [
+                        'BSRGANx4',
+                        'BSRNetx4',
+                        'RealSR_JPEGx4',
+                        'RealSR_DPEDx4', 
+                        'RRDBx4', 
+                        'ESRGANx4', 
+                        'FSSR_JPEGx4',
+                        'FSSR_DPEDx4',
+                        ]
 
-file_extension_list  = [ '.png', '.jpg', '.jp2', '.bmp', '.tiff' ]
+image_extension_list  = [ '.png', '.jpg', '.bmp', '.tiff' ]
+video_extension_list  = [ '.mp4', '.avi', '.webm' ]
+
 device_list_names    = []
 device_list          = []
-vram_multiplier      = 1
-multiplier_num_tiles = 2
-windows_subversion   = int(platform.version().split('.')[2])
+vram_multiplier      = 0.9
 gpus_found           = torch_directml.device_count()
 resize_algorithm     = cv2.INTER_AREA
 
@@ -64,8 +93,167 @@ row1_y           = 0.705
 row2_y           = row1_y + offset_y_options
 row3_y           = row2_y + offset_y_options
 
-app_name_color   = "#DA70D6"
-transparent_color = "#080808"
+app_name_color = "#DA70D6"
+dark_color     = "#080808"
+
+torch.autograd.set_detect_anomaly(False)
+torch.autograd.profiler.profile(False)
+torch.autograd.profiler.emit_nvtx(False)
+if sys.stdout is None: sys.stdout = open(os.devnull, "w")
+if sys.stderr is None: sys.stderr = open(os.devnull, "w")
+
+
+
+# ------------------ AI ------------------
+
+## BSRGAN Architecture
+
+class ResidualDenseBlock_5C(nn.Module):
+    def __init__(self, nf=64, gc=32, bias=True):
+        super(ResidualDenseBlock_5C, self).__init__()
+        self.conv1 = nn.Conv2d(nf, gc, 3, 1, 1, bias=bias)
+        self.conv2 = nn.Conv2d(nf + gc, gc, 3, 1, 1, bias=bias)
+        self.conv3 = nn.Conv2d(nf + 2 * gc, gc, 3, 1, 1, bias=bias)
+        self.conv4 = nn.Conv2d(nf + 3 * gc, gc, 3, 1, 1, bias=bias)
+        self.conv5 = nn.Conv2d(nf + 4 * gc, nf, 3, 1, 1, bias=bias)
+        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                init.kaiming_normal_(m.weight, a=0, mode='fan_in')
+                if m.bias is not None:
+                    m.bias.data.zero_()
+
+    def forward(self, x):
+        x1 = self.lrelu(self.conv1(x))
+        x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
+        x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
+        x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
+        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
+        return x5 * 0.2 + x
+
+class RRDB(nn.Module):
+    def __init__(self, nf, gc=32):
+        super(RRDB, self).__init__()
+        self.RDB1 = ResidualDenseBlock_5C(nf, gc)
+        self.RDB2 = ResidualDenseBlock_5C(nf, gc)
+        self.RDB3 = ResidualDenseBlock_5C(nf, gc)
+
+    def forward(self, x):
+        out = self.RDB1(x)
+        out = self.RDB2(out)
+        out = self.RDB3(out)
+        return out * 0.2 + x
+
+class BSRGAN_Net(nn.Module):
+    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=23, gc=32, sf=4):
+        super(BSRGAN_Net, self).__init__()
+        self.sf = sf
+
+        self.conv_first = nn.Conv2d(in_nc, nf, 3, 1, 1, bias=True)
+        self.RRDB_trunk = nn.Sequential(*[RRDB(nf, gc) for _ in range(nb)])
+        self.trunk_conv = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.upconv1 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        if sf == 4: 
+            self.upconv2 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.HRconv = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1, bias=True)
+        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                init.kaiming_normal_(m.weight, a=0, mode='fan_in')
+                if m.bias is not None:
+                    m.bias.data.zero_()
+
+    def forward(self, x):
+        fea = self.conv_first(x)
+        trunk = self.trunk_conv(self.RRDB_trunk(fea))
+        fea = fea + trunk
+
+        fea = self.lrelu(self.upconv1(F.interpolate(fea, scale_factor=2, mode='nearest')))
+        if self.sf == 4: 
+            fea = self.lrelu(self.upconv2(F.interpolate(fea, scale_factor=2, mode='nearest')))
+        out = self.conv_last(self.lrelu(self.HRconv(fea)))
+
+        return out
+
+def prepare_model(selected_AI_model, backend, half_precision):
+    model_path = find_by_relative_path("AI" + os.sep + selected_AI_model + ".pth")
+
+    model = BSRGAN_Net(in_nc = 3, 
+                        out_nc = 3, 
+                        nf = 64, 
+                        nb = 23, 
+                        gc = 32, 
+                        sf = 4)
+    
+    with torch.no_grad():
+        pretrained_model = torch.load(model_path, map_location = torch.device('cpu'))
+        model.load_state_dict(pretrained_model, strict = True)
+    model.eval()
+
+    if half_precision: model = model.half()
+    model = model.to(backend, non_blocking = True)
+
+    return model
+
+def AI_enhance(model, image, backend, half_precision):
+    image = image.astype(np.float32)
+
+    max_range = 65535 if np.max(image) > 256 else 255
+    image /= max_range
+
+    img_mode = 'RGB'
+    if len(image.shape) == 2:  # gray image
+        img_mode = 'L'
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    elif image.shape[2] == 4:  # RGBA image with alpha channel
+        img_mode = 'RGBA'
+        alpha = image[:, :, 3]
+        image = image[:, :, :3]
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
+
+    image = torch.from_numpy(np.transpose(image, (2, 0, 1))).float()
+    if half_precision:
+        image = image.unsqueeze(0).half().to(backend, non_blocking=True)
+    else:
+        image = image.unsqueeze(0).to(backend, non_blocking=True)
+
+    output = model(image)
+
+    output_img = output.squeeze().float().clamp(0, 1).cpu().numpy()
+    output_img = np.transpose(output_img, (1, 2, 0))
+
+    if img_mode == 'L':
+        output_img = cv2.cvtColor(output_img, cv2.COLOR_RGB2GRAY)
+
+    if img_mode == 'RGBA':
+        alpha = torch.from_numpy(np.transpose(alpha, (2, 0, 1))).float()
+        if half_precision:
+            alpha = alpha.unsqueeze(0).half().to(backend, non_blocking=True)
+        else:
+            alpha = alpha.unsqueeze(0).to(backend, non_blocking=True)
+
+        output_alpha = model(alpha)
+
+        output_alpha = output_alpha.squeeze().float().clamp(0, 1).cpu().numpy()
+        output_alpha = np.transpose(output_alpha, (1, 2, 0))
+        output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_RGB2GRAY)
+
+        output_img = cv2.cvtColor(output_img, cv2.COLOR_RGB2BGRA)
+        output_img[:, :, 3] = output_alpha
+
+    output = (output_img * max_range).round().astype(np.uint16 if max_range == 65535 else np.uint8)
+
+    return output
 
 
 
@@ -134,7 +322,8 @@ for index in range(gpus_found):
     device_list.append(gpu)
     device_list_names.append(gpu.name)
 
-supported_file_extensions = ['.jpg', '.jpeg', '.JPG', '.JPEG',
+supported_file_extensions = [
+                            '.jpg', '.jpeg', '.JPG', '.JPEG',
                             '.png', '.PNG',
                             '.webp', '.WEBP',
                             '.bmp', '.BMP',
@@ -147,9 +336,12 @@ supported_file_extensions = ['.jpg', '.jpeg', '.JPG', '.JPEG',
                             '.m4v', ',M4V',
                             '.avi', '.AVI',
                             '.mov', '.MOV',
-                            '.qt', '.3gp', '.mpg', '.mpeg']
+                            '.qt', '.3gp', 
+                            '.mpg', '.mpeg'
+                            ]
 
-supported_video_extensions  = ['.mp4', '.MP4',
+supported_video_extensions  = [
+                                '.mp4', '.MP4',
                                 '.webm', '.WEBM',
                                 '.mkv', '.MKV',
                                 '.flv', '.FLV',
@@ -157,146 +349,91 @@ supported_video_extensions  = ['.mp4', '.MP4',
                                 '.m4v', ',M4V',
                                 '.avi', '.AVI',
                                 '.mov', '.MOV',
-                                '.qt',
-                                '.3gp', '.mpg', '.mpeg']
-
-torch.autograd.set_detect_anomaly(False)
-torch.autograd.profiler.profile(False)
-torch.autograd.profiler.emit_nvtx(False)
-if sys.stdout is None: sys.stdout = open(os.devnull, "w")
-if sys.stderr is None: sys.stderr = open(os.devnull, "w")
+                                '.qt', '.3gp', 
+                                '.mpg', '.mpeg'
+                            ]
 
 
 
 #  Slice functions -------------------
 
-def split_image(image_path, 
-                rows, cols, 
-                should_cleanup, 
-                output_dir = None):
+def add_alpha_channel(tile):
+    if tile.shape[2] == 3:  # Check if the tile does not have an alpha channel
+        alpha_channel = np.full((tile.shape[0], tile.shape[1], 1), 255, dtype=np.uint8)
+        tile = np.concatenate((tile, alpha_channel), axis=2)
+    return tile
+
+def split_image_into_tiles(image, num_tiles_x, num_tiles_y):
+    img_height, img_width, _ = image.shape
+
+    tile_width = img_width // num_tiles_x
+    tile_height = img_height // num_tiles_y
+
+    tiles = []
+
+    for y in range(num_tiles_y):
+        y_start = y * tile_height
+        y_end = (y + 1) * tile_height
+
+        for x in range(num_tiles_x):
+            x_start = x * tile_width
+            x_end = (x + 1) * tile_width
+
+            tile = image[y_start:y_end, x_start:x_end]
+
+            tiles.append(tile)
+
+    return tiles
+
+def combine_tiles_into_image(tiles, 
+                             image_for_dimensions, 
+                             starting_image, 
+                             num_tiles_x, 
+                             num_tiles_y, 
+                             output_path):
     
-    im = Image.open(image_path)
-    im_width, im_height = im.size
-    row_width  = int(im_width / cols)
-    row_height = int(im_height / rows)
-    name, ext  = os.path.splitext(image_path)
-    name       = os.path.basename(name)
+    # Utilizzo l immagine downscalata per calcolare le giuste dimensioni 
+    original_height, original_width, _ = image_for_dimensions.shape
+    output_width = int(original_width * 4)
+    output_height = int(original_height * 4)
 
-    if output_dir != None:
-        if not os.path.exists(output_dir): os.makedirs(output_dir)
+    # Ridimensiono e aggiungo l'alpha channel all' immagine iniziale
+    # affinché le dimensioni durante l interpolazione siano identiche
+    starting_image = add_alpha_channel(cv2.resize(starting_image, 
+                                        (output_width, output_height), 
+                                        interpolation = cv2.INTER_CUBIC))
+
+    tiled_image = np.zeros((output_height, output_width, 4), dtype = np.uint8)
+
+    for i, tile in enumerate(tiles):
+        tile_height, tile_width, _ = tile.shape
+        row = i // num_tiles_x
+        col = i % num_tiles_x
+        y_start = row * tile_height
+        y_end = y_start + tile_height
+        x_start = col * tile_width
+        x_end = x_start + tile_width
+
+        tiled_image[y_start:y_end, x_start:x_end] = add_alpha_channel(tile)
+
+    tiled_image = cv2.addWeighted(tiled_image, 0.5, starting_image, 0.5, 0)
+
+    image_write(output_path, tiled_image)
+
+def file_need_tiles(image, tiles_resolution):
+    height, width, _ = image.shape
+
+    tile_size = tiles_resolution
+
+    num_tiles_horizontal = (width + tile_size - 1) // tile_size
+    num_tiles_vertical = (height + tile_size - 1) // tile_size
+
+    total_tiles = num_tiles_horizontal * num_tiles_vertical
+
+    if total_tiles <= 1:
+        return False, 0, 0
     else:
-        output_dir = "./"
-
-    n = 0
-    for i in range(0, rows):
-        for j in range(0, cols):
-            box = (j * row_width, i * row_height, j * row_width +
-                   row_width, i * row_height + row_height)
-            outp = im.crop(box)
-            outp_path = name + "_" + str(n) + ext
-            outp_path = os.path.join(output_dir, outp_path)
-            outp.save(outp_path)
-            n += 1
-
-    if should_cleanup: os.remove(image_path)
-
-def reverse_split(paths_to_merge, 
-                  rows, 
-                  cols, 
-                  image_path, 
-                  should_cleanup):
-        
-    images_to_merge = [Image.open(p) for p in paths_to_merge]
-    image1     = images_to_merge[0]
-    new_width  = image1.size[0] * cols
-    new_height = image1.size[1] * rows
-    new_image  = Image.new(image1.mode, (new_width, new_height))
-
-    for i in range(0, rows):
-        for j in range(0, cols):
-            image = images_to_merge[i * cols + j]
-            new_image.paste(image, (j * image.size[0], i * image.size[1]))
-    new_image.save(image_path)
-
-    if should_cleanup:
-        for p in paths_to_merge:
-            os.remove(p)
-
-def get_tiles_paths_after_split(original_image, rows, cols):
-    number_of_tiles = rows * cols
-
-    tiles_paths = []
-    for index in range(number_of_tiles):
-        tile_path      = os.path.splitext(original_image)[0]
-        tile_extension = os.path.splitext(original_image)[1]
-
-        tile_path = tile_path + "_" + str(index) + tile_extension
-        tiles_paths.append(tile_path)
-
-    return tiles_paths
-
-def video_need_tiles(frame, tiles_resolution):
-    img_tmp             = image_read(frame)
-    image_pixels        = (img_tmp.shape[1] * img_tmp.shape[0])
-    tile_pixels         = (tiles_resolution * tiles_resolution)
-
-    n_tiles = image_pixels/tile_pixels
-
-    if n_tiles <= 1:
-        return False, 0
-    else:
-        if (n_tiles % 2) != 0: n_tiles += 1
-        n_tiles = round(sqrt(n_tiles * multiplier_num_tiles))
-
-        return True, n_tiles
-
-def image_need_tiles(image, tiles_resolution):
-    img_tmp             = image_read(image)
-    image_pixels        = (img_tmp.shape[1] * img_tmp.shape[0])
-    tile_pixels         = (tiles_resolution * tiles_resolution)
-
-    n_tiles = image_pixels/tile_pixels
-
-    if n_tiles <= 1: 
-        return False, 0
-    else:
-        if (n_tiles % 2) != 0: n_tiles += 1
-        n_tiles = round(sqrt(n_tiles * multiplier_num_tiles))
-
-        return True, n_tiles
-
-def split_frames_list_in_tiles(frame_list, n_tiles, cpu_number):
-    list_of_tiles_list = []   # list of list of tiles, to rejoin
-    tiles_to_upscale   = []   # list of all tiles to upscale
-    
-    frame_directory_path = os.path.dirname(os.path.abspath(frame_list[0]))
-
-    with ThreadPool(cpu_number) as pool:
-        pool.starmap(split_image, zip(frame_list, 
-                                  itertools.repeat(n_tiles), 
-                                  itertools.repeat(n_tiles), 
-                                  itertools.repeat(False),
-                                  itertools.repeat(frame_directory_path)))
-
-    for frame in frame_list:    
-        tiles_list = get_tiles_paths_after_split(frame, n_tiles, n_tiles)
-        list_of_tiles_list.append(tiles_list)
-        for tile in tiles_list: tiles_to_upscale.append(tile)
-
-    return tiles_to_upscale, list_of_tiles_list
-
-def reverse_split_multiple_frames(list_of_tiles_list, 
-                                  frames_upscaled_list, 
-                                  num_tiles, 
-                                  cpu_number):
-    
-    with ThreadPool(cpu_number) as pool:
-        pool.starmap(reverse_split, zip(list_of_tiles_list, 
-                                    itertools.repeat(num_tiles), 
-                                    itertools.repeat(num_tiles), 
-                                    frames_upscaled_list,
-                                    itertools.repeat(False)))
-
+        return True, num_tiles_horizontal, num_tiles_vertical
 
 
 # Utils functions ------------------------
@@ -307,8 +444,12 @@ def openitch(): webbrowser.open(itchme, new=1)
 
 def opentelegram(): webbrowser.open(telegramme, new=1)
 
-def is_Windows11():
-    if windows_subversion >= 22000: return True
+def image_write(path, image_data):
+    _, file_extension = os.path.splitext(path)
+    cv2.imwrite(path, image_data)
+
+def image_read(image_to_prepare, flags=cv2.IMREAD_UNCHANGED):
+    return cv2.imread(image_to_prepare, flags)
 
 def create_temp_dir(name_dir):
     if os.path.exists(name_dir): shutil.rmtree(name_dir)
@@ -336,29 +477,35 @@ def find_by_relative_path(relative_path):
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
 
-def prepare_output_image_filename(image_path, selected_AI_model, resize_factor, selected_output_file_extension):
-    # remove extension
-    result_path = os.path.splitext(image_path)[0]
+def prepare_output_image_filename(image_path, 
+                                  selected_AI_model, 
+                                  resize_factor, 
+                                  selected_image_extension):
+    
+    # Remove extension
+    result_path, _ = os.path.splitext(image_path)
 
     resize_percentage = str(int(resize_factor * 100)) + "%"
-    to_append = "_"  + selected_AI_model + "_" + resize_percentage + selected_output_file_extension
+    to_append = f"_{selected_AI_model}_{resize_percentage}{selected_image_extension}"
 
-    if "_resized" in result_path: 
-        result_path = result_path.replace("_resized", "") 
-        result_path = result_path + to_append
+    if "_resized" in result_path:
+        result_path = result_path.replace("_resized", to_append)
     else:
-        result_path = result_path + to_append
+        result_path += to_append
 
     return result_path
 
-def prepare_output_video_filename(video_path, selected_AI_model, resize_factor):
-    result_video_path = os.path.splitext(video_path)[0] # remove extension
+def prepare_output_video_filename(video_path, 
+                                  selected_AI_model, 
+                                  resize_factor, 
+                                  selected_video_extension):
+    
+    # Remove original video file extension
+    original_video_path, _ = os.path.splitext(video_path)
 
-    resize_percentage = str(int(resize_factor * 100)) + "%"
-    to_append = "_"  + selected_AI_model + "_" + resize_percentage + ".mp4"
-    result_video_path = result_video_path + to_append
+    to_append = f"_{selected_AI_model}_{int(resize_factor * 100)}%{selected_video_extension}"
 
-    return result_video_path
+    return original_video_path + to_append
 
 def delete_list_of_files(list_to_delete):
     if len(list_to_delete) > 0:
@@ -366,37 +513,35 @@ def delete_list_of_files(list_to_delete):
             if os.path.exists(to_delete):
                 os.remove(to_delete)
 
-def image_write(path, image_data):
-    _, file_extension = os.path.splitext(path)
-    r, buff = cv2.imencode(file_extension, image_data)
-    buff.tofile(path)
+def resize_image(image_path, resize_factor):
+    image = image_read(image_path)
+    old_height, old_width, _ = image.shape
+    new_width = int(old_width * resize_factor)
+    new_height = int(old_height * resize_factor)
 
-def image_read(image_to_prepare, flags = cv2.IMREAD_COLOR):
-    return cv2.imdecode(np.fromfile(image_to_prepare, dtype=np.uint8), flags)
+    resized_image = cv2.resize(image, 
+                               (new_width, new_height), 
+                               interpolation = resize_algorithm)
+    return resized_image       
 
-def resize_image(image_path, resize_factor, selected_output_file_extension):
-    new_image_path = (os.path.splitext(image_path)[0] 
-                      + "_resized" 
-                      + selected_output_file_extension)
-
-    old_image  = image_read(image_path, cv2.IMREAD_UNCHANGED)
-    new_width  = int(old_image.shape[1] * resize_factor)
-    new_height = int(old_image.shape[0] * resize_factor)
-
-    resized_image = cv2.resize(old_image, (new_width, new_height), interpolation = resize_algorithm)    
-    image_write(new_image_path, resized_image)
-    return new_image_path       
-
-def resize_frame(image_path, new_width, new_height, target_file_extension):
+def resize_frame(image_path, 
+                 new_width, 
+                 new_height, 
+                 target_file_extension):
+    
     new_image_path = image_path.replace('.jpg', "" + target_file_extension)
     
-    old_image = cv2.imread(image_path.strip(), cv2.IMREAD_UNCHANGED)
+    old_image = image_read(image_path.strip(), cv2.IMREAD_UNCHANGED)
 
-    resized_image = cv2.resize(old_image, (new_width, new_height), 
-                                interpolation = resize_algorithm)    
+    resized_image = cv2.resize(old_image, (new_width, new_height), interpolation = resize_algorithm) 
+       
     image_write(new_image_path, resized_image)
 
-def resize_frame_list(image_list, resize_factor, target_file_extension, cpu_number):
+def resize_frame_list(image_list, 
+                      resize_factor, 
+                      target_file_extension, 
+                      cpu_number):
+    
     downscaled_images = []
 
     old_image = Image.open(image_list[1])
@@ -453,203 +598,47 @@ def video_reconstruction_by_frames(input_video_path,
                                    frames_upscaled_list, 
                                    selected_AI_model, 
                                    resize_factor, 
-                                   cpu_number):
+                                   cpu_number,
+                                   selected_video_extension):
     
+    # Find original video FPS
     cap          = cv2.VideoCapture(input_video_path)
     frame_rate   = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
 
-    upscaled_video_path = prepare_output_video_filename(input_video_path, selected_AI_model, resize_factor)
+    # Choose the appropriate codec
+    if selected_video_extension == '.mp4':
+        extension = '.mp4'
+        codec = 'libx264'
+    elif selected_video_extension == '.avi':
+        extension = '.avi'
+        codec = 'png'
+    elif selected_video_extension == '.webm':
+        extension = '.webm'
+        codec = 'libvpx'
+
+    upscaled_video_path = prepare_output_video_filename(input_video_path, 
+                                                        selected_AI_model, 
+                                                        resize_factor, 
+                                                        extension)
     audio_file = app_name + "_temp" + os.sep + "audio.mp3"
 
-    clip = ImageSequenceClip.ImageSequenceClip(frames_upscaled_list, 
-                                               fps = frame_rate)
-    if os.path.exists(audio_file):
+    clip = ImageSequenceClip.ImageSequenceClip(frames_upscaled_list, fps = frame_rate)
+    if os.path.exists(audio_file) and extension != '.webm':
         clip.write_videofile(upscaled_video_path,
                             fps     = frame_rate,
                             audio   = audio_file,
+                            codec   = codec,
                             verbose = False,
                             logger  = None,
                             threads = cpu_number)
     else:
         clip.write_videofile(upscaled_video_path,
                              fps     = frame_rate,
+                             codec   = codec,
                              verbose = False,
                              logger  = None,
                              threads = cpu_number)  
-
-
-
-# ------------------ AI ------------------
-
-def initialize_weights(net_l, scale=1):
-    if not isinstance(net_l, list):
-        net_l = [net_l]
-    for net in net_l:
-        for m in net.modules():
-            if isinstance(m, nn.Conv2d):
-                init.kaiming_normal_(m.weight, a=0, mode='fan_in')
-                m.weight.data *= scale  # for residual block
-                if m.bias is not None:
-                    m.bias.data.zero_()
-            elif isinstance(m, nn.Linear):
-                init.kaiming_normal_(m.weight, a=0, mode='fan_in')
-                m.weight.data *= scale
-                if m.bias is not None:
-                    m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm2d):
-                init.constant_(m.weight, 1)
-                init.constant_(m.bias.data, 0.0)
-
-def make_layer(block, n_layers):
-    layers = []
-    for _ in range(n_layers):
-        layers.append(block())
-    return nn.Sequential(*layers)
-
-class ResidualDenseBlock_5C(nn.Module):
-    def __init__(self, nf=64, gc=32, bias=True):
-        super(ResidualDenseBlock_5C, self).__init__()
-        # gc: growth channel, i.e. intermediate channels
-        self.conv1 = nn.Conv2d(nf, gc, 3, 1, 1, bias=bias)
-        self.conv2 = nn.Conv2d(nf + gc, gc, 3, 1, 1, bias=bias)
-        self.conv3 = nn.Conv2d(nf + 2 * gc, gc, 3, 1, 1, bias=bias)
-        self.conv4 = nn.Conv2d(nf + 3 * gc, gc, 3, 1, 1, bias=bias)
-        self.conv5 = nn.Conv2d(nf + 4 * gc, nf, 3, 1, 1, bias=bias)
-        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
-
-        # initialization
-        initialize_weights(
-            [self.conv1, self.conv2, self.conv3, self.conv4, self.conv5], 0.1)
-
-    def forward(self, x):
-        x1 = self.lrelu(self.conv1(x))
-        x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
-        x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
-        x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
-        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
-        return x5 * 0.2 + x
-
-class RRDB(nn.Module):
-    '''Residual in Residual Dense Block'''
-
-    def __init__(self, nf, gc=32):
-        super(RRDB, self).__init__()
-        self.RDB1 = ResidualDenseBlock_5C(nf, gc)
-        self.RDB2 = ResidualDenseBlock_5C(nf, gc)
-        self.RDB3 = ResidualDenseBlock_5C(nf, gc)
-
-    def forward(self, x):
-        out = self.RDB1(x)
-        out = self.RDB2(out)
-        out = self.RDB3(out)
-        return out * 0.2 + x
-
-class BSRGAN_Net(nn.Module):
-
-    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=23, gc=32, sf=4):
-        super(BSRGAN_Net, self).__init__()
-        RRDB_block_f = functools.partial(RRDB, nf=nf, gc=gc)
-        self.sf = sf
-
-        self.conv_first = nn.Conv2d(in_nc, nf, 3, 1, 1, bias=True)
-        self.RRDB_trunk = make_layer(RRDB_block_f, nb)
-        self.trunk_conv = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        # upsampling
-        self.upconv1 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        if self.sf == 4: self.upconv2 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        self.HRconv = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1, bias=True)
-
-        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
-
-    def forward(self, x):
-        fea = self.conv_first(x)
-        trunk = self.trunk_conv(self.RRDB_trunk(fea))
-        fea = fea + trunk
-
-        fea = self.lrelu(self.upconv1(F.interpolate(fea, scale_factor=2, mode='nearest')))
-        if self.sf == 4: fea = self.lrelu(self.upconv2(F.interpolate(fea, scale_factor=2, mode='nearest')))
-        out = self.conv_last(self.lrelu(self.HRconv(fea)))
-
-        return out
-
-def AI_enhance(model, img, backend, half_precision):
-    img = img.astype(np.float32)
-
-    if np.max(img) > 256: max_range = 65535 # 16 bit images
-    else: max_range = 255
-
-    img = img / max_range
-    if len(img.shape) == 2:  # gray image
-        img_mode = 'L'
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    elif img.shape[2] == 4:  # RGBA image with alpha channel
-        img_mode = 'RGBA'
-        alpha = img[:, :, 3]
-        img = img[:, :, 0:3]
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
-    else:
-        img_mode = 'RGB'
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-    # ------------------- process image (without the alpha channel) ------------------- #
-    
-    img = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()
-    if half_precision: img = img.unsqueeze(0).half().to(backend, non_blocking = True)
-    else: img = img.unsqueeze(0).to(backend, non_blocking = True)
-
-    output = model(img)
-    
-    output_img = output.data.squeeze().float().cpu().clamp_(0, 1).numpy()
-    output_img = np.transpose(output_img[[2, 1, 0], :, :], (1, 2, 0))
-
-    if img_mode == 'L':  output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2GRAY)
-
-    # ------------------- process the alpha channel if necessary ------------------- #
-    
-    if img_mode == 'RGBA':
-        alpha = torch.from_numpy(np.transpose(alpha, (2, 0, 1))).float()
-        if half_precision: alpha = alpha.unsqueeze(0).half().to(backend, non_blocking = True)
-        else: alpha = alpha.unsqueeze(0).to(backend, non_blocking = True)
-
-        output_alpha = model(alpha) ## model
-
-        output_alpha = output_alpha.data.squeeze().float().cpu().clamp_(0, 1).numpy()
-        output_alpha = np.transpose(output_alpha[[2, 1, 0], :, :], (1, 2, 0))
-        output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_BGR2GRAY)
-
-        # merge the alpha channel
-        output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2BGRA)
-        output_img[:, :, 3] = output_alpha
-
-    # ------------------------------ return ------------------------------ #
-    if max_range == 65535: output = (output_img * 65535.0).round().astype(np.uint16) # 16-bit image
-    else: output = (output_img * 255.0).round().astype(np.uint8)
-
-    return output
-
-def prepare_model(selected_AI_model, backend, half_precision, upscale_factor):
-    model_path = find_by_relative_path("AI" + os.sep + selected_AI_model + ".pth")
-
-    model = BSRGAN_Net(in_nc = 3, 
-                        out_nc = 3, 
-                        nf = 64, 
-                        nb = 23, 
-                        gc = 32, 
-                        sf = upscale_factor)
-    
-    loadnet = torch.load(model_path, map_location = torch.device('cpu'))
-    model.load_state_dict(loadnet, strict = True)
-    model.eval()
-
-    model.zero_grad(set_to_none = True)
-
-    if half_precision: model = model.half()
-    model = model.to(backend, non_blocking = True)
-
-    return model
 
 
 
@@ -675,18 +664,17 @@ def check_upscale_steps():
             step = read_log_file()
             if "All files completed" in step:
                 info_message.set(step)
-                remove_temp_files()
                 stop_upscale_process()
+                remove_temp_files()
                 stop_thread()
             elif "Error while upscaling" in step:
                 info_message.set("Error while upscaling :(")
                 remove_temp_files()
-                # stop_upscale_process()
                 stop_thread()
             elif "Stopped upscaling" in step:
                 info_message.set("Stopped upscaling")
-                remove_temp_files()
                 stop_upscale_process()
+                remove_temp_files()
                 stop_thread()
             else:
                 info_message.set(step)
@@ -699,7 +687,7 @@ def update_process_status(actual_process_phase):
     write_in_log_file(actual_process_phase) 
 
 def stop_button_command():
-    # this will stop thread that check upscaling steps
+    stop_upscale_process()
     write_in_log_file("Stopped upscaling") 
 
 def upscale_button_command(): 
@@ -707,7 +695,8 @@ def upscale_button_command():
     global selected_AI_model
     global half_precision
     global selected_AI_device 
-    global selected_output_file_extension
+    global selected_image_extension
+    global selected_video_extension
     global tiles_resolution
     global resize_factor
     global cpu_number
@@ -726,14 +715,13 @@ def upscale_button_command():
         print("  Selected AI model: "  + str(selected_AI_model))
         print("  AI half precision: "  + str(half_precision))
         print("  Selected GPU: "       + str(torch_directml.device_name(selected_AI_device)))
-        print("  Selected output file extension: "           + str(selected_output_file_extension))
+        print("  Selected image output extension: "          + str(selected_image_extension))
+        print("  Selected video output extension: "          + str(selected_video_extension))
         print("  Tiles resolution for selected GPU VRAM: "   + str(tiles_resolution) + "x" + str(tiles_resolution) + "px")
         print("  Resize factor: "      + str(int(resize_factor*100)) + "%")
         print("  Cpu number: "         + str(cpu_number))
         print("=================================================")
 
-        if   "x2" in selected_AI_model: upscale_factor = 2
-        elif "x4" in selected_AI_model: upscale_factor = 4 
         backend = torch.device(torch_directml.device(selected_AI_device))
 
         place_stop_button()
@@ -743,230 +731,162 @@ def upscale_button_command():
                                             args   = (selected_file_list,
                                                      selected_AI_model,
                                                      backend, 
-                                                     upscale_factor,
-                                                     selected_output_file_extension,
+                                                     selected_image_extension,
                                                      tiles_resolution,
                                                      resize_factor,
                                                      cpu_number,
-                                                     half_precision))
+                                                     half_precision,
+                                                     selected_video_extension))
         process_upscale_orchestrator.start()
 
-        thread_wait = threading.Thread(target = check_upscale_steps, 
-                                        daemon = True)
+        thread_wait = threading.Thread(target = check_upscale_steps, daemon = True)
         thread_wait.start()
 
-def upscale_image(image_path,
+def upscale_image(image_path, 
                   AI_model, 
-                  selected_AI_model,
-                  upscale_factor,
+                  selected_AI_model, 
                   backend, 
-                  selected_output_file_extension, 
-                  tiles_resolution,
-                  resize_factor,
-                  cpu_number,
+                  selected_image_extension, 
+                  tiles_resolution, 
+                  resize_factor, 
                   half_precision):
     
-    # if image need resize before AI work
-    if resize_factor != 1:
-        image_path = resize_image(image_path, 
-                                   resize_factor, 
-                                   selected_output_file_extension)
-
-    result_path = prepare_output_image_filename(image_path, selected_AI_model, resize_factor, selected_output_file_extension)
-    upscale_image_and_save(image_path, 
-                            AI_model, 
-                            result_path, 
-                            tiles_resolution,
-                            upscale_factor, 
-                            backend, 
-                            half_precision)
+    starting_image = image_read(image_path)
     
-    # if the image was sized before the AI work
-    if resize_factor != 1: remove_file(image_path)
+    if resize_factor != 1:
+        image_to_upscale = resize_image(image_path, resize_factor) 
+    else:
+        image_to_upscale = image_read(image_path)
 
-def upscale_image_and_save(image, 
-                           AI_model, 
-                           result_path, 
-                           tiles_resolution, 
-                           upscale_factor, 
-                           backend, 
-                           half_precision):
+    result_image_path = prepare_output_image_filename(image_path, 
+                                                        selected_AI_model, 
+                                                        resize_factor, 
+                                                        selected_image_extension)  
 
-    need_tiles, n_tiles = image_need_tiles(image, tiles_resolution)
+    need_tiles, num_tiles_x, num_tiles_y = file_need_tiles(image_to_upscale, tiles_resolution)
 
     if need_tiles:
-        split_image(image_path     = image, 
-                    rows           = n_tiles, 
-                    cols           = n_tiles, 
-                    should_cleanup = False, 
-                    output_dir     = os.path.dirname(os.path.abspath(image)))
-
-        tiles_list = get_tiles_paths_after_split(image, n_tiles, n_tiles)
+        update_process_status(f"Tiling image in {num_tiles_x * num_tiles_y}")
+        tiles_list = split_image_into_tiles(image_to_upscale, num_tiles_x, num_tiles_y)
 
         with torch.no_grad():
-            for tile in tiles_list:
-                tile_adapted  = image_read(tile, cv2.IMREAD_UNCHANGED)
-                tile_upscaled = AI_enhance(AI_model, tile_adapted, backend, half_precision)
-                image_write(tile, tile_upscaled)
+            for i, tile in enumerate(tiles_list, 0):
+                update_process_status(f"Upscaling tiles {i}/{len(tiles_list)}")                
+                tile_upscaled = AI_enhance(AI_model, tile, backend, half_precision)
 
-        reverse_split(paths_to_merge = tiles_list, 
-                      rows           = n_tiles, 
-                      cols           = n_tiles, 
-                      image_path     = result_path, 
-                      should_cleanup = False)
+                if tile_upscaled.shape[:2] != (tile.shape[1] * 4, tile.shape[0] * 4):
+                    tile_upscaled = cv2.resize(tile_upscaled, (tile.shape[1] * 4, tile.shape[0] * 4), interpolation = cv2.INTER_CUBIC)
 
-        delete_list_of_files(tiles_list)
+                tiles_list[i] = tile_upscaled
+
+            update_process_status("Reconstructing image by tiles")
+            combine_tiles_into_image(tiles_list, image_to_upscale, starting_image, num_tiles_x, num_tiles_y, result_image_path)
     else:
         with torch.no_grad():
-            img_adapted  = image_read(image, cv2.IMREAD_UNCHANGED)
-            img_upscaled = AI_enhance(AI_model, img_adapted, backend, half_precision)
-            image_write(result_path, img_upscaled)
+            update_process_status("Upscaling image")
+            image_upscaled = AI_enhance(AI_model, image_to_upscale, backend, half_precision)
+            image_write(result_image_path, image_upscaled)
 
-def upscale_video(video_path,
-                 AI_model,
-                 selected_AI_model,
-                 upscale_factor,
-                 backend,
-                 selected_output_file_extension,
-                 tiles_resolution,
-                 resize_factor,
-                 cpu_number,
-                 half_precision):
+def upscale_video(video_path, 
+                  AI_model, 
+                  selected_AI_model, 
+                  backend, 
+                  selected_image_extension, 
+                  tiles_resolution,
+                  resize_factor, 
+                  cpu_number, 
+                  half_precision, 
+                  selected_video_extension):
     
     create_temp_dir(app_name + "_temp")
-    
+
     update_process_status("Extracting video frames")
-    frame_list = extract_frames_from_video(video_path)
-    
+    frame_list_paths = extract_frames_from_video(video_path)
+    starting_frame_list_paths = frame_list_paths
+
     if resize_factor != 1:
         update_process_status("Resizing video frames")
-        frame_list  = resize_frame_list(frame_list, 
-                                        resize_factor, 
-                                        selected_output_file_extension, 
-                                        cpu_number)
+        frame_list_paths = resize_frame_list(frame_list_paths, resize_factor, selected_image_extension, cpu_number)
 
-    upscale_video_and_save(video_path, 
-                           frame_list, 
-                           AI_model,  
-                           tiles_resolution, 
-                           selected_AI_model, 
-                           backend, 
-                           resize_factor, 
-                           selected_output_file_extension, 
-                           half_precision, 
-                           cpu_number)
-
-def upscale_video_and_save(video_path, 
-                           frame_list, 
-                           AI_model,  
-                           tiles_resolution, 
-                           selected_AI_model, 
-                           backend,
-                           resize_factor, 
-                           selected_output_file_extension, 
-                           half_precision, 
-                           cpu_number):
-    
     update_process_status("Upscaling video")
-    frames_upscaled_list = []
-    need_tiles, n_tiles  = video_need_tiles(frame_list[0], tiles_resolution)
-
-    # Prepare upscaled frames file paths
-    for frame in frame_list:
-        result_path = prepare_output_image_filename(frame, selected_AI_model, resize_factor, selected_output_file_extension)
-        frames_upscaled_list.append(result_path) 
+    first_frame = image_read(frame_list_paths[0])
+    frames_upscaled_paths_list = []   
+    need_tiles, num_tiles_x, num_tiles_y = file_need_tiles(first_frame, tiles_resolution)
 
     if need_tiles:
-        update_process_status("Tiling frames")
-        tiles_to_upscale, list_of_tiles_list = split_frames_list_in_tiles(frame_list, n_tiles, cpu_number)
-        how_many_tiles = len(tiles_to_upscale)
-        
-        for index in range(how_many_tiles):
-            upscale_tiles(tiles_to_upscale[index], 
-                          AI_model, 
-                          backend, 
-                          half_precision)
-            if (index % 8) == 0: update_process_status("Upscaled tiles " + str( index + 1 ) + "/" + str(how_many_tiles))
+        for index_frame, frame_path in enumerate(frame_list_paths, 0):
+            if (index_frame % 8 == 0): update_process_status(f"Upscaling frame {index_frame}/{len(frame_list_paths)}")
+            
+            frame = image_read(frame_path)
 
-        update_process_status("Reconstructing frames by tiles")
-        reverse_split_multiple_frames(list_of_tiles_list, frames_upscaled_list, n_tiles, cpu_number)
+            result_path = prepare_output_image_filename(frame_path, selected_AI_model, resize_factor, selected_image_extension)
+            
+            tiles_list = split_image_into_tiles(frame, num_tiles_x, num_tiles_y)
+
+            with torch.no_grad():
+                for i, tile in enumerate(tiles_list, 0):
+                    tile_upscaled = AI_enhance(AI_model, tile, backend,  half_precision)
+
+                    if tile_upscaled.shape[:2] != (tile.shape[1] * 4, tile.shape[0] * 4):
+                        tile_upscaled = cv2.resize(tile_upscaled, 
+                                                    (tile.shape[1] * 4, tile.shape[0] * 4), 
+                                                    interpolation = cv2.INTER_CUBIC)
+                        
+                    tiles_list[i] = tile_upscaled
+
+            starting_frame = image_read(starting_frame_list_paths[index_frame])
+            combine_tiles_into_image(tiles_list, frame, starting_frame, num_tiles_x, num_tiles_y, result_path)
+            frames_upscaled_paths_list.append(result_path)
 
     else:
-        how_many_frames = len(frame_list)
+        for index_frame, frame_path in enumerate(frame_list_paths, 0):
+            if (index_frame % 8 == 0): update_process_status(f"Upscaling frames {index_frame}/{len(frame_list_paths)}")
+            
+            with torch.no_grad():
+                frame = image_read(frame_path, cv2.IMREAD_UNCHANGED)
+                result_path = prepare_output_image_filename(frame_path, selected_AI_model, resize_factor, selected_image_extension)
+                frame_upscaled = AI_enhance(AI_model, frame, backend, half_precision)
+                image_write(result_path, frame_upscaled)
+                frames_upscaled_paths_list.append(result_path)
 
-        for index in range(how_many_frames):
-            upscale_single_frame(frame_list[index], 
-                                AI_model, 
-                                frames_upscaled_list[index], 
-                                backend, 
-                                half_precision)
-            if (index % 8) == 0: update_process_status("Upscaled frames " + str( index + 1 ) + "/" + str(how_many_frames))
-    
-    # Reconstruct the video with upscaled frames
     update_process_status("Processing upscaled video")
-    video_reconstruction_by_frames(video_path, frames_upscaled_list, 
+    video_reconstruction_by_frames(video_path, 
+                                   frames_upscaled_paths_list, 
                                    selected_AI_model, 
-                                   resize_factor, cpu_number)
-
-def upscale_tiles(tile, AI_model, backend, half_precision):
-    with torch.no_grad():
-        tile_adapted  = image_read(tile, cv2.IMREAD_UNCHANGED)
-        tile_upscaled = AI_enhance(AI_model, tile_adapted, backend, half_precision)
-        image_write(tile, tile_upscaled)
-
-def upscale_single_frame(frame, AI_model, result_path, backend, half_precision):
-    with torch.no_grad():
-        img_adapted  = image_read(frame, cv2.IMREAD_UNCHANGED)
-        img_upscaled = AI_enhance(AI_model, img_adapted, backend, half_precision)
-        image_write(result_path, img_upscaled)
+                                   resize_factor, 
+                                   cpu_number, 
+                                   selected_video_extension)
 
 def upscale_orchestrator(selected_file_list,
                          selected_AI_model,
                          backend, 
-                         upscale_factor,
-                         selected_output_file_extension,
+                         selected_image_extension,
                          tiles_resolution,
                          resize_factor,
                          cpu_number,
-                         half_precision):
+                         half_precision,
+                         selected_video_extension):
     
     start = timer()
     torch.set_num_threads(cpu_number)
-    try:
-        update_process_status("Preparing AI model")
-        AI_model = prepare_model(selected_AI_model, backend, half_precision, upscale_factor)
 
-        for index in range(len(selected_file_list)):
-            update_process_status("Upscaling " + str(index + 1) + "/" +  str(len(selected_file_list)))
+    #try:
+    update_process_status("Preparing AI model")
+    AI_model = prepare_model(selected_AI_model, backend, half_precision)
 
-            if check_if_file_is_video(selected_file_list[index]):
-                upscale_video(selected_file_list[index], 
-                              AI_model, 
-                              selected_AI_model, 
-                              upscale_factor, 
-                              backend, 
-                              selected_output_file_extension,
-                              tiles_resolution, 
-                              resize_factor, 
-                              cpu_number, 
-                              half_precision)
-            else:
-                upscale_image(selected_file_list[index], 
-                              AI_model, 
-                              selected_AI_model, 
-                              upscale_factor, 
-                              backend, 
-                              selected_output_file_extension, 
-                              tiles_resolution, 
-                              resize_factor, 
-                              cpu_number, 
-                              half_precision)
-                
-        update_process_status("All files completed (" + str(round(timer() - start)) + " sec.)")
+    for index, file_path in enumerate(selected_file_list, 0):
+        update_process_status(f"Upscaling {index}/{len(selected_file_list)}")
 
-    except Exception as exception:
-        update_process_status('Error while upscaling' + '\n\n' + str(exception)) 
-        show_error(exception)
+        if check_if_file_is_video(file_path):
+            upscale_video(file_path, AI_model, selected_AI_model, backend, selected_image_extension, tiles_resolution, resize_factor, cpu_number, half_precision, selected_video_extension)
+        else:
+            upscale_image(file_path, AI_model, selected_AI_model, backend, selected_image_extension, tiles_resolution, resize_factor, half_precision)
+
+    update_process_status(f"All files completed ({round(timer() - start)} sec.)")
+
+   # except Exception as exception:
+    #    update_process_status('Error while upscaling\n\n' + str(exception))
+     #   show_error(exception)
 
 
 
@@ -977,7 +897,7 @@ def user_input_checks():
     global selected_AI_model
     global half_precision
     global selected_AI_device 
-    global selected_output_file_extension
+    global selected_image_extension
     global tiles_resolution
     global resize_factor
     global cpu_number
@@ -995,7 +915,6 @@ def user_input_checks():
         is_ready = False
 
 
-
     # File resize factor -------------------------------------------------
     try: resize_factor = int(float(str(selected_resize_factor.get())))
     except:
@@ -1008,7 +927,6 @@ def user_input_checks():
         is_ready = False
 
     
-
     # Tiles resolution -------------------------------------------------
     try: tiles_resolution = 100 * int(float(str(selected_VRAM_limiter.get())))
     except:
@@ -1028,7 +946,6 @@ def user_input_checks():
         is_ready = False
 
 
-
     # Cpu number -------------------------------------------------
     try: cpu_number = int(float(str(selected_cpu_number.get())))
     except:
@@ -1039,7 +956,6 @@ def user_input_checks():
         info_message.set("Cpu number value must be > 0")
         is_ready = False
     else: cpu_number = int(cpu_number)
-
 
 
     return is_ready
@@ -1115,8 +1031,8 @@ def open_files_action():
 
         global scrollable_frame_file_list
         scrollable_frame_file_list = ScrollableImagesTextFrame(master = window, 
-                                                               fg_color = transparent_color, 
-                                                               bg_color = transparent_color)
+                                                               fg_color = dark_color, 
+                                                               bg_color = dark_color)
         scrollable_frame_file_list.place(relx = 0.5, 
                                          rely = 0.25, 
                                          relwidth = 1.0, 
@@ -1166,53 +1082,52 @@ def select_AI_device_from_menu(new_value: str):
         if device.name == new_value:
             selected_AI_device = device.index
 
-def select_output_file_extension_from_menu(new_value: str):
-    global selected_output_file_extension    
-    selected_output_file_extension = new_value
+def select_image_extension_from_menu(new_value: str):
+    global selected_image_extension    
+    selected_image_extension = new_value
+
+def select_video_extension_from_menu(new_value: str):
+    global selected_video_extension   
+    selected_video_extension = new_value
 
 
 
 # GUI info functions ---------------------------
 
 def open_info_AI_model():
-    info = """This widget allows to choose between different AI. \n
-- BSRGANx2 | high upscale quality | upscale by 2.
-- BSRGANx4 | high upscale quality | upscale by 4.
-- BSRNetx4' | high upscale quality | upscale by 4.
-- RealSR_JPEGx4 | good upscale quality | upscale by 4.
-- RealSR_DPEDx4 | good upscale quality | upscale by 4.
-- RRDBx4 | good upscale quality | upscale by 4.
-- ESRGANx4 | good upscale quality | upscale by 4.
-- FSSR_JPEGx4 | good upscale quality | upscale by 4.
-- FSSR_DPEDx4 | good upscale quality | upscale by 4.
+    info = """This widget allows to choose between different AI: \n
+- BSRGANx4 | high upscale quality | upscale by 4
+- BSRNetx4 | high upscale quality | upscale by 4
+- RealSR_JPEGx4 | good upscale quality | upscale by 4
+- RealSR_DPEDx4 | good upscale quality | upscale by 4
+- RRDBx4 | good upscale quality | upscale by 4
+- ESRGANx4 | good upscale quality | upscale by 4
+- FSSR_JPEGx4 | good upscale quality | upscale by 4
+- FSSR_DPEDx4 | good upscale quality | upscale by 4
 
 Try all AI and choose the one that gives the best results""" 
     
     tk.messagebox.showinfo(title = 'AI model', message = info)
     
-
-
 def open_info_device():
     info = """This widget allows to choose the gpu to run AI with. \n 
 Keep in mind that the more powerful your gpu is, 
-the faster the upscale will be. \n
-If the list is empty it means the app couldn't find 
-a compatible gpu, try updating your video card driver :)"""
+the faster the upscale will be \n
+For best results, it is necessary to update the gpu drivers constantly"""
 
     tk.messagebox.showinfo(title = 'GPU', message = info)
 
 def open_info_file_extension():
-    info = """This widget allows to choose the extension of upscaled image/frame.\n
+    info = """This widget allows to choose the extension of upscaled image/frame:\n
 - png | very good quality | supports transparent images
 - jpg | good quality | very fast
-- jp2 (jpg2000) | very good quality | not very popular
 - bmp | highest quality | slow
 - tiff | highest quality | very slow"""
 
-    tk.messagebox.showinfo(title = 'AI output', message = info)
+    tk.messagebox.showinfo(title = 'Image output', message = info)
 
 def open_info_resize():
-    info = """This widget allows to choose the resolution input to the AI.\n
+    info = """This widget allows to choose the resolution input to the AI:\n
 For example for a 100x100px image:
 - Input resolution 50% => input to AI 50x50px
 - Input resolution 100% => input to AI 100x100px
@@ -1221,13 +1136,13 @@ For example for a 100x100px image:
     tk.messagebox.showinfo(title = 'Input resolution %', message = info)
 
 def open_info_vram_limiter():
-    info = """This widget allows to set a limit on the gpu's VRAM memory usage. \n
+    info = """This widget allows to set a limit on the gpu's VRAM memory usage: \n
 - For a gpu with 4 GB of Vram you must select 4
 - For a gpu with 6 GB of Vram you must select 6
 - For a gpu with 8 GB of Vram you must select 8
 - For integrated gpus (Intel-HD series | Vega 3,5,7) 
   that do not have dedicated memory, you must select 2 \n
-Selecting a value greater than the actual amount of gpu VRAM may result in upscale failure. """
+Selecting a value greater than the actual amount of gpu VRAM may result in upscale failure """
 
     tk.messagebox.showinfo(title = 'GPU Vram (GB)', message = info)
     
@@ -1242,7 +1157,7 @@ Where possible the app will use the number of processors you select, for example
     tk.messagebox.showinfo(title = 'Cpu number', message = info)
 
 def open_info_AI_precision():
-    info = """This widget allows you to choose the AI upscaling mode.
+    info = """This widget allows you to choose the AI upscaling mode:
 
 - Full precision (>=8GB Vram recommended)
   > compatible with all GPUs 
@@ -1257,13 +1172,23 @@ def open_info_AI_precision():
 
     tk.messagebox.showinfo(title = 'AI mode', message = info)
 
+def open_info_video_extension():
+    info = """This widget allows you to choose the video output:
+
+- .mp4  | produces good quality and well compressed video
+- .avi  | produces the highest quality video
+- .webm | produces low quality but light video"""
+
+    tk.messagebox.showinfo(title = 'Video output', message = info)    
+
+
 
 # GUI place functions ---------------------------
         
 def place_up_background():
     up_background = CTkLabel(master  = window, 
                             text    = "",
-                            fg_color = transparent_color,
+                            fg_color = dark_color,
                             font     = bold12,
                             anchor   = "w")
     
@@ -1365,35 +1290,8 @@ def place_AI_menu():
     AI_menu_button.place(relx = 0.20, rely = row1_y - 0.05, anchor = tkinter.CENTER)
     AI_menu.place(relx = 0.20, rely = row1_y, anchor = tkinter.CENTER)
 
-def place_AI_gpu_menu():
-    AI_device_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "GPU",
-                              height   = 23,
-                              width    = 130,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_device)
-
-    AI_device_menu = CTkOptionMenu(master  = window, 
-                                    values   = device_list_names,
-                                    width      = 140,
-                                    font       = bold9,
-                                    height     = 30,
-                                    fg_color   = "#000000",
-                                    anchor     = "center",
-                                    dynamic_resizing = False,
-                                    command    = select_AI_device_from_menu,
-                                    dropdown_font = bold11,
-                                    dropdown_fg_color = "#000000")
-    
-    AI_device_button.place(relx = 0.5, rely = row1_y - 0.05, anchor = tkinter.CENTER)
-    AI_device_menu.place(relx = 0.5, rely = row1_y, anchor = tkinter.CENTER)
-
 def place_AI_mode_menu():
-    AI_modes = ["Full precision", "Half precision"]
+    AI_modes = ["Half precision", "Full precision"]
 
     AI_mode_button = CTkButton(master  = window, 
                               fg_color   = "black",
@@ -1421,11 +1319,11 @@ def place_AI_mode_menu():
     AI_mode_button.place(relx = 0.20, rely = row2_y - 0.05, anchor = tkinter.CENTER)
     AI_mode_menu.place(relx = 0.20, rely = row2_y, anchor = tkinter.CENTER)
 
-def place_file_extension_menu():
+def place_image_extension_menu():
     file_extension_button = CTkButton(master  = window, 
                               fg_color   = "black",
                               text_color = "#ffbf00",
-                              text     = "AI output",
+                              text     = "Image output",
                               height   = 23,
                               width    = 130,
                               font     = bold11,
@@ -1434,40 +1332,72 @@ def place_file_extension_menu():
                               command = open_info_file_extension)
 
     file_extension_menu = CTkOptionMenu(master  = window, 
-                                        values     = file_extension_list,
+                                        values     = image_extension_list,
                                         width      = 140,
                                         font       = bold11,
                                         height     = 30,
                                         fg_color   = "#000000",
                                         anchor     = "center",
-                                        command    = select_output_file_extension_from_menu,
+                                        command    = select_image_extension_from_menu,
                                         dropdown_font = bold11,
                                         dropdown_fg_color = "#000000")
     
     file_extension_button.place(relx = 0.20, rely = row3_y - 0.05, anchor = tkinter.CENTER)
     file_extension_menu.place(relx = 0.20, rely = row3_y, anchor = tkinter.CENTER)
 
-def place_resize_factor_textbox():
-    resize_factor_button = CTkButton(master  = window, 
+def place_video_extension_menu():
+    video_extension_button = CTkButton(master  = window, 
                               fg_color   = "black",
                               text_color = "#ffbf00",
-                              text     = "Input resolution (%)",
+                              text     = "Video output",
                               height   = 23,
                               width    = 130,
                               font     = bold11,
                               corner_radius = 25,
                               anchor  = "center",
-                              command = open_info_resize)
+                              command = open_info_video_extension)
 
-    resize_factor_textbox = CTkEntry(master    = window, 
+    video_extension_menu = CTkOptionMenu(master  = window, 
+                                    values     = video_extension_list,
                                     width      = 140,
                                     font       = bold11,
                                     height     = 30,
                                     fg_color   = "#000000",
-                                    textvariable = selected_resize_factor)
+                                    anchor     = "center",
+                                    dynamic_resizing = False,
+                                    command    = select_video_extension_from_menu,
+                                    dropdown_font = bold11,
+                                    dropdown_fg_color = "#000000")
     
-    resize_factor_button.place(relx = 0.5, rely = row3_y - 0.05, anchor = tkinter.CENTER)
-    resize_factor_textbox.place(relx = 0.5, rely  = row3_y, anchor = tkinter.CENTER)
+    video_extension_button.place(relx = 0.5, rely = row1_y - 0.05, anchor = tkinter.CENTER)
+    video_extension_menu.place(relx = 0.5, rely = row1_y, anchor = tkinter.CENTER)
+
+def place_gpu_menu():
+    AI_device_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "GPU",
+                              height   = 23,
+                              width    = 130,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_device)
+
+    AI_device_menu = CTkOptionMenu(master  = window, 
+                                    values   = device_list_names,
+                                    width      = 140,
+                                    font       = bold9,
+                                    height     = 30,
+                                    fg_color   = "#000000",
+                                    anchor     = "center",
+                                    dynamic_resizing = False,
+                                    command    = select_AI_device_from_menu,
+                                    dropdown_font = bold11,
+                                    dropdown_fg_color = "#000000")
+    
+    AI_device_button.place(relx = 0.5, rely = row2_y - 0.05, anchor = tkinter.CENTER)
+    AI_device_menu.place(relx = 0.5, rely  = row2_y, anchor = tkinter.CENTER)
 
 def place_vram_textbox():
     vram_button = CTkButton(master  = window, 
@@ -1487,9 +1417,20 @@ def place_vram_textbox():
                             height     = 30,
                             fg_color   = "#000000",
                             textvariable = selected_VRAM_limiter)
+    
+    vram_button.place(relx = 0.5, rely = row3_y - 0.05, anchor = tkinter.CENTER)
+    vram_textbox.place(relx = 0.5, rely  = row3_y, anchor = tkinter.CENTER)
 
-    vram_button.place(relx = 0.5, rely = row2_y - 0.05, anchor = tkinter.CENTER)
-    vram_textbox.place(relx = 0.5, rely  = row2_y, anchor = tkinter.CENTER)
+def place_message_label():
+    message_label = CTkLabel(master  = window, 
+                            textvariable = info_message,
+                            height       = 25,
+                            font         = bold10,
+                            fg_color     = "#ffbf00",
+                            text_color   = "#000000",
+                            anchor       = "center",
+                            corner_radius = 25)
+    message_label.place(relx = 0.8, rely = 0.56, anchor = tkinter.CENTER)
 
 def place_cpu_textbox():
     cpu_button = CTkButton(master  = window, 
@@ -1513,6 +1454,28 @@ def place_cpu_textbox():
     cpu_button.place(relx = 0.8, rely = row1_y - 0.05, anchor = tkinter.CENTER)
     cpu_textbox.place(relx = 0.8, rely  = row1_y, anchor = tkinter.CENTER)
 
+def place_input_resolution_textbox():
+    resize_factor_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "Input resolution (%)",
+                              height   = 23,
+                              width    = 130,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_resize)
+
+    resize_factor_textbox = CTkEntry(master    = window, 
+                                    width      = 140,
+                                    font       = bold11,
+                                    height     = 30,
+                                    fg_color   = "#000000",
+                                    textvariable = selected_resize_factor)
+    
+    resize_factor_button.place(relx = 0.80, rely = row2_y - 0.05, anchor = tkinter.CENTER)
+    resize_factor_textbox.place(relx = 0.80, rely = row2_y, anchor = tkinter.CENTER)
+
 def place_loadFile_section():
 
     text_drop = """ - SUPPORTED FILES -
@@ -1522,8 +1485,8 @@ VIDEOS - mp4 webm mkv flv gif avi mov mpg qt 3gp"""
 
     input_file_text = CTkLabel(master    = window, 
                                 text     = text_drop,
-                                fg_color = transparent_color,
-                                bg_color = transparent_color,
+                                fg_color = dark_color,
+                                bg_color = dark_color,
                                 width   = 300,
                                 height  = 150,
                                 font    = bold12,
@@ -1539,22 +1502,6 @@ VIDEOS - mp4 webm mkv flv gif avi mov mpg qt 3gp"""
 
     input_file_text.place(relx = 0.5, rely = 0.22,  anchor = tkinter.CENTER)
     input_file_button.place(relx = 0.5, rely = 0.385, anchor = tkinter.CENTER)
-
-def place_message_label():
-    message_label = CTkLabel(master  = window, 
-                            textvariable = info_message,
-                            height       = 25,
-                            font         = bold10,
-                            fg_color     = "#ffbf00",
-                            text_color   = "#000000",
-                            anchor       = "center",
-                            corner_radius = 25)
-    message_label.place(relx = 0.8, rely = 0.56, anchor = tkinter.CENTER)
-
-def apply_windows_transparency_effect(window_root):
-    window_root.wm_attributes("-transparent", transparent_color)
-    hwnd = ctypes.windll.user32.GetParent(window_root.winfo_id())
-    ApplyMica(hwnd, MICAMODE.DARK )
 
 
 
@@ -1576,19 +1523,18 @@ class App():
 
         place_AI_menu()
         place_AI_mode_menu()
-        place_file_extension_menu()
+        place_image_extension_menu()
 
-        place_AI_gpu_menu()
+        place_video_extension_menu()
+        place_gpu_menu()
         place_vram_textbox()
-        place_resize_factor_textbox()
-
-        place_cpu_textbox()
+        
         place_message_label()
+        place_input_resolution_textbox()
+        place_cpu_textbox()
         place_upscale_button()
 
         place_loadFile_section()
-
-        if is_Windows11(): apply_windows_transparency_effect(window)
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
@@ -1602,17 +1548,19 @@ if __name__ == "__main__":
     global selected_AI_model
     global half_precision
     global selected_AI_device 
-    global selected_output_file_extension
+    global selected_image_extension
+    global selected_video_extension
     global tiles_resolution
     global resize_factor
     global cpu_number
 
     selected_file_list = []
     selected_AI_model  = AI_models_list[0]
-    half_precision     = False
+    half_precision     = True
     selected_AI_device = 0
 
-    selected_output_file_extension = file_extension_list[0]
+    selected_image_extension = image_extension_list[0]
+    selected_video_extension = video_extension_list[0]
 
     info_message = tk.StringVar()
     selected_resize_factor  = tk.StringVar()
@@ -1623,7 +1571,7 @@ if __name__ == "__main__":
 
     cpu_count = str(int(os.cpu_count()/2))
 
-    selected_resize_factor.set("70")
+    selected_resize_factor.set("50")
     selected_VRAM_limiter.set("8")
     selected_cpu_number.set(cpu_count)
 
