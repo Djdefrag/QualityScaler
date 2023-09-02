@@ -1,14 +1,11 @@
-import itertools
 import multiprocessing
 import os.path
 import shutil
 import sys
 import threading
 import time
-import tkinter
 import tkinter as tk
 import webbrowser
-from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
 import cv2
@@ -34,62 +31,38 @@ from moviepy.video.io import ImageSequenceClip
 from PIL import Image
 
 
-"""
-NEW
-Completely rewrote the tile management algorithm:
-- cutting an image into tiles is ~60% faster
-- tiles now also support transparent images
-- tiles are no longer saved as files, to save disk space and time
-- now the image/frame upscaled as a result of tiles is interpolated with the original image/frame: this reduces graphical defects while maintaining upscale quality
-
-Added "Video output" widget that allows you to choose the extension of the upscaled video:
-- .mp4, produces well compressed and good quality video
-- .avi, produces very high quality video without compression
-- .webm, produces very compressed and very light video with no audio
-
-GUI
-The app will now tell how many tiles the images are divided into during upscaling
-Removed Mica effect (transparency) due to incompatibilities: often did not allow to select, zoom, and move the application window
-
-IMPROVEMENTS
-By default AI precision is set to "Half precision"
-By default now "Input resolution %" is set to 50%
-Partially rewrote and cleaned up more than 50% of the code
-Updated all dependencies
-"""
-
-
-
-
 app_name  = "QualityScaler"
-version   = "2.3"
+version   = "2.4"
 
-githubme             = "https://github.com/Djdefrag/QualityScaler"
-itchme               = "https://jangystudio.itch.io/qualityscaler"
-telegramme           = "https://linktr.ee/j3ngystudio"
+githubme    = "https://github.com/Djdefrag/QualityScaler"
+telegramme  = "https://linktr.ee/j3ngystudio"
 
-AI_models_list       = [
-                        'BSRGANx4',
-                        'BSRNetx4',
-                        'RealSR_JPEGx4',
-                        'RealSR_DPEDx4', 
-                        'RRDBx4', 
-                        'ESRGANx4', 
-                        'FSSR_JPEGx4',
-                        'FSSR_DPEDx4',
-                        ]
+AI_models_list = [
+                  'BSRGANx4',
+                  'BSRNetx4',
+                  'RealSR_JPEGx4',
+                  'RealSR_DPEDx4', 
+                  'RRDBx4', 
+                  'ESRGANx4', 
+                  'FSSR_JPEGx4',
+                  'FSSR_DPEDx4',
+                 ]
 
-image_extension_list  = [ '.png', '.jpg', '.bmp', '.tiff' ]
+image_extension_list  = [ '.jpg', '.png', '.bmp', '.tiff' ]
 video_extension_list  = [ '.mp4', '.avi', '.webm' ]
+interpolation_list    = [ 'Yes', 'No' ]
+AI_modes_list         = [ "Half precision", "Full precision" ]
 
 device_list_names    = []
 device_list          = []
 vram_multiplier      = 0.9
 gpus_found           = torch_directml.device_count()
-resize_algorithm     = cv2.INTER_AREA
+downscale_algorithm  = cv2.INTER_AREA
+upscale_algorithm    = cv2.INTER_LINEAR_EXACT
 
 offset_y_options = 0.1125
-row1_y           = 0.705
+row0_y           = 0.6
+row1_y           = row0_y + offset_y_options
 row2_y           = row1_y + offset_y_options
 row3_y           = row2_y + offset_y_options
 
@@ -197,6 +170,7 @@ def prepare_model(selected_AI_model, backend, half_precision):
     with torch.no_grad():
         pretrained_model = torch.load(model_path, map_location = torch.device('cpu'))
         model.load_state_dict(pretrained_model, strict = True)
+    
     model.eval()
 
     if half_precision: model = model.half()
@@ -357,68 +331,45 @@ supported_video_extensions  = [
 
 #  Slice functions -------------------
 
-def add_alpha_channel(tile):
-    if tile.shape[2] == 3:  # Check if the tile does not have an alpha channel
-        alpha_channel = np.full((tile.shape[0], tile.shape[1], 1), 255, dtype=np.uint8)
-        tile = np.concatenate((tile, alpha_channel), axis=2)
-    return tile
-
 def split_image_into_tiles(image, num_tiles_x, num_tiles_y):
     img_height, img_width, _ = image.shape
 
-    tile_width = img_width // num_tiles_x
+    tile_width  = img_width // num_tiles_x
     tile_height = img_height // num_tiles_y
 
     tiles = []
 
     for y in range(num_tiles_y):
         y_start = y * tile_height
-        y_end = (y + 1) * tile_height
+        y_end   = (y + 1) * tile_height
 
         for x in range(num_tiles_x):
             x_start = x * tile_width
-            x_end = (x + 1) * tile_width
-
-            tile = image[y_start:y_end, x_start:x_end]
-
+            x_end   = (x + 1) * tile_width
+            tile    = image[y_start:y_end, x_start:x_end]
             tiles.append(tile)
 
     return tiles
 
 def combine_tiles_into_image(tiles, 
-                             image_for_dimensions, 
-                             starting_image, 
+                             image_target_height, 
+                             image_target_width,
                              num_tiles_x, 
-                             num_tiles_y, 
-                             output_path):
-    
-    # Utilizzo l immagine downscalata per calcolare le giuste dimensioni 
-    original_height, original_width, _ = image_for_dimensions.shape
-    output_width = int(original_width * 4)
-    output_height = int(original_height * 4)
+                             num_tiles_y):
 
-    # Ridimensiono e aggiungo l'alpha channel all' immagine iniziale
-    # affinché le dimensioni durante l interpolazione siano identiche
-    starting_image = add_alpha_channel(cv2.resize(starting_image, 
-                                        (output_width, output_height), 
-                                        interpolation = cv2.INTER_CUBIC))
-
-    tiled_image = np.zeros((output_height, output_width, 4), dtype = np.uint8)
+    tiled_image = np.zeros((image_target_height, image_target_width, 4), dtype = np.uint8)
 
     for i, tile in enumerate(tiles):
         tile_height, tile_width, _ = tile.shape
-        row = i // num_tiles_x
-        col = i % num_tiles_x
+        row     = i // num_tiles_x
+        col     = i % num_tiles_x
         y_start = row * tile_height
-        y_end = y_start + tile_height
+        y_end   = y_start + tile_height
         x_start = col * tile_width
-        x_end = x_start + tile_width
-
+        x_end   = x_start + tile_width
         tiled_image[y_start:y_end, x_start:x_end] = add_alpha_channel(tile)
 
-    tiled_image = cv2.addWeighted(tiled_image, 0.5, starting_image, 0.5, 0)
-
-    image_write(output_path, tiled_image)
+    return tiled_image
 
 def file_need_tiles(image, tiles_resolution):
     height, width, _ = image.shape
@@ -435,21 +386,79 @@ def file_need_tiles(image, tiles_resolution):
     else:
         return True, num_tiles_horizontal, num_tiles_vertical
 
+def add_alpha_channel(tile):
+    if tile.shape[2] == 3:  # Check if the tile does not have an alpha channel
+        alpha_channel = np.full((tile.shape[0], tile.shape[1], 1), 255, dtype=np.uint8)
+        tile = np.concatenate((tile, alpha_channel), axis=2)
+    return tile
+
+def fix_tile_shape(tile, tile_upscaled):
+    tile_height, tile_width, _ = tile.shape
+    target_tile_height = tile_height * 4
+    target_tile_width  = tile_width * 4
+
+    tile_upscaled = cv2.resize(tile_upscaled, (target_tile_width, target_tile_height))
+
+    return tile_upscaled
+
+def interpolate_images(starting_image, 
+                       upscaled_image, 
+                       image_target_height, 
+                       image_target_width):
+    
+    starting_image     = add_alpha_channel(cv2.resize(starting_image, (image_target_width, image_target_height), interpolation = upscale_algorithm))
+    upscaled_image     = add_alpha_channel(upscaled_image)
+    interpolated_image = cv2.addWeighted(upscaled_image, 0.5, starting_image, 0.5, 0)
+
+    return interpolated_image
+
+
 
 # Utils functions ------------------------
 
 def opengithub(): webbrowser.open(githubme, new=1)
 
-def openitch(): webbrowser.open(itchme, new=1)
-
 def opentelegram(): webbrowser.open(telegramme, new=1)
 
-def image_write(path, image_data):
-    _, file_extension = os.path.splitext(path)
-    cv2.imwrite(path, image_data)
+def image_write(file_path, file_data): cv2.imwrite(file_path, file_data)
 
-def image_read(image_to_prepare, flags=cv2.IMREAD_UNCHANGED):
-    return cv2.imread(image_to_prepare, flags)
+def image_read(file_path, flags = cv2.IMREAD_UNCHANGED): return cv2.imread(file_path, flags)
+
+def prepare_output_image_filename(image_path, 
+                                  selected_AI_model, 
+                                  resize_factor, 
+                                  selected_image_extension, 
+                                  selected_interpolation):
+    
+    result_path, _    = os.path.splitext(image_path)
+    resize_percentage = str(int(resize_factor * 100)) + "%"
+
+    if selected_interpolation:
+        to_append = f"_{selected_AI_model}_{resize_percentage}_interpolated{selected_image_extension}"
+    else:
+        to_append = f"_{selected_AI_model}_{resize_percentage}{selected_image_extension}"
+
+    result_path += to_append
+
+    return result_path
+
+def prepare_output_video_filename(video_path, 
+                                  selected_AI_model, 
+                                  resize_factor, 
+                                  selected_video_extension,
+                                  selected_interpolation):
+    
+    result_path, _    = os.path.splitext(video_path)
+    resize_percentage = str(int(resize_factor * 100)) + "%"
+
+    if selected_interpolation:
+        to_append = f"_{selected_AI_model}_{resize_percentage}_interpolated{selected_video_extension}"
+    else:
+        to_append = f"_{selected_AI_model}_{resize_percentage}{selected_video_extension}"
+
+    result_path += to_append
+
+    return result_path
 
 def create_temp_dir(name_dir):
     if os.path.exists(name_dir): shutil.rmtree(name_dir)
@@ -477,89 +486,23 @@ def find_by_relative_path(relative_path):
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
 
-def prepare_output_image_filename(image_path, 
-                                  selected_AI_model, 
-                                  resize_factor, 
-                                  selected_image_extension):
-    
-    # Remove extension
-    result_path, _ = os.path.splitext(image_path)
-
-    resize_percentage = str(int(resize_factor * 100)) + "%"
-    to_append = f"_{selected_AI_model}_{resize_percentage}{selected_image_extension}"
-
-    if "_resized" in result_path:
-        result_path = result_path.replace("_resized", to_append)
-    else:
-        result_path += to_append
-
-    return result_path
-
-def prepare_output_video_filename(video_path, 
-                                  selected_AI_model, 
-                                  resize_factor, 
-                                  selected_video_extension):
-    
-    # Remove original video file extension
-    original_video_path, _ = os.path.splitext(video_path)
-
-    to_append = f"_{selected_AI_model}_{int(resize_factor * 100)}%{selected_video_extension}"
-
-    return original_video_path + to_append
-
 def delete_list_of_files(list_to_delete):
     if len(list_to_delete) > 0:
         for to_delete in list_to_delete:
             if os.path.exists(to_delete):
                 os.remove(to_delete)
 
-def resize_image(image_path, resize_factor):
-    image = image_read(image_path)
+def resize_image(image, resize_factor):
     old_height, old_width, _ = image.shape
-    new_width = int(old_width * resize_factor)
+    new_width  = int(old_width * resize_factor)
     new_height = int(old_height * resize_factor)
 
-    resized_image = cv2.resize(image, 
-                               (new_width, new_height), 
-                               interpolation = resize_algorithm)
+    resized_image = cv2.resize(image, (new_width, new_height), interpolation = downscale_algorithm)
     return resized_image       
 
-def resize_frame(image_path, 
-                 new_width, 
-                 new_height, 
-                 target_file_extension):
-    
-    new_image_path = image_path.replace('.jpg', "" + target_file_extension)
-    
-    old_image = image_read(image_path.strip(), cv2.IMREAD_UNCHANGED)
-
-    resized_image = cv2.resize(old_image, (new_width, new_height), interpolation = resize_algorithm) 
-       
-    image_write(new_image_path, resized_image)
-
-def resize_frame_list(image_list, 
-                      resize_factor, 
-                      target_file_extension, 
-                      cpu_number):
-    
-    downscaled_images = []
-
-    old_image = Image.open(image_list[1])
-    new_width, new_height = old_image.size
-    new_width = int(new_width * resize_factor)
-    new_height = int(new_height * resize_factor)
-    
-    with ThreadPool(cpu_number) as pool:
-        pool.starmap(resize_frame, zip(image_list, 
-                                    itertools.repeat(new_width), 
-                                    itertools.repeat(new_height), 
-                                    itertools.repeat(target_file_extension)))
-
-    for image in image_list:
-        resized_image_path = image.replace('.jpg', "" + target_file_extension)
-        downscaled_images.append(resized_image_path)
-
-    return downscaled_images
+def resize_frame(frame, new_width, new_height):
+    resized_image = cv2.resize(frame, (new_width, new_height), interpolation = downscale_algorithm)
+    return resized_image 
 
 def remove_file(name_file):
     if os.path.exists(name_file): os.remove(name_file)
@@ -569,7 +512,7 @@ def show_error(exception):
     tk.messagebox.showerror(title   = 'Error', 
                             message = 'Upscale failed caused by:\n\n' +
                                         str(exception) + '\n\n' +
-                                        'Please report the error on Github.com or Itch.io.' +
+                                        'Please report the error on Github.com or Telegram group' +
                                         '\n\nThank you :)')
 
 def extract_frames_from_video(video_path):
@@ -599,7 +542,8 @@ def video_reconstruction_by_frames(input_video_path,
                                    selected_AI_model, 
                                    resize_factor, 
                                    cpu_number,
-                                   selected_video_extension):
+                                   selected_video_extension, 
+                                   selected_interpolation):
     
     # Find original video FPS
     cap          = cv2.VideoCapture(input_video_path)
@@ -608,23 +552,21 @@ def video_reconstruction_by_frames(input_video_path,
 
     # Choose the appropriate codec
     if selected_video_extension == '.mp4':
-        extension = '.mp4'
-        codec = 'libx264'
+        codec     = 'libx264'
     elif selected_video_extension == '.avi':
-        extension = '.avi'
-        codec = 'png'
+        codec     = 'png'
     elif selected_video_extension == '.webm':
-        extension = '.webm'
-        codec = 'libvpx'
+        codec     = 'libvpx'
 
     upscaled_video_path = prepare_output_video_filename(input_video_path, 
                                                         selected_AI_model, 
                                                         resize_factor, 
-                                                        extension)
+                                                        selected_video_extension,
+                                                        selected_interpolation)
     audio_file = app_name + "_temp" + os.sep + "audio.mp3"
 
     clip = ImageSequenceClip.ImageSequenceClip(frames_upscaled_list, fps = frame_rate)
-    if os.path.exists(audio_file) and extension != '.webm':
+    if os.path.exists(audio_file) and selected_video_extension != '.webm':
         clip.write_videofile(upscaled_video_path,
                             fps     = frame_rate,
                             audio   = audio_file,
@@ -683,7 +625,7 @@ def check_upscale_steps():
         place_upscale_button()
 
 def update_process_status(actual_process_phase):
-    print("> " + actual_process_phase)
+    print(f"{actual_process_phase}")
     write_in_log_file(actual_process_phase) 
 
 def stop_button_command():
@@ -693,6 +635,7 @@ def stop_button_command():
 def upscale_button_command(): 
     global selected_file_list
     global selected_AI_model
+    global selected_interpolation
     global half_precision
     global selected_AI_device 
     global selected_image_extension
@@ -709,18 +652,19 @@ def upscale_button_command():
         info_message.set("Loading")
         write_in_log_file("Loading")
 
-        print("=================================================")
+        print("=" * 50)
         print("> Starting upscale:")
-        print("  Files to upscale: "   + str(len(selected_file_list)))
-        print("  Selected AI model: "  + str(selected_AI_model))
-        print("  AI half precision: "  + str(half_precision))
-        print("  Selected GPU: "       + str(torch_directml.device_name(selected_AI_device)))
-        print("  Selected image output extension: "          + str(selected_image_extension))
-        print("  Selected video output extension: "          + str(selected_video_extension))
-        print("  Tiles resolution for selected GPU VRAM: "   + str(tiles_resolution) + "x" + str(tiles_resolution) + "px")
-        print("  Resize factor: "      + str(int(resize_factor*100)) + "%")
-        print("  Cpu number: "         + str(cpu_number))
-        print("=================================================")
+        print(f"  Files to upscale: {len(selected_file_list)}")
+        print(f"  Selected AI model: {selected_AI_model}")
+        print(f"  AI half precision: {half_precision}")
+        print(f"  Interpolation: {selected_interpolation}")
+        print(f"  Selected GPU: {torch_directml.device_name(selected_AI_device)}")
+        print(f"  Selected image output extension: {selected_image_extension}")
+        print(f"  Selected video output extension: {selected_video_extension}")
+        print(f"  Tiles resolution for selected GPU VRAM: {tiles_resolution}x{tiles_resolution}px")
+        print(f"  Resize factor: {int(resize_factor * 100)}%")
+        print(f"  Cpu number: {cpu_number}")
+        print("=" * 50)
 
         backend = torch.device(torch_directml.device(selected_AI_device))
 
@@ -736,58 +680,98 @@ def upscale_button_command():
                                                      resize_factor,
                                                      cpu_number,
                                                      half_precision,
-                                                     selected_video_extension))
+                                                     selected_video_extension,
+                                                     selected_interpolation))
         process_upscale_orchestrator.start()
 
-        thread_wait = threading.Thread(target = check_upscale_steps, daemon = True)
+        thread_wait = threading.Thread(target = check_upscale_steps, 
+                                       daemon = True)
         thread_wait.start()
 
+# Images
+
+def get_final_image_shape(image_to_upscale):
+    # Calculate final image shape
+    image_to_upscale_height, image_to_upscale_width, _ = image_to_upscale.shape
+    target_height = image_to_upscale_height * 4
+    target_width  = image_to_upscale_width * 4
+    
+    return target_height, target_width
+
 def upscale_image(image_path, 
+                  file_number,
                   AI_model, 
                   selected_AI_model, 
                   backend, 
                   selected_image_extension, 
                   tiles_resolution, 
                   resize_factor, 
-                  half_precision):
+                  half_precision,
+                  selected_interpolation):
     
-    starting_image = image_read(image_path)
-    
-    if resize_factor != 1:
-        image_to_upscale = resize_image(image_path, resize_factor) 
-    else:
-        image_to_upscale = image_read(image_path)
-
+    starting_image    = image_read(image_path)
     result_image_path = prepare_output_image_filename(image_path, 
-                                                        selected_AI_model, 
-                                                        resize_factor, 
-                                                        selected_image_extension)  
+                                                      selected_AI_model, 
+                                                      resize_factor, 
+                                                      selected_image_extension,
+                                                      selected_interpolation)
+                                                      
+    if resize_factor != 1: image_to_upscale = resize_image(starting_image, resize_factor) 
+    else:                  image_to_upscale = starting_image
 
-    need_tiles, num_tiles_x, num_tiles_y = file_need_tiles(image_to_upscale, tiles_resolution)
+    image_target_height, image_target_width = get_final_image_shape(image_to_upscale)
+    need_tiles, num_tiles_x, num_tiles_y    = file_need_tiles(image_to_upscale, tiles_resolution)
 
     if need_tiles:
-        update_process_status(f"Tiling image in {num_tiles_x * num_tiles_y}")
-        tiles_list = split_image_into_tiles(image_to_upscale, num_tiles_x, num_tiles_y)
+        update_process_status(f"{file_number}. Tiling image in {num_tiles_x * num_tiles_y}")
+
+        tiles_list     = split_image_into_tiles(image_to_upscale, num_tiles_x, num_tiles_y)
+        how_many_tiles = len(tiles_list)
 
         with torch.no_grad():
-            for i, tile in enumerate(tiles_list, 0):
-                update_process_status(f"Upscaling tiles {i}/{len(tiles_list)}")                
+            for tile_index, tile in enumerate(tiles_list, 0):
+                update_process_status(f"{file_number}. Upscaling tiles {tile_index}/{how_many_tiles}")       
+                
                 tile_upscaled = AI_enhance(AI_model, tile, backend, half_precision)
+                tile_upscaled = fix_tile_shape(tile, tile_upscaled)
+                tiles_list[tile_index] = tile_upscaled
 
-                if tile_upscaled.shape[:2] != (tile.shape[1] * 4, tile.shape[0] * 4):
-                    tile_upscaled = cv2.resize(tile_upscaled, (tile.shape[1] * 4, tile.shape[0] * 4), interpolation = cv2.INTER_CUBIC)
-
-                tiles_list[i] = tile_upscaled
-
-            update_process_status("Reconstructing image by tiles")
-            combine_tiles_into_image(tiles_list, image_to_upscale, starting_image, num_tiles_x, num_tiles_y, result_image_path)
+            update_process_status(f"{file_number}. Reconstructing image by tiles")
+            image_upscaled = combine_tiles_into_image(tiles_list, 
+                                                      image_target_height, 
+                                                      image_target_width,
+                                                      num_tiles_x, 
+                                                      num_tiles_y)
+    
     else:
         with torch.no_grad():
-            update_process_status("Upscaling image")
+            update_process_status(f"{file_number}. Upscaling image")
             image_upscaled = AI_enhance(AI_model, image_to_upscale, backend, half_precision)
-            image_write(result_image_path, image_upscaled)
+            
+    if selected_interpolation:
+        image_upscaled = interpolate_images(starting_image, image_upscaled, image_target_height, image_target_width)
+        image_write(result_image_path, image_upscaled)
+    else: 
+        image_write(result_image_path, image_upscaled)
+
+# Videos
+
+def get_resized_frame_shape(first_frame, resize_factor):
+    height, width, _ = first_frame.shape
+    resized_width  = int(width * resize_factor)
+    resized_height = int(height * resize_factor)
+
+    return resized_width, resized_height
+
+def get_final_frame_shape(resized_width, resized_height):
+    # Calculate final frame shape
+    target_height = resized_height * 4
+    target_width  = resized_width * 4
+    
+    return target_height, target_width
 
 def upscale_video(video_path, 
+                  file_number,
                   AI_model, 
                   selected_AI_model, 
                   backend, 
@@ -796,66 +780,79 @@ def upscale_video(video_path,
                   resize_factor, 
                   cpu_number, 
                   half_precision, 
-                  selected_video_extension):
+                  selected_video_extension,
+                  selected_interpolation):
     
     create_temp_dir(app_name + "_temp")
 
-    update_process_status("Extracting video frames")
-    frame_list_paths = extract_frames_from_video(video_path)
-    starting_frame_list_paths = frame_list_paths
+    update_process_status(f"{file_number}. Extracting video frames")
+    frame_list_paths           = extract_frames_from_video(video_path)
+    frames_upscaled_paths_list = [] 
 
-    if resize_factor != 1:
-        update_process_status("Resizing video frames")
-        frame_list_paths = resize_frame_list(frame_list_paths, resize_factor, selected_image_extension, cpu_number)
-
-    update_process_status("Upscaling video")
-    first_frame = image_read(frame_list_paths[0])
-    frames_upscaled_paths_list = []   
-    need_tiles, num_tiles_x, num_tiles_y = file_need_tiles(first_frame, tiles_resolution)
+    update_process_status(f"{file_number}. Upscaling video")
+    first_frame                                = image_read(frame_list_paths[0])  
+    frame_resized_width, frame_resized_height  = get_resized_frame_shape(first_frame, resize_factor)
+    frame_target_height, frame_target_width    = get_final_frame_shape(frame_resized_width, frame_resized_height)
+    need_tiles, num_tiles_x, num_tiles_y       = file_need_tiles(first_frame, tiles_resolution)
 
     if need_tiles:
         for index_frame, frame_path in enumerate(frame_list_paths, 0):
-            if (index_frame % 8 == 0): update_process_status(f"Upscaling frame {index_frame}/{len(frame_list_paths)}")
             
-            frame = image_read(frame_path)
+            if (index_frame % 8 == 0): update_process_status(f"{file_number}. Upscaling frame {index_frame}/{len(frame_list_paths)}")
+            
+            result_frame_path = prepare_output_image_filename(frame_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation)
+            starting_frame    = image_read(frame_path)
 
-            result_path = prepare_output_image_filename(frame_path, selected_AI_model, resize_factor, selected_image_extension)
-            
-            tiles_list = split_image_into_tiles(frame, num_tiles_x, num_tiles_y)
+            if resize_factor != 1: frame_to_upscale = resize_frame(starting_frame, frame_resized_width, frame_resized_height)
+            else:                  frame_to_upscale = starting_frame
+
+            tiles_list = split_image_into_tiles(frame_to_upscale, num_tiles_x, num_tiles_y)
 
             with torch.no_grad():
-                for i, tile in enumerate(tiles_list, 0):
-                    tile_upscaled = AI_enhance(AI_model, tile, backend,  half_precision)
+                for tile_index, tile in enumerate(tiles_list, 0):
+                    tile_upscaled = AI_enhance(AI_model, tile, backend, half_precision)
+                    tile_upscaled = fix_tile_shape(tile, tile_upscaled)
+                    tiles_list[tile_index] = tile_upscaled
 
-                    if tile_upscaled.shape[:2] != (tile.shape[1] * 4, tile.shape[0] * 4):
-                        tile_upscaled = cv2.resize(tile_upscaled, 
-                                                    (tile.shape[1] * 4, tile.shape[0] * 4), 
-                                                    interpolation = cv2.INTER_CUBIC)
-                        
-                    tiles_list[i] = tile_upscaled
+            frame_upscaled = combine_tiles_into_image(tiles_list, frame_target_height, frame_target_width, num_tiles_x, num_tiles_y)
 
-            starting_frame = image_read(starting_frame_list_paths[index_frame])
-            combine_tiles_into_image(tiles_list, frame, starting_frame, num_tiles_x, num_tiles_y, result_path)
-            frames_upscaled_paths_list.append(result_path)
+            if selected_interpolation:
+                frame_upscaled = interpolate_images(starting_frame, frame_upscaled, frame_target_height, frame_target_width)
+                image_write(result_frame_path, frame_upscaled)
+            else: 
+                image_write(result_frame_path, frame_upscaled)
+            
+            frames_upscaled_paths_list.append(result_frame_path)
 
     else:
         for index_frame, frame_path in enumerate(frame_list_paths, 0):
-            if (index_frame % 8 == 0): update_process_status(f"Upscaling frames {index_frame}/{len(frame_list_paths)}")
+            if (index_frame % 8 == 0): update_process_status(f"{file_number}. Upscaling frames {index_frame}/{len(frame_list_paths)}")
             
             with torch.no_grad():
-                frame = image_read(frame_path, cv2.IMREAD_UNCHANGED)
-                result_path = prepare_output_image_filename(frame_path, selected_AI_model, resize_factor, selected_image_extension)
-                frame_upscaled = AI_enhance(AI_model, frame, backend, half_precision)
-                image_write(result_path, frame_upscaled)
-                frames_upscaled_paths_list.append(result_path)
+                starting_frame    = image_read(frame_path)
+                result_frame_path = prepare_output_image_filename(frame_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation)
+                
+                if resize_factor != 1: frame_to_upscale = resize_frame(starting_frame, frame_resized_width, frame_resized_height)
+                else:                  frame_to_upscale = starting_frame
+                
+                frame_upscaled    = AI_enhance(AI_model, frame_to_upscale, backend, half_precision)
 
-    update_process_status("Processing upscaled video")
+                if selected_interpolation:
+                    frame_upscaled = interpolate_images(starting_frame, frame_upscaled, frame_target_height, frame_target_width)
+                    image_write(result_frame_path, frame_upscaled)
+                else: 
+                    image_write(result_frame_path, frame_upscaled)
+
+                frames_upscaled_paths_list.append(result_frame_path)
+
+    update_process_status(f"{file_number}. Processing upscaled video")
     video_reconstruction_by_frames(video_path, 
                                    frames_upscaled_paths_list, 
                                    selected_AI_model, 
                                    resize_factor, 
                                    cpu_number, 
-                                   selected_video_extension)
+                                   selected_video_extension,
+                                   selected_interpolation)
 
 def upscale_orchestrator(selected_file_list,
                          selected_AI_model,
@@ -865,28 +862,50 @@ def upscale_orchestrator(selected_file_list,
                          resize_factor,
                          cpu_number,
                          half_precision,
-                         selected_video_extension):
+                         selected_video_extension,
+                         selected_interpolation):
     
     start = timer()
     torch.set_num_threads(cpu_number)
 
-    #try:
-    update_process_status("Preparing AI model")
-    AI_model = prepare_model(selected_AI_model, backend, half_precision)
+    try:
+        update_process_status("Preparing AI model")
+        AI_model = prepare_model(selected_AI_model, backend, half_precision)
 
-    for index, file_path in enumerate(selected_file_list, 0):
-        update_process_status(f"Upscaling {index}/{len(selected_file_list)}")
+        for file_number, file_path in enumerate(selected_file_list, 0):
+            file_number = file_number + 1
+            update_process_status(f"Upscaling {file_number}/{len(selected_file_list)}")
 
-        if check_if_file_is_video(file_path):
-            upscale_video(file_path, AI_model, selected_AI_model, backend, selected_image_extension, tiles_resolution, resize_factor, cpu_number, half_precision, selected_video_extension)
-        else:
-            upscale_image(file_path, AI_model, selected_AI_model, backend, selected_image_extension, tiles_resolution, resize_factor, half_precision)
+            if check_if_file_is_video(file_path):
+                upscale_video(file_path, 
+                              file_number,
+                              AI_model, 
+                              selected_AI_model, 
+                              backend, 
+                              selected_image_extension, 
+                              tiles_resolution, 
+                              resize_factor, 
+                              cpu_number, 
+                              half_precision, 
+                              selected_video_extension,
+                              selected_interpolation)
+            else:
+                upscale_image(file_path, 
+                              file_number,
+                              AI_model, 
+                              selected_AI_model, 
+                              backend, 
+                              selected_image_extension, 
+                              tiles_resolution, 
+                              resize_factor, 
+                              half_precision, 
+                              selected_interpolation)
 
-    update_process_status(f"All files completed ({round(timer() - start)} sec.)")
+        update_process_status(f"All files completed ({round(timer() - start)} sec.)")
 
-   # except Exception as exception:
-    #    update_process_status('Error while upscaling\n\n' + str(exception))
-     #   show_error(exception)
+    except Exception as exception:
+        update_process_status('Error while upscaling\n\n' + str(exception))
+        show_error(exception)
 
 
 
@@ -1037,7 +1056,7 @@ def open_files_action():
                                          rely = 0.25, 
                                          relwidth = 1.0, 
                                          relheight = 0.475, 
-                                         anchor = tkinter.CENTER)
+                                         anchor = tk.CENTER)
         
         scrollable_frame_file_list.add_clean_button()
 
@@ -1090,6 +1109,13 @@ def select_video_extension_from_menu(new_value: str):
     global selected_video_extension   
     selected_video_extension = new_value
 
+def select_interpolation_from_menu(new_value: str):
+    global selected_interpolation
+    if new_value == 'Yes':
+        selected_interpolation = True
+    elif new_value == 'No':
+        selected_interpolation = False
+
 
 
 # GUI info functions ---------------------------
@@ -1108,7 +1134,7 @@ def open_info_AI_model():
 Try all AI and choose the one that gives the best results""" 
     
     tk.messagebox.showinfo(title = 'AI model', message = info)
-    
+
 def open_info_device():
     info = """This widget allows to choose the gpu to run AI with. \n 
 Keep in mind that the more powerful your gpu is, 
@@ -1148,11 +1174,7 @@ Selecting a value greater than the actual amount of gpu VRAM may result in upsca
     
 def open_info_cpu():
     info = """This widget allows you to choose how many cpus to devote to the app.\n
-Where possible the app will use the number of processors you select, for example:
-- Extracting frames from videos
-- Resizing frames from videos
-- Recostructing final video
-- AI processing"""
+Where possible the app will use the number of cpus selected."""
 
     tk.messagebox.showinfo(title = 'Cpu number', message = info)
 
@@ -1163,14 +1185,13 @@ def open_info_AI_precision():
   > compatible with all GPUs 
   > uses 50% more GPU memory than Half precision mode
   > is 30-70% faster than Half precision mode
-  > may result in lower upscale quality
   
 - Half precision
   > some old GPUs are not compatible with this mode
   > uses 50% less GPU memory than Full precision mode
   > is 30-70% slower than Full precision mode"""
 
-    tk.messagebox.showinfo(title = 'AI mode', message = info)
+    tk.messagebox.showinfo(title = 'AI precision', message = info)
 
 def open_info_video_extension():
     info = """This widget allows you to choose the video output:
@@ -1180,6 +1201,18 @@ def open_info_video_extension():
 - .webm | produces low quality but light video"""
 
     tk.messagebox.showinfo(title = 'Video output', message = info)    
+
+def open_info_interpolation():
+    info = """This widget allows you to choose interpolating 
+the upscaled image/frame with the original image/frame.
+
+- Interpolation allows to increase the quality of the final result, 
+  especially when using the tilling/merging function.
+
+- It also increases the the quality of the final result at low 
+  "Input resolution %" values (e.g. <50%)."""
+
+    tk.messagebox.showinfo(title = 'Video output', message = info) 
 
 
 
@@ -1196,27 +1229,7 @@ def place_up_background():
                         rely = 0.0, 
                         relwidth = 1.0,  
                         relheight = 1.0,  
-                        anchor = tkinter.CENTER)
-
-def place_app_name():
-    app_name_label = CTkLabel(master     = window, 
-                              text       = app_name + " " + version,
-                              text_color = app_name_color,
-                              font       = bold20,
-                              anchor     = "w")
-    
-    app_name_label.place(relx = 0.5, rely = 0.56, anchor = tkinter.CENTER)
-
-def place_itch_button(): 
-    itch_button = CTkButton(master     = window, 
-                            width      = 30,
-                            height     = 30,
-                            fg_color   = "black",
-                            text       = "", 
-                            font       = bold11,
-                            image      = logo_itch,
-                            command    = openitch)
-    itch_button.place(relx = 0.045, rely = 0.55, anchor = tkinter.CENTER)
+                        anchor = tk.CENTER)
 
 def place_github_button():
     git_button = CTkButton(master      = window, 
@@ -1227,10 +1240,11 @@ def place_github_button():
                             font       = bold11,
                             image      = logo_git,
                             command    = opengithub)
-    git_button.place(relx = 0.045, rely = 0.61, anchor = tkinter.CENTER)
+    
+    git_button.place(relx = 0.045, rely = 0.87, anchor = tk.CENTER)
 
 def place_telegram_button():
-    telegram_button = CTkButton(master = window, 
+    telegram_button = CTkButton(master     = window, 
                                 width      = 30,
                                 height     = 30,
                                 fg_color   = "black",
@@ -1238,20 +1252,8 @@ def place_telegram_button():
                                 font       = bold11,
                                 image      = logo_telegram,
                                 command    = opentelegram)
-    telegram_button.place(relx = 0.045, rely = 0.67, anchor = tkinter.CENTER)
-
-def place_upscale_button(): 
-    upscale_button = CTkButton(master    = window, 
-                                width      = 140,
-                                height     = 30,
-                                fg_color   = "#282828",
-                                text_color = "#E0E0E0",
-                                text       = "UPSCALE", 
-                                font       = bold11,
-                                image      = play_icon,
-                                command    = upscale_button_command)
-    upscale_button.place(relx = 0.8, rely = row3_y, anchor = tkinter.CENTER)
-    
+    telegram_button.place(relx = 0.045, rely = 0.93, anchor = tk.CENTER)
+ 
 def place_stop_button(): 
     stop_button = CTkButton(master   = window, 
                             width      = 140,
@@ -1262,219 +1264,7 @@ def place_stop_button():
                             font       = bold11,
                             image      = stop_icon,
                             command    = stop_button_command)
-    stop_button.place(relx = 0.8, rely = row3_y, anchor = tkinter.CENTER)
-
-def place_AI_menu():
-    AI_menu_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "AI model",
-                              height   = 23,
-                              width    = 130,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_AI_model)
-
-    AI_menu = CTkOptionMenu(master  = window, 
-                            values  = AI_models_list,
-                            width      = 140,
-                            font       = bold11,
-                            height     = 30,
-                            fg_color   = "#000000",
-                            anchor     = "center",
-                            command    = select_AI_from_menu,
-                            dropdown_font = bold11,
-                            dropdown_fg_color = "#000000")
-
-    AI_menu_button.place(relx = 0.20, rely = row1_y - 0.05, anchor = tkinter.CENTER)
-    AI_menu.place(relx = 0.20, rely = row1_y, anchor = tkinter.CENTER)
-
-def place_AI_mode_menu():
-    AI_modes = ["Half precision", "Full precision"]
-
-    AI_mode_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "AI mode",
-                              height   = 23,
-                              width    = 130,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_AI_precision)
-
-    AI_mode_menu = CTkOptionMenu(master  = window, 
-                                values   = AI_modes,
-                                width      = 140,
-                                font       = bold11,
-                                height     = 30,
-                                fg_color   = "#000000",
-                                anchor     = "center",
-                                dynamic_resizing = False,
-                                command    = select_AI_mode_from_menu,
-                                dropdown_font = bold11,
-                                dropdown_fg_color = "#000000")
-    
-    AI_mode_button.place(relx = 0.20, rely = row2_y - 0.05, anchor = tkinter.CENTER)
-    AI_mode_menu.place(relx = 0.20, rely = row2_y, anchor = tkinter.CENTER)
-
-def place_image_extension_menu():
-    file_extension_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "Image output",
-                              height   = 23,
-                              width    = 130,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_file_extension)
-
-    file_extension_menu = CTkOptionMenu(master  = window, 
-                                        values     = image_extension_list,
-                                        width      = 140,
-                                        font       = bold11,
-                                        height     = 30,
-                                        fg_color   = "#000000",
-                                        anchor     = "center",
-                                        command    = select_image_extension_from_menu,
-                                        dropdown_font = bold11,
-                                        dropdown_fg_color = "#000000")
-    
-    file_extension_button.place(relx = 0.20, rely = row3_y - 0.05, anchor = tkinter.CENTER)
-    file_extension_menu.place(relx = 0.20, rely = row3_y, anchor = tkinter.CENTER)
-
-def place_video_extension_menu():
-    video_extension_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "Video output",
-                              height   = 23,
-                              width    = 130,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_video_extension)
-
-    video_extension_menu = CTkOptionMenu(master  = window, 
-                                    values     = video_extension_list,
-                                    width      = 140,
-                                    font       = bold11,
-                                    height     = 30,
-                                    fg_color   = "#000000",
-                                    anchor     = "center",
-                                    dynamic_resizing = False,
-                                    command    = select_video_extension_from_menu,
-                                    dropdown_font = bold11,
-                                    dropdown_fg_color = "#000000")
-    
-    video_extension_button.place(relx = 0.5, rely = row1_y - 0.05, anchor = tkinter.CENTER)
-    video_extension_menu.place(relx = 0.5, rely = row1_y, anchor = tkinter.CENTER)
-
-def place_gpu_menu():
-    AI_device_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "GPU",
-                              height   = 23,
-                              width    = 130,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_device)
-
-    AI_device_menu = CTkOptionMenu(master  = window, 
-                                    values   = device_list_names,
-                                    width      = 140,
-                                    font       = bold9,
-                                    height     = 30,
-                                    fg_color   = "#000000",
-                                    anchor     = "center",
-                                    dynamic_resizing = False,
-                                    command    = select_AI_device_from_menu,
-                                    dropdown_font = bold11,
-                                    dropdown_fg_color = "#000000")
-    
-    AI_device_button.place(relx = 0.5, rely = row2_y - 0.05, anchor = tkinter.CENTER)
-    AI_device_menu.place(relx = 0.5, rely  = row2_y, anchor = tkinter.CENTER)
-
-def place_vram_textbox():
-    vram_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "GPU Vram (GB)",
-                              height   = 23,
-                              width    = 130,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_vram_limiter)
-
-    vram_textbox = CTkEntry(master      = window, 
-                            width      = 140,
-                            font       = bold11,
-                            height     = 30,
-                            fg_color   = "#000000",
-                            textvariable = selected_VRAM_limiter)
-    
-    vram_button.place(relx = 0.5, rely = row3_y - 0.05, anchor = tkinter.CENTER)
-    vram_textbox.place(relx = 0.5, rely  = row3_y, anchor = tkinter.CENTER)
-
-def place_message_label():
-    message_label = CTkLabel(master  = window, 
-                            textvariable = info_message,
-                            height       = 25,
-                            font         = bold10,
-                            fg_color     = "#ffbf00",
-                            text_color   = "#000000",
-                            anchor       = "center",
-                            corner_radius = 25)
-    message_label.place(relx = 0.8, rely = 0.56, anchor = tkinter.CENTER)
-
-def place_cpu_textbox():
-    cpu_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "CPU number",
-                              height   = 23,
-                              width    = 130,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_cpu)
-
-    cpu_textbox = CTkEntry(master    = window, 
-                            width      = 140,
-                            font       = bold11,
-                            height     = 30,
-                            fg_color   = "#000000",
-                            textvariable = selected_cpu_number)
-
-    cpu_button.place(relx = 0.8, rely = row1_y - 0.05, anchor = tkinter.CENTER)
-    cpu_textbox.place(relx = 0.8, rely  = row1_y, anchor = tkinter.CENTER)
-
-def place_input_resolution_textbox():
-    resize_factor_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "Input resolution (%)",
-                              height   = 23,
-                              width    = 130,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_resize)
-
-    resize_factor_textbox = CTkEntry(master    = window, 
-                                    width      = 140,
-                                    font       = bold11,
-                                    height     = 30,
-                                    fg_color   = "#000000",
-                                    textvariable = selected_resize_factor)
-    
-    resize_factor_button.place(relx = 0.80, rely = row2_y - 0.05, anchor = tkinter.CENTER)
-    resize_factor_textbox.place(relx = 0.80, rely = row2_y, anchor = tkinter.CENTER)
+    stop_button.place(relx = 0.79, rely = row3_y, anchor = tk.CENTER)
 
 def place_loadFile_section():
 
@@ -1500,38 +1290,296 @@ VIDEOS - mp4 webm mkv flv gif avi mov mpg qt 3gp"""
                                 border_spacing = 0,
                                 command        = open_files_action)
 
-    input_file_text.place(relx = 0.5, rely = 0.22,  anchor = tkinter.CENTER)
-    input_file_button.place(relx = 0.5, rely = 0.385, anchor = tkinter.CENTER)
+    input_file_text.place(relx = 0.5, rely = 0.22,  anchor = tk.CENTER)
+    input_file_button.place(relx = 0.5, rely = 0.385, anchor = tk.CENTER)
 
+def place_app_name():
+    app_name_label = CTkLabel(master     = window, 
+                              text       = app_name + " " + version,
+                              text_color = app_name_color,
+                              font       = bold20,
+                              anchor     = "w")
+    
+    app_name_label.place(relx = 0.21, rely = 0.56, anchor = tk.CENTER)
+
+def place_AI_menu():
+    AI_menu_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "AI model",
+                              height   = 23,
+                              width    = 125,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_AI_model)
+
+    AI_menu = CTkOptionMenu(master  = window, 
+                            values  = AI_models_list,
+                            width      = 140,
+                            font       = bold11,
+                            height     = 30,
+                            fg_color   = "#000000",
+                            anchor     = "center",
+                            command    = select_AI_from_menu,
+                            dropdown_font = bold11,
+                            dropdown_fg_color = "#000000")
+
+    AI_menu_button.place(relx = 0.21, rely = row1_y - 0.05, anchor = tk.CENTER)
+    AI_menu.place(relx = 0.21, rely = row1_y, anchor = tk.CENTER)
+
+def place_AI_mode_menu():
+    AI_mode_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "AI precision",
+                              height   = 23,
+                              width    = 125,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_AI_precision)
+
+    AI_mode_menu = CTkOptionMenu(master    = window, 
+                                values     = AI_modes_list,
+                                width      = 140,
+                                font       = bold11,
+                                height     = 30,
+                                fg_color   = "#000000",
+                                anchor     = "center",
+                                dynamic_resizing = False,
+                                command          = select_AI_mode_from_menu,
+                                dropdown_font    = bold11,
+                                dropdown_fg_color = "#000000")
+    
+    AI_mode_button.place(relx = 0.21, rely = row2_y - 0.05, anchor = tk.CENTER)
+    AI_mode_menu.place(relx = 0.21, rely = row2_y, anchor = tk.CENTER)
+
+def place_interpolation_menu():
+    interpolation_button = CTkButton(master    = window, 
+                                    fg_color   = "black",
+                                    text_color = "#ffbf00",
+                                    text       = "Interpolation",
+                                    height     = 23,
+                                    width      = 125,
+                                    font       = bold11,
+                                    corner_radius = 25,
+                                    anchor     = "center",
+                                    command    = open_info_interpolation)
+
+    interpolation_menu = CTkOptionMenu(master      = window, 
+                                        values     = interpolation_list,
+                                        width      = 140,
+                                        font       = bold10,
+                                        height     = 30,
+                                        fg_color   = "#000000",
+                                        anchor     = "center",
+                                        dynamic_resizing = False,
+                                        command    = select_interpolation_from_menu,
+                                        dropdown_font     = bold11,
+                                        dropdown_fg_color = "#000000")
+    
+    interpolation_button.place(relx = 0.21, rely = row3_y - 0.05, anchor = tk.CENTER)
+    interpolation_menu.place(relx = 0.21, rely  = row3_y, anchor = tk.CENTER)
+
+def place_image_extension_menu():
+    file_extension_button = CTkButton(master   = window, 
+                                    fg_color   = "black",
+                                    text_color = "#ffbf00",
+                                    text       = "Image output",
+                                    height     = 23,
+                                    width      = 125,
+                                    font       = bold11,
+                                    corner_radius = 25,
+                                    anchor     = "center",
+                                    command    = open_info_file_extension)
+
+    file_extension_menu = CTkOptionMenu(master     = window, 
+                                        values     = image_extension_list,
+                                        width      = 140,
+                                        font       = bold11,
+                                        height     = 30,
+                                        fg_color   = "#000000",
+                                        anchor     = "center",
+                                        command    = select_image_extension_from_menu,
+                                        dropdown_font = bold11,
+                                        dropdown_fg_color = "#000000")
+    
+    file_extension_button.place(relx = 0.5, rely = row0_y - 0.05, anchor = tk.CENTER)
+    file_extension_menu.place(relx = 0.5, rely = row0_y, anchor = tk.CENTER)
+
+def place_video_extension_menu():
+    video_extension_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "Video output",
+                              height   = 23,
+                              width    = 125,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_video_extension)
+
+    video_extension_menu = CTkOptionMenu(master  = window, 
+                                    values     = video_extension_list,
+                                    width      = 140,
+                                    font       = bold11,
+                                    height     = 30,
+                                    fg_color   = "#000000",
+                                    anchor     = "center",
+                                    dynamic_resizing = False,
+                                    command    = select_video_extension_from_menu,
+                                    dropdown_font = bold11,
+                                    dropdown_fg_color = "#000000")
+    
+    video_extension_button.place(relx = 0.5, rely = row1_y - 0.05, anchor = tk.CENTER)
+    video_extension_menu.place(relx = 0.5, rely = row1_y, anchor = tk.CENTER)
+
+def place_gpu_menu():
+    AI_device_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "GPU",
+                              height   = 23,
+                              width    = 125,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_device)
+
+    AI_device_menu = CTkOptionMenu(master  = window, 
+                                    values   = device_list_names,
+                                    width      = 140,
+                                    font       = bold9,
+                                    height     = 30,
+                                    fg_color   = "#000000",
+                                    anchor     = "center",
+                                    dynamic_resizing = False,
+                                    command    = select_AI_device_from_menu,
+                                    dropdown_font = bold11,
+                                    dropdown_fg_color = "#000000")
+    
+    AI_device_button.place(relx = 0.5, rely = row2_y - 0.05, anchor = tk.CENTER)
+    AI_device_menu.place(relx = 0.5, rely  = row2_y, anchor = tk.CENTER)
+
+def place_vram_textbox():
+    vram_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "GPU Vram (GB)",
+                              height   = 23,
+                              width    = 125,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_vram_limiter)
+
+    vram_textbox = CTkEntry(master      = window, 
+                            width      = 140,
+                            font       = bold11,
+                            height     = 30,
+                            fg_color   = "#000000",
+                            textvariable = selected_VRAM_limiter)
+    
+    vram_button.place(relx = 0.5, rely = row3_y - 0.05, anchor = tk.CENTER)
+    vram_textbox.place(relx = 0.5, rely  = row3_y, anchor = tk.CENTER)
+
+def place_input_resolution_textbox():
+    resize_factor_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "Input resolution (%)",
+                              height   = 23,
+                              width    = 125,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_resize)
+
+    resize_factor_textbox = CTkEntry(master    = window, 
+                                    width      = 140,
+                                    font       = bold11,
+                                    height     = 30,
+                                    fg_color   = "#000000",
+                                    textvariable = selected_resize_factor)
+    
+    resize_factor_button.place(relx = 0.790, rely = row0_y - 0.05, anchor = tk.CENTER)
+    resize_factor_textbox.place(relx = 0.790, rely = row0_y, anchor = tk.CENTER)
+
+def place_cpu_textbox():
+    cpu_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "CPU number",
+                              height   = 23,
+                              width    = 125,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_cpu)
+
+    cpu_textbox = CTkEntry(master    = window, 
+                            width      = 140,
+                            font       = bold11,
+                            height     = 30,
+                            fg_color   = "#000000",
+                            textvariable = selected_cpu_number)
+
+    cpu_button.place(relx = 0.79, rely = row1_y - 0.05, anchor = tk.CENTER)
+    cpu_textbox.place(relx = 0.79, rely  = row1_y, anchor = tk.CENTER)
+
+def place_message_label():
+    message_label = CTkLabel(master  = window, 
+                            textvariable = info_message,
+                            height       = 25,
+                            font         = bold10,
+                            fg_color     = "#ffbf00",
+                            text_color   = "#000000",
+                            anchor       = "center",
+                            corner_radius = 25)
+    message_label.place(relx = 0.79, rely = row2_y, anchor = tk.CENTER)
+
+def place_upscale_button(): 
+    upscale_button = CTkButton(master    = window, 
+                                width      = 140,
+                                height     = 30,
+                                fg_color   = "#282828",
+                                text_color = "#E0E0E0",
+                                text       = "UPSCALE", 
+                                font       = bold11,
+                                image      = play_icon,
+                                command    = upscale_button_command)
+    upscale_button.place(relx = 0.79, rely = row3_y, anchor = tk.CENTER)
+   
 
 
 class App():
     def __init__(self, window):
         window.title('')
-        width        = 650
+        width        = 675
         height       = 600
-        window.geometry("650x600")
+        window.geometry("675x600")
         window.minsize(width, height)
         window.iconbitmap(find_by_relative_path("Assets" + os.sep + "logo.ico"))
 
         place_up_background()
 
         place_app_name()
-        place_itch_button()
         place_github_button()
         place_telegram_button()
 
         place_AI_menu()
         place_AI_mode_menu()
-        place_image_extension_menu()
+        place_interpolation_menu()
 
+        place_image_extension_menu()
         place_video_extension_menu()
         place_gpu_menu()
         place_vram_textbox()
         
-        place_message_label()
         place_input_resolution_textbox()
         place_cpu_textbox()
+        place_message_label()
         place_upscale_button()
 
         place_loadFile_section()
@@ -1550,50 +1598,48 @@ if __name__ == "__main__":
     global selected_AI_device 
     global selected_image_extension
     global selected_video_extension
+    global selected_interpolation
     global tiles_resolution
     global resize_factor
     global cpu_number
 
     selected_file_list = []
-    selected_AI_model  = AI_models_list[0]
-    half_precision     = True
-    selected_AI_device = 0
 
+    if   AI_modes_list[0] == "Half precision": half_precision = True
+    elif AI_modes_list[0] == "Full precision": half_precision = False
+
+    selected_interpolation = True
+    selected_AI_device     = 0
+
+    selected_AI_model        = AI_models_list[0]
     selected_image_extension = image_extension_list[0]
     selected_video_extension = video_extension_list[0]
 
-    info_message = tk.StringVar()
+    info_message            = tk.StringVar()
     selected_resize_factor  = tk.StringVar()
     selected_VRAM_limiter   = tk.StringVar()
     selected_cpu_number     = tk.StringVar()
 
     info_message.set("Hi :)")
-
-    cpu_count = str(int(os.cpu_count()/2))
-
     selected_resize_factor.set("50")
     selected_VRAM_limiter.set("8")
-    selected_cpu_number.set(cpu_count)
+    selected_cpu_number.set(str(int(os.cpu_count()/2)))
 
     bold8  = CTkFont(family = "Segoe UI", size = 8, weight = "bold")
     bold9  = CTkFont(family = "Segoe UI", size = 9, weight = "bold")
     bold10 = CTkFont(family = "Segoe UI", size = 10, weight = "bold")
     bold11 = CTkFont(family = "Segoe UI", size = 11, weight = "bold")
     bold12 = CTkFont(family = "Segoe UI", size = 12, weight = "bold")
+    bold18 = CTkFont(family = "Segoe UI", size = 18, weight = "bold")
+    bold19 = CTkFont(family = "Segoe UI", size = 19, weight = "bold")
     bold20 = CTkFont(family = "Segoe UI", size = 20, weight = "bold")
     bold21 = CTkFont(family = "Segoe UI", size = 21, weight = "bold")
 
-    global stop_icon
-    global clear_icon
-    global play_icon
-    global logo_itch
-    global logo_git
-    logo_git   = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "github_logo.png")), size=(15, 15))
-    logo_itch  = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "itch_logo.png")),  size=(13, 13))
+    logo_git      = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "github_logo.png")), size=(15, 15))
     logo_telegram = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "telegram_logo.png")),  size=(15, 15))
-    stop_icon  = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "stop_icon.png")), size=(15, 15))
-    play_icon  = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "upscale_icon.png")), size=(15, 15))
-    clear_icon = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "clear_icon.png")), size=(15, 15))
+    stop_icon     = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "stop_icon.png")), size=(15, 15))
+    play_icon     = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "upscale_icon.png")), size=(15, 15))
+    clear_icon    = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "clear_icon.png")), size=(15, 15))
 
     app = App(window)
     window.update()
