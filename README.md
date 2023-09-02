@@ -9,7 +9,7 @@
 </div>
 <br>
 <div align="center">
-    <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/7dc459e7-fdfe-4903-83a3-fbf6380ef8e3"> </a> 
+    <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/cdf45a13-579a-4f39-a64e-e60b80ac6bd9"> </a> 
 </div>
 
 ## What is QualityScaler?
@@ -21,9 +21,8 @@ Qualityscaler is a Windows app that uses BSRGAN Artificial Intelligence to enhan
 
 
 ## Citations. ❤
-https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-images/
-
-https://timesavervfx.com/ai-upscale/
+- https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-images/
+- https://timesavervfx.com/ai-upscale/
 
 ## Credits.
 BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
