@@ -4,7 +4,10 @@
     <img src="https://github.com/Djdefrag/QualityScaler/blob/main/Assets/logo.png" width="175"> </a> 
     <br><br> QualityScaler - image/video AI upscaler app (BSRGAN) <br><br>
     <a href="https://jangystudio.itch.io/qualityscaler">
-         <img src="https://user-images.githubusercontent.com/86362423/162710522-c40c4f39-a6b9-48bc-84bc-1c6b78319f01.png" width="200">
+         <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/beecdebe-5b4e-4aaf-8a59-705b5d9c029c" width="200">
+    </a>
+    <a href="https://store.steampowered.com/app/2463110/QualityScaler/">
+         <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/60179a9a-4d95-4d07-9a4c-3d2229915a92" width="200">
     </a>
 </div>
 <br>
