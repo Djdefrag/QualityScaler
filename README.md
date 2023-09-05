@@ -3,7 +3,7 @@
 <body>
     <div align="center">    
         <img src="https://github.com/Djdefrag/QualityScaler/blob/main/Assets/logo.png" width="175"> 
-        <br><br> QualityScaler - image/video AI upscaler app (BSRGAN) <br><br>
+        <br><br> QualityScaler - image/video AI upscaler app <br><br>
         <a href="https://jangystudio.itch.io/qualityscaler">
             <button>
                 <img src="https://static.itch.io/images/badge-color.svg" width="250" height="70">
@@ -24,7 +24,7 @@
 
 
 ## What is QualityScaler?
-Qualityscaler is a Windows app that uses BSRGAN Artificial Intelligence to enhance, enlarge and reduce noise in photographs and videos.
+Qualityscaler is a Windows app powered by AI to enhance, enlarge and reduce noise in photographs and videos.
 
 ## Other AI projects.🤓
 - https://github.com/Djdefrag/RealESRScaler / RealESRScaler - image/video AI upscaler app (Real-ESRGAN)
@@ -54,8 +54,10 @@ External packages are:
 ## Features.
 - [x] Easy to use GUI
 - [x] Images and Videos upscale
+- [x] Multiple AI models
 - [x] Automatic image tiling and merging to avoid gpu VRAM limitation
-- [x] Resize image/video before upscaling
+- [x] Resize image/video before AI upscaling
+- [x] Interpolation between the original and upscaled image/video
 - [x] Multiple Gpu support
 - [x] Compatible images - png, jpeg, bmp, webp, tif  
 - [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
@@ -73,6 +75,7 @@ External packages are:
     - [x] Upscaling images and videos at once (currently it is possible to upscale images or single video)
     - [x] Upscale multiple videos at once
     - [x] Choose upscaled video extension
+    - [x] Interpolation between the original and upscaled image/video
     - [ ] Python 3.11 (expecting ~30% more performance)
     - [ ] Torch/torch-directml 2.0 (expecting ~20% more performance)
 
