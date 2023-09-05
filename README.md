@@ -6,7 +6,7 @@
         <br><br> QualityScaler - image/video AI upscaler app <br><br>
         <a href="https://jangystudio.itch.io/qualityscaler">
             <button>
-                <img src="https://static.itch.io/images/badge-color.svg" width="250" height="70">
+                <img src="https://static.itch.io/images/badge-color.svg" width="225" height="70">
             </button>     
         </a>
         <a href="https://store.steampowered.com/app/2463110/QualityScaler/">
