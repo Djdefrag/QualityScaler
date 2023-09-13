@@ -1,6 +1,7 @@
 import multiprocessing
 import os.path
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -723,6 +724,26 @@ def image_write(file_path, file_data): cv2.imwrite(file_path, file_data)
 
 def image_read(file_path, flags = cv2.IMREAD_UNCHANGED): 
     return cv2.imread(file_path, flags)
+
+# Copies metadata from original image to new image
+# This also works for videos but few metadata tags are supported
+# Level is one of "disabled", "basic", or "extensive":
+#  - disabled = do not copy metadata, return immediately
+#  - basic = copy informational metadata only
+#  - extensive = copy all metadata, including embedded thumbnails and color profiles
+def copy_metadata(original_file_path, new_file_path, level = "basic"):
+    cmd = ['exiftool', '-fast', '-TagsFromFile', original_file_path, '-overwrite_original', '-all:all']
+    
+    if level == "disabled": return
+    elif level == "basic": cmd.extend([new_file_path])
+    elif level == "extensive": cmd.extend(['-unsafe', '-largetags', new_file_path])
+    else: raise ValueError("Invalid level argument")
+
+    try:
+        print(f"Copying metadata to {new_file_path} (level={level})")
+        subprocess.run(cmd, check=True)
+    except Exception as ex:
+        print(f"Error while copying metadata to {new_file_path}: {ex}")
 
 def prepare_output_image_filename(image_path, 
                                   selected_AI_model, 
