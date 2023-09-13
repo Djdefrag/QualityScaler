@@ -17,7 +17,7 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/cdf45a13-579a-4f39-a64e-e60b80ac6bd9">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/d59dbf41-3565-411b-91df-761943a09573">
     </div>
 </body>
 </html>
@@ -63,7 +63,7 @@ External packages are:
 - [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
 
 ## Next steps. 🤫
-- [ ] 1.X versions
+- [x] 1.X versions
     - [x] Switch to Pytorch-directml to support all Directx12 compatible gpu (AMD, Intel, Nvidia)
     - [x] New GUI with Windows 11 style
     - [x] Include audio for upscaled video
@@ -76,6 +76,7 @@ External packages are:
     - [x] Upscale multiple videos at once
     - [x] Choose upscaled video extension
     - [x] Interpolation between the original and upscaled image/video
+    - [x] Show the remaining time to complete video upscaling
     - [ ] Python 3.11 (expecting ~30% more performance)
     - [ ] Torch/torch-directml 2.0 (expecting ~20% more performance)
 
