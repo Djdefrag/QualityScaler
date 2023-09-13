@@ -36,7 +36,8 @@ Qualityscaler is a Windows app powered by AI to enhance, enlarge and reduce nois
 - https://timesavervfx.com/ai-upscale/
 
 ## Credits.
-BSRGAN - https://github.com/cszn/BSRGAN | https://arxiv.org/abs/2103.14006
+BSRGAN - https://github.com/cszn/BSRGAN
+Real-ESRGAN - https://github.com/xinntao/Real-ESRGAN
 
 ## How is made. 🛠
 QualityScaler is completely written in Python, from backend to frontend. 
