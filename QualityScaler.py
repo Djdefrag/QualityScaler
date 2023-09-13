@@ -1563,8 +1563,6 @@ def place_up_background():
                         relwidth = 1.0,  
                         relheight = 1.0,  
                         anchor = tk.CENTER)
-                        
-    register_drag_drop(up_background)
 
 def place_github_button():
     git_button = CTkButton(master      = window, 
@@ -1627,9 +1625,6 @@ VIDEOS - mp4 webm mkv flv gif avi mov mpg qt 3gp"""
 
     input_file_text.place(relx = 0.5, rely = 0.22,  anchor = tk.CENTER)
     input_file_button.place(relx = 0.5, rely = 0.385, anchor = tk.CENTER)
-
-    register_drag_drop(input_file_text)
-    register_drag_drop(input_file_button)
 
 def place_app_name():
     app_name_label = CTkLabel(master     = window, 
@@ -1894,6 +1889,7 @@ class Tk(CTk, TkinterDnD.DnDWrapper):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.TkdndVersion = TkinterDnD._require(self)
+        register_drag_drop(self)
 
 class App():
     def __init__(self, window):
