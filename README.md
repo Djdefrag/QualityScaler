@@ -30,14 +30,13 @@ Qualityscaler is a Windows app powered by AI to enhance, enlarge and reduce nois
 - https://github.com/Djdefrag/RealESRScaler / RealESRScaler - image/video AI upscaler app (Real-ESRGAN)
 - https://github.com/Djdefrag/FluidFrames.RIFE / FluidFrames.RIFE - video AI interpolation app (RIFE-HDv3)
 
-
 ## Citations. ❤
 - https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-images/
 - https://timesavervfx.com/ai-upscale/
 
 ## Credits.
-BSRGAN - https://github.com/cszn/BSRGAN
-Real-ESRGAN - https://github.com/xinntao/Real-ESRGAN
+- BSRGAN - https://github.com/cszn/BSRGAN
+- Real-ESRGAN - https://github.com/xinntao/Real-ESRGAN
 
 ## How is made. 🛠
 QualityScaler is completely written in Python, from backend to frontend. 
