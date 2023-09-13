@@ -1,6 +1,7 @@
 import multiprocessing
 import os.path
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -57,6 +58,7 @@ image_extension_list  = [ '.jpg', '.png', '.bmp', '.tiff' ]
 video_extension_list  = [ '.mp4', '.avi', '.webm' ]
 interpolation_list    = [ 'Yes', 'No' ]
 AI_modes_list         = [ "Half precision", "Full precision" ]
+metadata_level_list   = [ "Disabled", "Basic", "Full" ]
 
 log_file_path  = f"{app_name}.log"
 temp_dir       = f"{app_name}_temp"
@@ -724,6 +726,22 @@ def image_write(file_path, file_data): cv2.imwrite(file_path, file_data)
 def image_read(file_path, flags = cv2.IMREAD_UNCHANGED): 
     return cv2.imread(file_path, flags)
 
+# Copies metadata from original image to new image
+# This also works for videos but few metadata tags are supported
+def copy_metadata(original_file_path, new_file_path, level):
+    cmd = ['exiftool', '-fast', '-TagsFromFile', original_file_path, '-overwrite_original', '-all:all']
+    
+    if level == "Disabled": return
+    elif level == "Basic": cmd.extend([new_file_path])
+    elif level == "Full": cmd.extend(['-unsafe', '-largetags', new_file_path])
+    else: raise ValueError("Invalid level argument")
+
+    try:
+        print(f"Copying metadata to {new_file_path}")
+        subprocess.run(cmd, check=True)
+    except Exception as ex:
+        print(f"Error while copying metadata to {new_file_path}: {ex}")
+
 def prepare_output_image_filename(image_path, 
                                   selected_AI_model, 
                                   resize_factor, 
@@ -870,6 +888,8 @@ def video_reconstruction_by_frames(input_video_path,
                              verbose = False,
                              logger  = None,
                              threads = cpu_number)  
+    
+    return upscaled_video_path
         
 def interpolate_images(starting_image, 
                        upscaled_image, 
@@ -976,6 +996,7 @@ def upscale_button_command():
     global selected_AI_device 
     global selected_image_extension
     global selected_video_extension
+    global selected_metadata_level
     global tiles_resolution
     global resize_factor
     global cpu_number
@@ -1000,6 +1021,7 @@ def upscale_button_command():
         print(f"  Tiles resolution for selected GPU VRAM: {tiles_resolution}x{tiles_resolution}px")
         print(f"  Resize factor: {int(resize_factor * 100)}%")
         print(f"  Cpu number: {cpu_number}")
+        print(f"  Metadata level: {selected_metadata_level}")
         print("=" * 50)
 
         backend = torch.device(torch_directml.device(selected_AI_device))
@@ -1017,7 +1039,8 @@ def upscale_button_command():
                                                      cpu_number,
                                                      half_precision,
                                                      selected_video_extension,
-                                                     selected_interpolation))
+                                                     selected_interpolation,
+                                                     selected_metadata_level))
         process_upscale_orchestrator.start()
 
         thread_wait = threading.Thread(target = check_upscale_steps, 
@@ -1033,7 +1056,8 @@ def upscale_orchestrator(selected_file_list,
                          cpu_number,
                          half_precision,
                          selected_video_extension,
-                         selected_interpolation):
+                         selected_interpolation,
+                         selected_metadata_level):
     
     torch.autograd.set_detect_anomaly(False)
     torch.autograd.profiler.profile(False)
@@ -1062,7 +1086,8 @@ def upscale_orchestrator(selected_file_list,
                             cpu_number, 
                             half_precision, 
                             selected_video_extension,
-                            selected_interpolation)
+                            selected_interpolation,
+                            selected_metadata_level)
             else:
                 upscale_image(file_path, 
                             file_number,
@@ -1074,7 +1099,8 @@ def upscale_orchestrator(selected_file_list,
                             tiles_resolution, 
                             resize_factor, 
                             half_precision, 
-                            selected_interpolation)
+                            selected_interpolation,
+                            selected_metadata_level)
 
         update_process_status(f"All files completed! :)")
 
@@ -1094,7 +1120,8 @@ def upscale_image(image_path,
                   tiles_resolution, 
                   resize_factor, 
                   half_precision,
-                  selected_interpolation):
+                  selected_interpolation,
+                  selected_metadata_level):
     
     starting_image    = image_read(image_path)
     result_image_path = prepare_output_image_filename(image_path, 
@@ -1132,6 +1159,8 @@ def upscale_image(image_path,
         image_write(result_image_path, image_upscaled)
     else: 
         image_write(result_image_path, image_upscaled)
+    
+    copy_metadata(image_path, result_image_path, selected_metadata_level)
 
 # Videos
 
@@ -1147,7 +1176,8 @@ def upscale_video(video_path,
                   cpu_number, 
                   half_precision, 
                   selected_video_extension,
-                  selected_interpolation):
+                  selected_interpolation,
+                  selected_metadata_level):
     
     create_temp_dir(temp_dir)
 
@@ -1202,7 +1232,7 @@ def upscale_video(video_path,
         
             update_process_status(f"{file_number}. Upscaling video {percent_complete:.2f}% ({time_left})")
 
-    video_reconstruction_by_frames(video_path, 
+    result_video_path = video_reconstruction_by_frames(video_path, 
                                    file_number,
                                    frames_upscaled_paths_list, 
                                    selected_AI_model, 
@@ -1210,6 +1240,8 @@ def upscale_video(video_path,
                                    cpu_number, 
                                    selected_video_extension,
                                    selected_interpolation)
+                                   
+    copy_metadata(video_path, result_video_path, selected_metadata_level)
 
 
 
@@ -1426,6 +1458,10 @@ def select_video_extension_from_menu(new_value: str):
     global selected_video_extension   
     selected_video_extension = new_value
 
+def select_metadata_level_from_menu(new_value: str):
+    global selected_metadata_level   
+    selected_metadata_level = new_value
+
 def select_interpolation_from_menu(new_value: str):
     global selected_interpolation
     if new_value == 'Yes':
@@ -1520,6 +1556,20 @@ def open_info_video_extension():
  • .webm | produces low quality but light video"""
 
     tk.messagebox.showinfo(title = 'Video output', message = info)    
+
+def open_info_metadata_level():
+    info = """This widget allows you to choose how much metadata to
+preserve on upscaled images and videos. This will slow down the upscaling process.
+
+ • Disabled  | no metadata will be preserved
+ • Basic  | preserves informational metadata
+        (author, description, tags)
+ • Full  | preserves all metadata
+        (color profiles, embedded thumbnails, etc.)
+ 
+Different file formats support different metadata, so some data may be lost when converting between extensions."""
+
+    tk.messagebox.showinfo(title = 'Copy metadata', message = info)    
 
 def open_info_interpolation():
     info = """This widget allows you to choose interpolating 
@@ -1756,6 +1806,33 @@ def place_video_extension_menu():
     video_extension_button.place(relx = 0.5, rely = row1_y - 0.05, anchor = tk.CENTER)
     video_extension_menu.place(relx = 0.5, rely = row1_y, anchor = tk.CENTER)
 
+def place_metadata_level_menu():
+    metadata_level_button = CTkButton(master  = window, 
+                              fg_color   = "black",
+                              text_color = "#ffbf00",
+                              text     = "Copy metadata",
+                              height   = 23,
+                              width    = 125,
+                              font     = bold11,
+                              corner_radius = 25,
+                              anchor  = "center",
+                              command = open_info_metadata_level)
+
+    metadata_level_menu = CTkOptionMenu(master  = window, 
+                                    values     = metadata_level_list,
+                                    width      = 140,
+                                    font       = bold11,
+                                    height     = 30,
+                                    fg_color   = "#000000",
+                                    anchor     = "center",
+                                    dynamic_resizing = False,
+                                    command    = select_metadata_level_from_menu,
+                                    dropdown_font = bold11,
+                                    dropdown_fg_color = "#000000")
+    
+    metadata_level_button.place(relx = 0.79, rely = row2_y - 0.05, anchor = tk.CENTER)
+    metadata_level_menu.place(relx = 0.79, rely = row2_y, anchor = tk.CENTER)
+
 def place_gpu_menu():
     AI_device_button = CTkButton(master  = window, 
                               fg_color   = "black",
@@ -1858,7 +1935,7 @@ def place_message_label():
                             text_color   = "#000000",
                             anchor       = "center",
                             corner_radius = 25)
-    message_label.place(relx = 0.79, rely = row2_y, anchor = tk.CENTER)
+    message_label.place(relx = 0.79, rely = row2_y + 0.055, anchor = tk.CENTER)
 
 def place_upscale_button(): 
     upscale_button = CTkButton(master    = window, 
@@ -1900,6 +1977,7 @@ class App():
         
         place_input_resolution_textbox()
         place_cpu_textbox()
+        place_metadata_level_menu()
         place_message_label()
         place_upscale_button()
 
@@ -1920,6 +1998,7 @@ if __name__ == "__main__":
     global selected_image_extension
     global selected_video_extension
     global selected_interpolation
+    global selected_metadata_level
     global tiles_resolution
     global resize_factor
     global cpu_number
@@ -1936,6 +2015,7 @@ if __name__ == "__main__":
     selected_AI_model        = AI_models_list[0]
     selected_image_extension = image_extension_list[0]
     selected_video_extension = video_extension_list[0]
+    selected_metadata_level = metadata_level_list[0]
 
     info_message            = tk.StringVar()
     selected_resize_factor  = tk.StringVar()
