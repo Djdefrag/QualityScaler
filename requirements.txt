@@ -3,6 +3,7 @@ torch-directml==0.1.13.1.dev230301
 
 #GUI
 customtkinter
+tkinterdnd2
 win32mica
 
 #UTILS

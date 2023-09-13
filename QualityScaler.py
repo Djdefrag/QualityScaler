@@ -7,6 +7,7 @@ import time
 import tkinter as tk
 import webbrowser
 from timeit import default_timer as timer
+from tkinterdnd2 import TkinterDnD, DND_FILES
 
 import cv2
 import numpy as np
@@ -1349,13 +1350,19 @@ def check_supported_selected_files(uploaded_file_list):
 
     return supported_files_list
 
+def drop_files_action(event):
+    paths = window.tk.splitlist(event.data)
+    push_files(paths)
+
 def open_files_action():
     info_message.set("Selecting files...")
+    push_files(list(filedialog.askopenfilenames()))
 
-    uploaded_files_list    = list(filedialog.askopenfilenames())
-    uploaded_files_counter = len(uploaded_files_list)
+def push_files(files):
+    info_message.set("Checking files...")
+    uploaded_files_counter = len(files)
 
-    supported_files_list    = check_supported_selected_files(uploaded_files_list)
+    supported_files_list    = check_supported_selected_files(files)
     supported_files_counter = len(supported_files_list)
     
     print("> Uploaded files: " + str(uploaded_files_counter) + " => Supported files: " + str(supported_files_counter))
@@ -1536,6 +1543,11 @@ the upscaled image/frame with the original image/frame.
     tk.messagebox.showinfo(title = 'Video output', message = info) 
 
 
+# GUI drag and drop registration function -------
+
+def register_drag_drop(element):
+    element.drop_target_register(DND_FILES)
+    element.dnd_bind("<<Drop>>", drop_files_action)
 
 # GUI place functions ---------------------------
         
@@ -1873,6 +1885,11 @@ def place_upscale_button():
     upscale_button.place(relx = 0.79, rely = row3_y, anchor = tk.CENTER)
    
 
+class Tk(CTk, TkinterDnD.DnDWrapper):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.TkdndVersion = TkinterDnD._require(self)
+        register_drag_drop(self)
 
 class App():
     def __init__(self, window):
@@ -1911,7 +1928,7 @@ if __name__ == "__main__":
     set_appearance_mode("Dark")
     set_default_color_theme("dark-blue")
 
-    window = CTk() 
+    window = Tk() 
 
     global selected_file_list
     global selected_AI_model
