@@ -32,33 +32,42 @@ from PIL import Image
 
 
 app_name  = "QualityScaler"
-version   = "2.4"
+version   = "2.5"
 
 githubme    = "https://github.com/Djdefrag/QualityScaler"
 telegramme  = "https://linktr.ee/j3ngystudio"
 
-AI_models_list = [
-                  'BSRGANx4',
-                  'BSRNetx4',
-                  'RealSR_JPEGx4',
-                  'RealSR_DPEDx4', 
-                  'RRDBx4', 
-                  'ESRGANx4', 
-                  'FSSR_JPEGx4',
-                  'FSSR_DPEDx4',
-                 ]
+
+# RRDB models
+RRDB_vram_multiplier   = 0.9
+BSRGAN_models_list     = [ 'BSRGANx4', 'BSRGANx2' ]
+RealESRGAN_models_list = [ 'RealESRGANx4' ]
+
+# SRVGGNetCompact
+SRVGGNetCompact_vram_multiplier = 1.8
+SRVGGNetCompact_models_list     = [ 'RealESR_Gx4', 'RealSRx4_Anime' ]
+
+# SAFM models
+# SAFM_vram_multiplier = 2
+# SAFM_models_list     = ['SAFMN_x4', 'SAFMN_L_x4', 'SAFMN_L_Real_x4', 'SAFMN_L_Real_x4_v2']
+
+AI_models_list = BSRGAN_models_list + RealESRGAN_models_list + SRVGGNetCompact_models_list
 
 image_extension_list  = [ '.jpg', '.png', '.bmp', '.tiff' ]
 video_extension_list  = [ '.mp4', '.avi', '.webm' ]
 interpolation_list    = [ 'Yes', 'No' ]
 AI_modes_list         = [ "Half precision", "Full precision" ]
 
+log_file_path  = f"{app_name}.log"
+temp_dir       = f"{app_name}_temp"
+audio_path     = f"{app_name}_temp{os.sep}audio.mp3"
+frame_sequence = f"{app_name}_temp{os.sep}frame_%01d.jpg"
+
 device_list_names    = []
 device_list          = []
-vram_multiplier      = 0.9
 gpus_found           = torch_directml.device_count()
 downscale_algorithm  = cv2.INTER_AREA
-upscale_algorithm    = cv2.INTER_LINEAR_EXACT
+upscale_algorithm    = cv2.INTER_CUBIC
 
 offset_y_options = 0.1125
 row0_y           = 0.6
@@ -69,15 +78,68 @@ row3_y           = row2_y + offset_y_options
 app_name_color = "#DA70D6"
 dark_color     = "#080808"
 
-torch.autograd.set_detect_anomaly(False)
-torch.autograd.profiler.profile(False)
-torch.autograd.profiler.emit_nvtx(False)
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 
 
 
-# ------------------ AI ------------------
+# AI models -------------------
+
+def prepare_model(selected_AI_model, scaling_factor, backend, half_precision):
+    update_process_status(f"Preparing AI model")
+
+    model_path = find_by_relative_path(f"AI{os.sep}{selected_AI_model}.pth")
+    
+    with torch.no_grad():
+
+        if selected_AI_model in BSRGAN_models_list:
+            model            = BSRGAN_Net(in_nc = 3, 
+                                          out_nc = 3, 
+                                          nf = 64, 
+                                          nb = 23, 
+                                          gc = 32, 
+                                          sf = scaling_factor)
+            pretrained_model = torch.load(model_path)
+
+        elif selected_AI_model in RealESRGAN_models_list:
+            model            = RealESRGAN_Net(num_in_ch = 3, 
+                                              num_out_ch = 3, 
+                                              num_feat = 64, 
+                                              num_block = 23, 
+                                              num_grow_ch = 32, 
+                                              scale = 4)
+            pretrained_model = torch.load(model_path)['params_ema']
+
+        elif selected_AI_model in SRVGGNetCompact_models_list:
+            num_conv         = 32 if 'RealESR_Gx4' in selected_AI_model else 16
+            model            = SRVGGNetCompact(num_in_ch = 3, 
+                                               num_out_ch = 3, 
+                                               num_feat = 64, 
+                                               num_conv = num_conv, 
+                                               upscale = 4, 
+                                               act_type = 'prelu')
+            pretrained_model = torch.load(model_path, map_location = torch.device('cpu'))['params']
+
+        '''
+        elif selected_AI_model in SAFM_models_list:
+            if 'SAFMN_x4' in selected_AI_model:
+                dim = 36
+                n_blocks = 8
+            else:
+                dim = 128
+                n_blocks = 16                
+
+            model            = SAFMN(dim = dim, n_blocks = n_blocks, ffn_scale = 2.0, upscaling_factor = 4)
+            pretrained_model = torch.load(model_path)['params']
+            model.load_state_dict(pretrained_model, strict = True)
+        '''
+            
+        model.load_state_dict(pretrained_model, strict = True)
+        model.eval()
+        if half_precision: model = model.half()
+        model = model.to(backend, non_blocking = True)
+
+    return model
 
 ## BSRGAN Architecture
 
@@ -94,11 +156,11 @@ class ResidualDenseBlock_5C(nn.Module):
         self._initialize_weights()
 
     def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                init.kaiming_normal_(m.weight, a=0, mode='fan_in')
-                if m.bias is not None:
-                    m.bias.data.zero_()
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                init.kaiming_normal_(module.weight, a=0, mode='fan_in')
+                if module.bias is not None:
+                    module.bias.data.zero_()
 
     def forward(self, x):
         x1 = self.lrelu(self.conv1(x))
@@ -108,9 +170,9 @@ class ResidualDenseBlock_5C(nn.Module):
         x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
         return x5 * 0.2 + x
 
-class RRDB(nn.Module):
+class RRDB_BSRGAN(nn.Module):
     def __init__(self, nf, gc=32):
-        super(RRDB, self).__init__()
+        super(RRDB_BSRGAN, self).__init__()
         self.RDB1 = ResidualDenseBlock_5C(nf, gc)
         self.RDB2 = ResidualDenseBlock_5C(nf, gc)
         self.RDB3 = ResidualDenseBlock_5C(nf, gc)
@@ -127,107 +189,343 @@ class BSRGAN_Net(nn.Module):
         self.sf = sf
 
         self.conv_first = nn.Conv2d(in_nc, nf, 3, 1, 1, bias=True)
-        self.RRDB_trunk = nn.Sequential(*[RRDB(nf, gc) for _ in range(nb)])
+        self.RRDB_trunk = nn.Sequential(*[RRDB_BSRGAN(nf, gc) for _ in range(nb)])
         self.trunk_conv = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        self.upconv1 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        if sf == 4: 
-            self.upconv2 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
-        self.HRconv = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.upconv1    = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+
+        if sf == 4: self.upconv2 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+
+        self.HRconv    = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
         self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1, bias=True)
-        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+        self.lrelu     = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
         self._initialize_weights()
 
     def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                init.kaiming_normal_(m.weight, a=0, mode='fan_in')
-                if m.bias is not None:
-                    m.bias.data.zero_()
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                init.kaiming_normal_(module.weight, a=0, mode='fan_in')
+                if module.bias is not None:
+                    module.bias.data.zero_()
 
     def forward(self, x):
-        fea = self.conv_first(x)
+        fea   = self.conv_first(x)
         trunk = self.trunk_conv(self.RRDB_trunk(fea))
-        fea = fea + trunk
+        fea   = fea + trunk
 
         fea = self.lrelu(self.upconv1(F.interpolate(fea, scale_factor=2, mode='nearest')))
-        if self.sf == 4: 
-            fea = self.lrelu(self.upconv2(F.interpolate(fea, scale_factor=2, mode='nearest')))
+        if self.sf == 4: fea = self.lrelu(self.upconv2(F.interpolate(fea, scale_factor=2, mode='nearest')))
         out = self.conv_last(self.lrelu(self.HRconv(fea)))
 
         return out
 
-def prepare_model(selected_AI_model, backend, half_precision):
-    model_path = find_by_relative_path("AI" + os.sep + selected_AI_model + ".pth")
+# RealESRGAN
 
-    model = BSRGAN_Net(in_nc = 3, 
-                        out_nc = 3, 
-                        nf = 64, 
-                        nb = 23, 
-                        gc = 32, 
-                        sf = 4)
+class ResidualDenseBlock(nn.Module):
+    def default_init_weights(module_list, scale=1, bias_fill=0):
+        if not isinstance(module_list, list): module_list = [module_list]
+        
+        for module in module_list:
+            if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear):
+                init.kaiming_normal_(module.weight)
+                module.weight.data *= scale
+                if module.bias is not None:
+                    module.bias.data.fill_(bias_fill)
+            elif isinstance(module, nn.BatchNorm2d):
+                init.constant_(module.weight, 1)
+                if module.bias is not None:
+                    module.bias.data.fill_(bias_fill)
+
+    def __init__(self, num_feat=64, num_grow_ch=32):
+        super(ResidualDenseBlock, self).__init__()
+        self.conv1 = nn.Conv2d(num_feat, num_grow_ch, 3, 1, 1)
+        self.conv2 = nn.Conv2d(num_feat + num_grow_ch, num_grow_ch, 3, 1, 1)
+        self.conv3 = nn.Conv2d(num_feat + 2 * num_grow_ch, num_grow_ch, 3, 1, 1)
+        self.conv4 = nn.Conv2d(num_feat + 3 * num_grow_ch, num_grow_ch, 3, 1, 1)
+        self.conv5 = nn.Conv2d(num_feat + 4 * num_grow_ch, num_feat, 3, 1, 1)
+
+        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+        # initialization
+        self.default_init_weights([self.conv1, self.conv2, self.conv3, self.conv4, self.conv5], 0.1)
+
+    def forward(self, x):
+        x1 = self.lrelu(self.conv1(x))
+        x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
+        x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
+        x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
+        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
+        # Empirically, we use 0.2 to scale the residual for better performance
+        return x5 * 0.2 + x
+
+class RRDB_RealESRGAN(nn.Module):
+    def __init__(self, num_feat, num_grow_ch=32):
+        super(RRDB_RealESRGAN, self).__init__()
+        self.rdb1 = ResidualDenseBlock(num_feat, num_grow_ch)
+        self.rdb2 = ResidualDenseBlock(num_feat, num_grow_ch)
+        self.rdb3 = ResidualDenseBlock(num_feat, num_grow_ch)
+
+    def forward(self, x):
+        out = self.rdb1(x)
+        out = self.rdb2(out)
+        out = self.rdb3(out)
+        # Empirically, we use 0.2 to scale the residual for better performance
+        return out * 0.2 + x
+
+class RealESRGAN_Net(nn.Module):
+
+    def __init__(self, num_in_ch, num_out_ch, scale=4, num_feat=64, num_block=23, num_grow_ch=32):
+        super(RealESRGAN_Net, self).__init__()
+        self.scale = scale
+        self.conv_first = nn.Conv2d(num_in_ch, num_feat, 3, 1, 1)
+        self.body       = nn.Sequential(*[RRDB_RealESRGAN(num_feat=num_feat, num_grow_ch=num_grow_ch) for _ in range(num_block)])
+        self.conv_body  = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        # upsample
+        self.conv_up1  = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        self.conv_up2  = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        self.conv_hr   = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+
+        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+    def forward(self, x):
+        feat = x
+        feat = self.conv_first(feat)
+        body_feat = self.conv_body(self.body(feat))
+        feat = feat + body_feat
+        # upsample
+        feat = self.lrelu(self.conv_up1(F.interpolate(feat, scale_factor=2, mode='nearest')))
+        feat = self.lrelu(self.conv_up2(F.interpolate(feat, scale_factor=2, mode='nearest')))
+        out  = self.conv_last(self.lrelu(self.conv_hr(feat)))
+        return out
+
+# SRVGGNetCompact
+
+class SRVGGNetCompact(nn.Module):
+
+    def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=16, upscale=4, act_type='prelu'):
+        super(SRVGGNetCompact, self).__init__()
+        self.num_in_ch = num_in_ch
+        self.num_out_ch = num_out_ch
+        self.num_feat = num_feat
+        self.num_conv = num_conv
+        self.upscale = upscale
+        self.act_type = act_type
+
+        self.body = nn.ModuleList()
+        # the first conv
+        self.body.append(nn.Conv2d(num_in_ch, num_feat, 3, 1, 1))
+        # the first activation
+        if act_type == 'relu':
+            activation = nn.ReLU(inplace=True)
+        elif act_type == 'prelu':
+            activation = nn.PReLU(num_parameters=num_feat)
+        elif act_type == 'leakyrelu':
+            activation = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.body.append(activation)
+
+        # the body structure
+        for _ in range(num_conv):
+            self.body.append(nn.Conv2d(num_feat, num_feat, 3, 1, 1))
+            # activation
+            if act_type == 'relu':
+                activation = nn.ReLU(inplace=True)
+            elif act_type == 'prelu':
+                activation = nn.PReLU(num_parameters=num_feat)
+            elif act_type == 'leakyrelu':
+                activation = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+            self.body.append(activation)
+
+        # the last conv
+        self.body.append(nn.Conv2d(num_feat, num_out_ch * upscale * upscale, 3, 1, 1))
+        # upsample
+        self.upsampler = nn.PixelShuffle(upscale)
+
+    def forward(self, x):
+        out = x
+        for i in range(0, len(self.body)):
+            out = self.body[i](out)
+
+        out = self.upsampler(out)
+        # add the nearest upsampled image, so that the network learns the residual
+        base = F.interpolate(x, scale_factor=self.upscale, mode='nearest')
+        out += base
+        return out
+
+## SAFM Architecture
+
+class LayerNorm(nn.Module):
+    def __init__(self, normalized_shape, eps=1e-6, data_format="channels_first"):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(normalized_shape))
+        self.bias = nn.Parameter(torch.zeros(normalized_shape))
+        self.eps = eps
+        self.data_format = data_format
+        if self.data_format not in ["channels_last", "channels_first"]:
+            raise NotImplementedError
+        self.normalized_shape = (normalized_shape, )
+
+    def forward(self, x):
+        if self.data_format == "channels_last":
+            return F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        elif self.data_format == "channels_first":
+            u = x.mean(1, keepdim=True)
+            s = (x - u).pow(2).mean(1, keepdim=True)
+            x = (x - u) / torch.sqrt(s + self.eps)
+            x = self.weight[:, None, None] * x + self.bias[:, None, None]
+            return x
+
+class CCM(nn.Module):
+    def __init__(self, dim, growth_rate=2.0):
+        super().__init__()
+        hidden_dim = int(dim * growth_rate)
+
+        self.ccm = nn.Sequential(
+            nn.Conv2d(dim, hidden_dim, 3, 1, 1),
+            nn.GELU(), 
+            nn.Conv2d(hidden_dim, dim, 1, 1, 0)
+        )
+
+    def forward(self, x):
+        return self.ccm(x)
+
+class SAFM(nn.Module):
+    def __init__(self, dim, n_levels=4):
+        super().__init__()
+        self.n_levels = n_levels
+        chunk_dim = dim // n_levels
+
+        # Spatial Weighting
+        self.mfr = nn.ModuleList([nn.Conv2d(chunk_dim, chunk_dim, 3, 1, 1, groups=chunk_dim) for i in range(self.n_levels)])
+        
+        # # Feature Aggregation
+        self.aggr = nn.Conv2d(dim, dim, 1, 1, 0)
+        
+        # Activation
+        self.act = nn.GELU() 
+
+    def forward(self, x):
+        h, w = x.size()[-2:]
+
+        xc = x.chunk(self.n_levels, dim=1)
+        out = []
+        for i in range(self.n_levels):
+            if i > 0:
+                p_size = (h//2**i, w//2**i)
+                s = F.adaptive_max_pool2d(xc[i], p_size)
+                s = self.mfr[i](s)
+                s = F.interpolate(s, size=(h, w), mode='nearest')
+            else:
+                s = self.mfr[i](xc[i])
+            out.append(s)
+
+        out = self.aggr(torch.cat(out, dim=1))
+        out = self.act(out) * x
+        return out
+
+class AttBlock(nn.Module):
+    def __init__(self, dim, ffn_scale=2.0):
+        super().__init__()
+
+        self.norm1 = LayerNorm(dim) 
+        self.norm2 = LayerNorm(dim) 
+
+        # Multiscale Block
+        self.safm = SAFM(dim) 
+        # Feedforward layer
+        self.ccm = CCM(dim, ffn_scale) 
+
+    def forward(self, x):
+        x = self.safm(self.norm1(x)) + x
+        x = self.ccm(self.norm2(x)) + x
+        return x
+        
+class SAFMN(nn.Module):
+    def __init__(self, dim, n_blocks=8, ffn_scale=2.0, upscaling_factor=4):
+        super().__init__()
+        self.to_feat = nn.Conv2d(3, dim, 3, 1, 1)
+
+        self.feats = nn.Sequential(*[AttBlock(dim, ffn_scale) for _ in range(n_blocks)])
+
+        self.to_img = nn.Sequential(
+            nn.Conv2d(dim, 3 * upscaling_factor**2, 3, 1, 1),
+            nn.PixelShuffle(upscaling_factor)
+        )
+
+    def forward(self, x):
+        x = self.to_feat(x)
+        x = self.feats(x) + x
+        x = self.to_img(x)
+        return x
+
+# AI inference -------------------
+
+def get_image_mode(image):
+    if len(image.shape) == 2: return 'Grayscale'  # Immagine in scala di grigi
+    elif image.shape[2] == 3: return 'RGB'        # RGB
+    elif image.shape[2] == 4: return 'RGBA'       # RGBA
+    else:                     return 'Unknown'
     
-    with torch.no_grad():
-        pretrained_model = torch.load(model_path, map_location = torch.device('cpu'))
-        model.load_state_dict(pretrained_model, strict = True)
-    
-    model.eval()
-
-    if half_precision: model = model.half()
-    model = model.to(backend, non_blocking = True)
-
-    return model
-
-def AI_enhance(model, image, backend, half_precision):
-    image = image.astype(np.float32)
-
-    max_range = 65535 if np.max(image) > 256 else 255
-    image /= max_range
-
-    img_mode = 'RGB'
-    if len(image.shape) == 2:  # gray image
-        img_mode = 'L'
-        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-    elif image.shape[2] == 4:  # RGBA image with alpha channel
-        img_mode = 'RGBA'
-        alpha = image[:, :, 3]
-        image = image[:, :, :3]
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
-
+def preprocess_image(image, half_precision, backend):
     image = torch.from_numpy(np.transpose(image, (2, 0, 1))).float()
-    if half_precision:
-        image = image.unsqueeze(0).half().to(backend, non_blocking=True)
-    else:
-        image = image.unsqueeze(0).to(backend, non_blocking=True)
+    if half_precision: image = image.unsqueeze(0).half().to(backend, non_blocking=True)
+    else:              image = image.unsqueeze(0).to(backend, non_blocking=True)
+    
+    return image
 
-    output = model(image)
+def process_image_with_model(AI_model, image):
+    output_image = AI_model(image)
+    output_image = output_image.squeeze().float().clamp(0, 1).cpu().numpy()
+    output_image = np.transpose(output_image, (1, 2, 0))
+    
+    return output_image
 
-    output_img = output.squeeze().float().clamp(0, 1).cpu().numpy()
-    output_img = np.transpose(output_img, (1, 2, 0))
-
-    if img_mode == 'L':
-        output_img = cv2.cvtColor(output_img, cv2.COLOR_RGB2GRAY)
-
-    if img_mode == 'RGBA':
-        alpha = torch.from_numpy(np.transpose(alpha, (2, 0, 1))).float()
-        if half_precision:
-            alpha = alpha.unsqueeze(0).half().to(backend, non_blocking=True)
-        else:
-            alpha = alpha.unsqueeze(0).to(backend, non_blocking=True)
-
-        output_alpha = model(alpha)
-
-        output_alpha = output_alpha.squeeze().float().clamp(0, 1).cpu().numpy()
-        output_alpha = np.transpose(output_alpha, (1, 2, 0))
-        output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_RGB2GRAY)
-
-        output_img = cv2.cvtColor(output_img, cv2.COLOR_RGB2BGRA)
-        output_img[:, :, 3] = output_alpha
-
-    output = (output_img * max_range).round().astype(np.uint16 if max_range == 65535 else np.uint8)
-
+def postprocess_output(output_image, max_range):
+    output = (output_image * max_range).round().astype(np.uint16 if max_range == 65535 else np.uint8)
     return output
+
+def AI_enhance(AI_model, image, backend, half_precision):
+    with torch.no_grad():
+        image = image.astype(np.float32)
+
+        max_range = 65535 if np.max(image) > 256 else 255
+        image /= max_range
+        img_mode = get_image_mode(image)
+
+        if img_mode == "RGB":
+            image        = preprocess_image(image, half_precision, backend)
+            output_image = process_image_with_model(AI_model, image)
+            output_image = postprocess_output(output_image, max_range)
+            return output_image
+
+        elif img_mode == 'Grayscale':
+            image        = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+            image        = preprocess_image(image, half_precision, backend)
+            output_image = process_image_with_model(AI_model, image)
+            output_image = cv2.cvtColor(output_image, cv2.COLOR_RGB2GRAY)
+            output_image = postprocess_output(output_image, max_range)
+            return output_image
+        
+        elif img_mode == 'RGBA':
+            alpha = image[:, :, 3]
+            image = image[:, :, :3]
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
+
+            # Image
+            image        = preprocess_image(image, half_precision, backend)
+            output_image = process_image_with_model(AI_model, image)
+            output_image = cv2.cvtColor(output_image, cv2.COLOR_RGB2BGRA)
+
+            # Alpha
+            alpha        = preprocess_image(alpha, half_precision, backend)
+            output_alpha = process_image_with_model(AI_model, alpha)
+            output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_RGB2GRAY)
+
+            # Fusion Image + Alpha
+            output_image[:, :, 3] = output_alpha
+            output_image = postprocess_output(output_image, max_range)
+            return output_image
 
 
 
@@ -331,7 +629,14 @@ supported_video_extensions  = [
 
 #  Slice functions -------------------
 
-def split_image_into_tiles(image, num_tiles_x, num_tiles_y):
+def split_image_into_tiles(image, 
+                           file_number, 
+                           num_tiles_x, 
+                           num_tiles_y, 
+                           should_print):
+    if should_print:
+        update_process_status(f"{file_number}. Tiling image in {num_tiles_x * num_tiles_y}")
+
     img_height, img_width, _ = image.shape
 
     tile_width  = img_width // num_tiles_x
@@ -352,10 +657,15 @@ def split_image_into_tiles(image, num_tiles_x, num_tiles_y):
     return tiles
 
 def combine_tiles_into_image(tiles, 
+                             file_number,
                              image_target_height, 
                              image_target_width,
                              num_tiles_x, 
-                             num_tiles_y):
+                             num_tiles_y,
+                             should_print):
+
+    if should_print:
+        update_process_status(f"{file_number}. Reconstructing image by tiles")
 
     tiled_image = np.zeros((image_target_height, image_target_width, 4), dtype = np.uint8)
 
@@ -392,25 +702,14 @@ def add_alpha_channel(tile):
         tile = np.concatenate((tile, alpha_channel), axis=2)
     return tile
 
-def fix_tile_shape(tile, tile_upscaled):
+def fix_tile_shape(tile, tile_upscaled, scaling_factor):
     tile_height, tile_width, _ = tile.shape
-    target_tile_height = tile_height * 4
-    target_tile_width  = tile_width * 4
+    target_tile_height = tile_height * scaling_factor
+    target_tile_width  = tile_width  * scaling_factor
 
     tile_upscaled = cv2.resize(tile_upscaled, (target_tile_width, target_tile_height))
 
     return tile_upscaled
-
-def interpolate_images(starting_image, 
-                       upscaled_image, 
-                       image_target_height, 
-                       image_target_width):
-    
-    starting_image     = add_alpha_channel(cv2.resize(starting_image, (image_target_width, image_target_height), interpolation = upscale_algorithm))
-    upscaled_image     = add_alpha_channel(upscaled_image)
-    interpolated_image = cv2.addWeighted(upscaled_image, 0.5, starting_image, 0.5, 0)
-
-    return interpolated_image
 
 
 
@@ -422,7 +721,8 @@ def opentelegram(): webbrowser.open(telegramme, new=1)
 
 def image_write(file_path, file_data): cv2.imwrite(file_path, file_data)
 
-def image_read(file_path, flags = cv2.IMREAD_UNCHANGED): return cv2.imread(file_path, flags)
+def image_read(file_path, flags = cv2.IMREAD_UNCHANGED): 
+    return cv2.imread(file_path, flags)
 
 def prepare_output_image_filename(image_path, 
                                   selected_AI_model, 
@@ -468,16 +768,14 @@ def remove_dir(name_dir):
     if os.path.exists(name_dir): shutil.rmtree(name_dir)
 
 def write_in_log_file(text_to_insert):
-    log_file_name = app_name + ".log"
-    with open(log_file_name,'w') as log_file: 
-        os.chmod(log_file_name, 0o777)
+    with open(log_file_path,'w') as log_file: 
+        os.chmod(log_file_path, 0o777)
         log_file.write(text_to_insert) 
     log_file.close()
 
 def read_log_file():
-    log_file_name = app_name + ".log"
-    with open(log_file_name,'r') as log_file: 
-        os.chmod(log_file_name, 0o777)
+    with open(log_file_path,'r') as log_file: 
+        os.chmod(log_file_path, 0o777)
         step = log_file.readline()
     log_file.close()
     return step
@@ -486,11 +784,12 @@ def find_by_relative_path(relative_path):
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
 
-def delete_list_of_files(list_to_delete):
-    if len(list_to_delete) > 0:
-        for to_delete in list_to_delete:
-            if os.path.exists(to_delete):
-                os.remove(to_delete)
+def remove_temp_files():
+    remove_dir(temp_dir)
+    remove_file(log_file_path)
+
+def stop_thread(): 
+    stop = 1 + "x"
 
 def resize_image(image, resize_factor):
     old_height, old_width, _ = image.shape
@@ -507,37 +806,29 @@ def resize_frame(frame, new_width, new_height):
 def remove_file(name_file):
     if os.path.exists(name_file): os.remove(name_file)
 
-def show_error(exception):
-    import tkinter as tk
-    tk.messagebox.showerror(title   = 'Error', 
-                            message = 'Upscale failed caused by:\n\n' +
-                                        str(exception) + '\n\n' +
-                                        'Please report the error on Github.com or Telegram group' +
-                                        '\n\nThank you :)')
-
-def extract_frames_from_video(video_path):
+def extract_video_frames_and_audio(video_path, file_number):
     video_frames_list = []
     cap          = cv2.VideoCapture(video_path)
     frame_rate   = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
 
-    # extract frames
-    video = VideoFileClip(video_path)
-    img_sequence = app_name + "_temp" + os.sep + "frame_%01d" + '.jpg'
-    video_frames_list = video.write_images_sequence(img_sequence, 
-                                                    verbose = False,
-                                                    logger  = None, 
-                                                    fps     = frame_rate)
+    video_file_clip = VideoFileClip(video_path)
     
-    # extract audio
-    try: video.audio.write_audiofile(app_name + "_temp" + os.sep + "audio.mp3",
-                                    verbose = False,
-                                    logger  = None)
-    except: pass
+    # Extract audio
+    try: 
+        update_process_status(f"{file_number}. Extracting video audio")
+        video_file_clip.audio.write_audiofile(audio_path, verbose = False, logger = None)
+    except:
+        pass
 
+    # Extract frames
+    update_process_status(f"{file_number}. Extracting video frames")
+    video_frames_list = video_file_clip.write_images_sequence(frame_sequence, verbose = False, logger = None, fps = frame_rate)
+    
     return video_frames_list
 
-def video_reconstruction_by_frames(input_video_path, 
+def video_reconstruction_by_frames(input_video_path,
+                                   file_number, 
                                    frames_upscaled_list, 
                                    selected_AI_model, 
                                    resize_factor, 
@@ -545,31 +836,29 @@ def video_reconstruction_by_frames(input_video_path,
                                    selected_video_extension, 
                                    selected_interpolation):
     
+    update_process_status(f"{file_number}. Processing upscaled video")
+    
     # Find original video FPS
     cap          = cv2.VideoCapture(input_video_path)
     frame_rate   = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
 
     # Choose the appropriate codec
-    if selected_video_extension == '.mp4':
-        codec     = 'libx264'
-    elif selected_video_extension == '.avi':
-        codec     = 'png'
-    elif selected_video_extension == '.webm':
-        codec     = 'libvpx'
+    if selected_video_extension   == '.mp4':  codec = 'libx264'
+    elif selected_video_extension == '.avi':  codec = 'png'
+    elif selected_video_extension == '.webm': codec = 'libvpx'
 
     upscaled_video_path = prepare_output_video_filename(input_video_path, 
                                                         selected_AI_model, 
                                                         resize_factor, 
                                                         selected_video_extension,
                                                         selected_interpolation)
-    audio_file = app_name + "_temp" + os.sep + "audio.mp3"
 
     clip = ImageSequenceClip.ImageSequenceClip(frames_upscaled_list, fps = frame_rate)
-    if os.path.exists(audio_file) and selected_video_extension != '.webm':
+    if os.path.exists(audio_path) and selected_video_extension != '.webm':
         clip.write_videofile(upscaled_video_path,
                             fps     = frame_rate,
-                            audio   = audio_file,
+                            audio   = audio_path,
                             codec   = codec,
                             verbose = False,
                             logger  = None,
@@ -581,18 +870,69 @@ def video_reconstruction_by_frames(input_video_path,
                              verbose = False,
                              logger  = None,
                              threads = cpu_number)  
+        
+def interpolate_images(starting_image, 
+                       upscaled_image, 
+                       image_target_height, 
+                       image_target_width):
+    
+    starting_image     = add_alpha_channel(cv2.resize(starting_image, (image_target_width, image_target_height), interpolation = upscale_algorithm))
+    upscaled_image     = add_alpha_channel(upscaled_image)
+    interpolated_image = cv2.addWeighted(upscaled_image, 0.5, starting_image, 0.5, 0)
+
+    return interpolated_image
+
+def get_final_image_shape(image_to_upscale, scaling_factor):
+    # Calculate final image shape
+    image_to_upscale_height, image_to_upscale_width, _ = image_to_upscale.shape
+    target_height = image_to_upscale_height * scaling_factor
+    target_width  = image_to_upscale_width  * scaling_factor
+    
+    return target_height, target_width
+
+def get_resized_frame_shape(first_frame, resize_factor):
+    height, width, _ = first_frame.shape
+    resized_width  = int(width * resize_factor)
+    resized_height = int(height * resize_factor)
+
+    return resized_width, resized_height
+
+def get_final_frame_shape(resized_width, resized_height, scaling_factor):
+    # Calculate final frame shape
+    target_height = resized_height * scaling_factor
+    target_width  = resized_width  * scaling_factor
+    
+    return target_height, target_width
+
+def calculate_time_to_complete_video(start_timer, 
+                                     end_timer, 
+                                     how_many_frames, 
+                                     index_frame):
+    
+    seconds_for_frame = round(end_timer - start_timer, 2)
+    frames_left       = how_many_frames - (index_frame + 1)
+    seconds_left      = seconds_for_frame * frames_left
+
+    hours_left   = seconds_left // 3600
+    minutes_left = (seconds_left % 3600) // 60
+    seconds_left = round((seconds_left % 3600) % 60)
+
+    time_left = ""
+
+    if int(hours_left) > 0: 
+        time_left = f"{int(hours_left):02d}h:"
+    
+    if int(minutes_left) > 0:
+        time_left = f"{time_left}{int(minutes_left):02d}m:"
+
+    if seconds_left > 0:
+        time_left = f"{time_left}{seconds_left:02d}s"
+
+    return time_left        
 
 
 
 # Core functions ------------------------
-
-def remove_temp_files():
-    remove_dir(app_name + "_temp")
-    remove_file(app_name + ".log")
-
-def stop_thread():
-    # to stop a thread execution
-    stop = 1 + "x"
 
 def stop_upscale_process():
     global process_upscale_orchestrator
@@ -600,37 +940,33 @@ def stop_upscale_process():
     process_upscale_orchestrator.join()
 
 def check_upscale_steps():
-    time.sleep(3)
+    time.sleep(2)
     try:
         while True:
             step = read_log_file()
-            if "All files completed" in step:
-                info_message.set(step)
+
+            info_message.set(step)
+
+            if "All files completed! :)" in step or "Upscaling stopped" in step:
                 stop_upscale_process()
                 remove_temp_files()
                 stop_thread()
-            elif "Error while upscaling" in step:
-                info_message.set("Error while upscaling :(")
+            elif "Error during upscale process :(" in step:
+                info_message.set('Error during upscale process :(')
                 remove_temp_files()
                 stop_thread()
-            elif "Stopped upscaling" in step:
-                info_message.set("Stopped upscaling")
-                stop_upscale_process()
-                remove_temp_files()
-                stop_thread()
-            else:
-                info_message.set(step)
+
             time.sleep(2)
     except:
         place_upscale_button()
-
+        
 def update_process_status(actual_process_phase):
     print(f"{actual_process_phase}")
     write_in_log_file(actual_process_phase) 
 
 def stop_button_command():
     stop_upscale_process()
-    write_in_log_file("Stopped upscaling") 
+    write_in_log_file("Upscaling stopped") 
 
 def upscale_button_command(): 
     global selected_file_list
@@ -688,20 +1024,71 @@ def upscale_button_command():
                                        daemon = True)
         thread_wait.start()
 
-# Images
-
-def get_final_image_shape(image_to_upscale):
-    # Calculate final image shape
-    image_to_upscale_height, image_to_upscale_width, _ = image_to_upscale.shape
-    target_height = image_to_upscale_height * 4
-    target_width  = image_to_upscale_width * 4
+def upscale_orchestrator(selected_file_list,
+                         selected_AI_model,
+                         backend, 
+                         selected_image_extension,
+                         tiles_resolution,
+                         resize_factor,
+                         cpu_number,
+                         half_precision,
+                         selected_video_extension,
+                         selected_interpolation):
     
-    return target_height, target_width
+    torch.autograd.set_detect_anomaly(False)
+    torch.autograd.profiler.profile(False)
+    torch.autograd.profiler.emit_nvtx(False)
+    torch.set_num_threads(1)
+
+    scaling_factor = 2 if 'x2' in selected_AI_model else 4
+
+    try:
+        AI_model = prepare_model(selected_AI_model, scaling_factor, backend, half_precision)
+
+        for file_number, file_path in enumerate(selected_file_list, 0):
+            file_number = file_number + 1
+            update_process_status(f"Upscaling {file_number}/{len(selected_file_list)}")
+
+            if check_if_file_is_video(file_path):
+                upscale_video(file_path, 
+                            file_number,
+                            AI_model, 
+                            selected_AI_model, 
+                            scaling_factor,
+                            backend, 
+                            selected_image_extension, 
+                            tiles_resolution, 
+                            resize_factor, 
+                            cpu_number, 
+                            half_precision, 
+                            selected_video_extension,
+                            selected_interpolation)
+            else:
+                upscale_image(file_path, 
+                            file_number,
+                            AI_model, 
+                            selected_AI_model, 
+                            scaling_factor,
+                            backend, 
+                            selected_image_extension, 
+                            tiles_resolution, 
+                            resize_factor, 
+                            half_precision, 
+                            selected_interpolation)
+
+        update_process_status(f"All files completed! :)")
+
+    except Exception as exception:
+        update_process_status(f"Error during upscale process :(\n\n {str(exception)}")
+        show_error(exception)
+
+# Images
 
 def upscale_image(image_path, 
                   file_number,
                   AI_model, 
                   selected_AI_model, 
+                  scaling_factor,
                   backend, 
                   selected_image_extension, 
                   tiles_resolution, 
@@ -719,35 +1106,27 @@ def upscale_image(image_path,
     if resize_factor != 1: image_to_upscale = resize_image(starting_image, resize_factor) 
     else:                  image_to_upscale = starting_image
 
-    image_target_height, image_target_width = get_final_image_shape(image_to_upscale)
+    image_target_height, image_target_width = get_final_image_shape(image_to_upscale, scaling_factor)
     need_tiles, num_tiles_x, num_tiles_y    = file_need_tiles(image_to_upscale, tiles_resolution)
 
-    if need_tiles:
-        update_process_status(f"{file_number}. Tiling image in {num_tiles_x * num_tiles_y}")
+    # Complete image
+    if need_tiles == False:
+        update_process_status(f"{file_number}. Upscaling image")
+        image_upscaled = AI_enhance(AI_model, image_to_upscale, backend, half_precision)
 
-        tiles_list     = split_image_into_tiles(image_to_upscale, num_tiles_x, num_tiles_y)
+    # Tilled image
+    else:
+        tiles_list     = split_image_into_tiles(image_to_upscale, file_number, num_tiles_x, num_tiles_y, True)
         how_many_tiles = len(tiles_list)
 
-        with torch.no_grad():
-            for tile_index, tile in enumerate(tiles_list, 0):
-                update_process_status(f"{file_number}. Upscaling tiles {tile_index}/{how_many_tiles}")       
-                
-                tile_upscaled = AI_enhance(AI_model, tile, backend, half_precision)
-                tile_upscaled = fix_tile_shape(tile, tile_upscaled)
-                tiles_list[tile_index] = tile_upscaled
+        for tile_index, tile in enumerate(tiles_list, 0):
+            update_process_status(f"{file_number}. Upscaling tiles {tile_index}/{how_many_tiles}")       
+            tile_upscaled = AI_enhance(AI_model, tile, backend, half_precision)
+            tile_upscaled = fix_tile_shape(tile, tile_upscaled, scaling_factor)
+            tiles_list[tile_index] = tile_upscaled
 
-            update_process_status(f"{file_number}. Reconstructing image by tiles")
-            image_upscaled = combine_tiles_into_image(tiles_list, 
-                                                      image_target_height, 
-                                                      image_target_width,
-                                                      num_tiles_x, 
-                                                      num_tiles_y)
+        image_upscaled = combine_tiles_into_image(tiles_list, file_number, image_target_height, image_target_width, num_tiles_x, num_tiles_y, True)
     
-    else:
-        with torch.no_grad():
-            update_process_status(f"{file_number}. Upscaling image")
-            image_upscaled = AI_enhance(AI_model, image_to_upscale, backend, half_precision)
-            
     if selected_interpolation:
         image_upscaled = interpolate_images(starting_image, image_upscaled, image_target_height, image_target_width)
         image_write(result_image_path, image_upscaled)
@@ -756,24 +1135,11 @@ def upscale_image(image_path,
 
 # Videos
 
-def get_resized_frame_shape(first_frame, resize_factor):
-    height, width, _ = first_frame.shape
-    resized_width  = int(width * resize_factor)
-    resized_height = int(height * resize_factor)
-
-    return resized_width, resized_height
-
-def get_final_frame_shape(resized_width, resized_height):
-    # Calculate final frame shape
-    target_height = resized_height * 4
-    target_width  = resized_width * 4
-    
-    return target_height, target_width
-
 def upscale_video(video_path, 
                   file_number,
                   AI_model, 
                   selected_AI_model, 
+                  scaling_factor,
                   backend, 
                   selected_image_extension, 
                   tiles_resolution,
@@ -783,129 +1149,67 @@ def upscale_video(video_path,
                   selected_video_extension,
                   selected_interpolation):
     
-    create_temp_dir(app_name + "_temp")
+    create_temp_dir(temp_dir)
 
-    update_process_status(f"{file_number}. Extracting video frames")
-    frame_list_paths           = extract_frames_from_video(video_path)
+    frame_list_paths           = extract_video_frames_and_audio(video_path, file_number)
+    how_many_frames            = len(frame_list_paths)          
     frames_upscaled_paths_list = [] 
 
     update_process_status(f"{file_number}. Upscaling video")
     first_frame                                = image_read(frame_list_paths[0])  
     frame_resized_width, frame_resized_height  = get_resized_frame_shape(first_frame, resize_factor)
-    frame_target_height, frame_target_width    = get_final_frame_shape(frame_resized_width, frame_resized_height)
+    frame_target_height, frame_target_width    = get_final_frame_shape(frame_resized_width, frame_resized_height, scaling_factor)
     need_tiles, num_tiles_x, num_tiles_y       = file_need_tiles(first_frame, tiles_resolution)
 
-    if need_tiles:
-        for index_frame, frame_path in enumerate(frame_list_paths, 0):
-            
-            if (index_frame % 8 == 0): update_process_status(f"{file_number}. Upscaling frame {index_frame}/{len(frame_list_paths)}")
-            
-            result_frame_path = prepare_output_image_filename(frame_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation)
-            starting_frame    = image_read(frame_path)
+    for index_frame, frame_path in enumerate(frame_list_paths, 0):
 
-            if resize_factor != 1: frame_to_upscale = resize_frame(starting_frame, frame_resized_width, frame_resized_height)
-            else:                  frame_to_upscale = starting_frame
+        start_timer = timer()
 
-            tiles_list = split_image_into_tiles(frame_to_upscale, num_tiles_x, num_tiles_y)
+        starting_frame    = image_read(frame_path)
+        result_frame_path = prepare_output_image_filename(frame_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation)
 
-            with torch.no_grad():
-                for tile_index, tile in enumerate(tiles_list, 0):
-                    tile_upscaled = AI_enhance(AI_model, tile, backend, half_precision)
-                    tile_upscaled = fix_tile_shape(tile, tile_upscaled)
-                    tiles_list[tile_index] = tile_upscaled
+        if resize_factor != 1: frame_to_upscale = resize_frame(starting_frame, frame_resized_width, frame_resized_height)
+        else:                  frame_to_upscale = starting_frame
 
-            frame_upscaled = combine_tiles_into_image(tiles_list, frame_target_height, frame_target_width, num_tiles_x, num_tiles_y)
+        # Complete frame w/out tilling
+        if need_tiles == False:
+            frame_upscaled = AI_enhance(AI_model, frame_to_upscale, backend, half_precision)
 
-            if selected_interpolation:
-                frame_upscaled = interpolate_images(starting_frame, frame_upscaled, frame_target_height, frame_target_width)
-                image_write(result_frame_path, frame_upscaled)
-            else: 
-                image_write(result_frame_path, frame_upscaled)
-            
-            frames_upscaled_paths_list.append(result_frame_path)
+        # Tilled frame
+        else:
+            tiles_list = split_image_into_tiles(frame_to_upscale, file_number, num_tiles_x, num_tiles_y, False)
+            for tile_index, tile in enumerate(tiles_list, 0):
+                tile_upscaled          = AI_enhance(AI_model, tile, backend, half_precision)
+                tile_upscaled          = fix_tile_shape(tile, tile_upscaled, scaling_factor)
+                tiles_list[tile_index] = tile_upscaled
 
-    else:
-        for index_frame, frame_path in enumerate(frame_list_paths, 0):
-            if (index_frame % 8 == 0): update_process_status(f"{file_number}. Upscaling frames {index_frame}/{len(frame_list_paths)}")
-            
-            with torch.no_grad():
-                starting_frame    = image_read(frame_path)
-                result_frame_path = prepare_output_image_filename(frame_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation)
-                
-                if resize_factor != 1: frame_to_upscale = resize_frame(starting_frame, frame_resized_width, frame_resized_height)
-                else:                  frame_to_upscale = starting_frame
-                
-                frame_upscaled    = AI_enhance(AI_model, frame_to_upscale, backend, half_precision)
+            frame_upscaled = combine_tiles_into_image(tiles_list, file_number, frame_target_height, frame_target_width, num_tiles_x, num_tiles_y, False)
 
-                if selected_interpolation:
-                    frame_upscaled = interpolate_images(starting_frame, frame_upscaled, frame_target_height, frame_target_width)
-                    image_write(result_frame_path, frame_upscaled)
-                else: 
-                    image_write(result_frame_path, frame_upscaled)
+        # Interpolation
+        if selected_interpolation:
+            frame_upscaled = interpolate_images(starting_frame, frame_upscaled, frame_target_height, frame_target_width)
+            image_write(result_frame_path, frame_upscaled)
+        else: 
+            image_write(result_frame_path, frame_upscaled)
+        
+        frames_upscaled_paths_list.append(result_frame_path)
 
-                frames_upscaled_paths_list.append(result_frame_path)
+        # Update process status every 4 frames
+        if index_frame != 0 and (index_frame + 1) % 4 == 0: 
+            end_timer        = timer()    
+            percent_complete = (index_frame + 1) / how_many_frames * 100 
+            time_left        = calculate_time_to_complete_video(start_timer, end_timer, how_many_frames, index_frame)
+        
+            update_process_status(f"{file_number}. Upscaling video {percent_complete:.2f}% ({time_left})")
 
-    update_process_status(f"{file_number}. Processing upscaled video")
     video_reconstruction_by_frames(video_path, 
+                                   file_number,
                                    frames_upscaled_paths_list, 
                                    selected_AI_model, 
                                    resize_factor, 
                                    cpu_number, 
                                    selected_video_extension,
                                    selected_interpolation)
-
-def upscale_orchestrator(selected_file_list,
-                         selected_AI_model,
-                         backend, 
-                         selected_image_extension,
-                         tiles_resolution,
-                         resize_factor,
-                         cpu_number,
-                         half_precision,
-                         selected_video_extension,
-                         selected_interpolation):
-    
-    start = timer()
-    torch.set_num_threads(cpu_number)
-
-    try:
-        update_process_status("Preparing AI model")
-        AI_model = prepare_model(selected_AI_model, backend, half_precision)
-
-        for file_number, file_path in enumerate(selected_file_list, 0):
-            file_number = file_number + 1
-            update_process_status(f"Upscaling {file_number}/{len(selected_file_list)}")
-
-            if check_if_file_is_video(file_path):
-                upscale_video(file_path, 
-                              file_number,
-                              AI_model, 
-                              selected_AI_model, 
-                              backend, 
-                              selected_image_extension, 
-                              tiles_resolution, 
-                              resize_factor, 
-                              cpu_number, 
-                              half_precision, 
-                              selected_video_extension,
-                              selected_interpolation)
-            else:
-                upscale_image(file_path, 
-                              file_number,
-                              AI_model, 
-                              selected_AI_model, 
-                              backend, 
-                              selected_image_extension, 
-                              tiles_resolution, 
-                              resize_factor, 
-                              half_precision, 
-                              selected_interpolation)
-
-        update_process_status(f"All files completed ({round(timer() - start)} sec.)")
-
-    except Exception as exception:
-        update_process_status('Error while upscaling\n\n' + str(exception))
-        show_error(exception)
 
 
 
@@ -923,7 +1227,7 @@ def user_input_checks():
 
     is_ready = True
 
-    # Selected files -------------------------------------------------
+    # Selected files 
     try: selected_file_list = scrollable_frame_file_list.get_selected_file_list()
     except:
         info_message.set("No file selected. Please select a file")
@@ -934,7 +1238,7 @@ def user_input_checks():
         is_ready = False
 
 
-    # File resize factor -------------------------------------------------
+    # File resize factor 
     try: resize_factor = int(float(str(selected_resize_factor.get())))
     except:
         info_message.set("Resize % must be a numeric value")
@@ -946,26 +1250,37 @@ def user_input_checks():
         is_ready = False
 
     
-    # Tiles resolution -------------------------------------------------
+    # Tiles resolution 
     try: tiles_resolution = 100 * int(float(str(selected_VRAM_limiter.get())))
     except:
         info_message.set("VRAM/RAM value must be a numeric value")
         is_ready = False 
 
     if tiles_resolution > 0: 
+        if   selected_AI_model in BSRGAN_models_list:          vram_multiplier = RRDB_vram_multiplier
+        elif selected_AI_model in RealESRGAN_models_list:      vram_multiplier = RRDB_vram_multiplier
+        elif selected_AI_model in SRVGGNetCompact_models_list: vram_multiplier = SRVGGNetCompact_vram_multiplier
+
+        #elif selected_AI_model in SAFM_models_list:           vram_multiplier = SAFM_vram_multiplier
+
         selected_vram = (vram_multiplier * int(float(str(selected_VRAM_limiter.get()))))
 
-        if half_precision == True:
+        if half_precision == True: 
             tiles_resolution = int(selected_vram * 100)
-        elif half_precision == False:
-            tiles_resolution = int(selected_vram * 100 * 0.60)
+
+            #if selected_AI_model in SAFM_models_list: 
+            #    info_message.set("SAFM not compatible with Half precision")
+            #    is_ready = False
+
+        elif half_precision == False: 
+            tiles_resolution = int(selected_vram * 100 * 0.5)
         
     else:
         info_message.set("VRAM/RAM value must be > 0")
         is_ready = False
 
 
-    # Cpu number -------------------------------------------------
+    # Cpu number 
     try: cpu_number = int(float(str(selected_cpu_number.get())))
     except:
         info_message.set("Cpu number must be a numeric value")
@@ -1037,10 +1352,10 @@ def check_supported_selected_files(uploaded_file_list):
 def open_files_action():
     info_message.set("Selecting files...")
 
-    uploaded_files_list = list(filedialog.askopenfilenames())
+    uploaded_files_list    = list(filedialog.askopenfilenames())
     uploaded_files_counter = len(uploaded_files_list)
 
-    supported_files_list = check_supported_selected_files(uploaded_files_list)
+    supported_files_list    = check_supported_selected_files(uploaded_files_list)
     supported_files_counter = len(supported_files_list)
     
     print("> Uploaded files: " + str(uploaded_files_counter) + " => Supported files: " + str(supported_files_counter))
@@ -1049,36 +1364,38 @@ def open_files_action():
         place_up_background()
 
         global scrollable_frame_file_list
-        scrollable_frame_file_list = ScrollableImagesTextFrame(master = window, 
-                                                               fg_color = dark_color, 
-                                                               bg_color = dark_color)
-        scrollable_frame_file_list.place(relx = 0.5, 
-                                         rely = 0.25, 
-                                         relwidth = 1.0, 
-                                         relheight = 0.475, 
-                                         anchor = tk.CENTER)
+        scrollable_frame_file_list = ScrollableImagesTextFrame(master = window, fg_color = dark_color, bg_color = dark_color)
+        scrollable_frame_file_list.place(relx = 0.5, rely = 0.25, relwidth = 1.0, relheight = 0.475, anchor = tk.CENTER)
         
         scrollable_frame_file_list.add_clean_button()
 
         for index in range(supported_files_counter):
+
             actual_file = supported_files_list[index]
+
             if check_if_file_is_video(actual_file):
                 # video
                 video_label, ctkimage = extract_video_info(actual_file)
-                scrollable_frame_file_list.add_item(text_to_show = video_label, 
-                                                    image = ctkimage,
-                                                    file_element = actual_file)
+                scrollable_frame_file_list.add_item(text_to_show = video_label, image = ctkimage, file_element = actual_file)
                 remove_file("temp.jpg")
+                
             else:
                 # image
                 image_label, ctkimage = extract_image_info(actual_file)
-                scrollable_frame_file_list.add_item(text_to_show = image_label, 
-                                                    image = ctkimage,
-                                                    file_element = actual_file)
+                scrollable_frame_file_list.add_item(text_to_show = image_label, image = ctkimage, file_element = actual_file)
     
         info_message.set("Ready")
+
     else: 
         info_message.set("Not supported files :(")
+
+def show_error(exception):
+    import tkinter as tk
+    tk.messagebox.showerror(title   = 'Error', 
+                            message = 'Upscale failed caused by:\n\n' +
+                                        str(exception) + '\n\n' +
+                                        'Please report the error on Github.com or Telegram group' +
+                                        '\n\nThank you :)')
 
 
 
@@ -1121,53 +1438,55 @@ def select_interpolation_from_menu(new_value: str):
 # GUI info functions ---------------------------
 
 def open_info_AI_model():
-    info = """This widget allows to choose between different AI: \n
-- BSRGANx4 | high upscale quality | upscale by 4
-- BSRNetx4 | high upscale quality | upscale by 4
-- RealSR_JPEGx4 | good upscale quality | upscale by 4
-- RealSR_DPEDx4 | good upscale quality | upscale by 4
-- RRDBx4 | good upscale quality | upscale by 4
-- ESRGANx4 | good upscale quality | upscale by 4
-- FSSR_JPEGx4 | good upscale quality | upscale by 4
-- FSSR_DPEDx4 | good upscale quality | upscale by 4
+    info = """This widget allows to choose between different AIs.
 
-Try all AI and choose the one that gives the best results""" 
+[ RRDB (2020) ]
+Complex and heavy AIs, high-quality upscale
+ • BSRGANx4 | upscale by 4
+ • BSRGANx2 | upscale by 2
+ • RealESRGANx4 | upscale by 4
+_________________________________________
+
+[ SRVGGNetCompact (2022) ]
+Fast and lightweight AIs, good-quality upscale
+ • RealESR_Gx4 | upscale by 4
+ • RealSRx4_Anime | upscale by 4 
+""" 
     
     tk.messagebox.showinfo(title = 'AI model', message = info)
 
 def open_info_device():
-    info = """This widget allows to choose the gpu to run AI with. \n 
-Keep in mind that the more powerful your gpu is, 
-the faster the upscale will be \n
-For best results, it is necessary to update the gpu drivers constantly"""
+    info = """This widget allows you to select the GPU for AI processing. \n 
+ • Keep in mind that the more powerful your GPU is, the faster the upscaling will be
+ • For optimal results, it's essential to regularly update your GPU drivers"""
 
-    tk.messagebox.showinfo(title = 'GPU', message = info)
+    tk.messagebox.showinfo(title='GPU', message=info)
 
 def open_info_file_extension():
     info = """This widget allows to choose the extension of upscaled image/frame:\n
-- png | very good quality | supports transparent images
-- jpg | good quality | very fast
-- bmp | highest quality | slow
-- tiff | highest quality | very slow"""
+ • png | very good quality | supports transparent images
+ • jpg | good quality | very fast
+ • bmp | highest quality | slow
+ • tiff | highest quality | very slow"""
 
     tk.messagebox.showinfo(title = 'Image output', message = info)
 
 def open_info_resize():
-    info = """This widget allows to choose the resolution input to the AI:\n
+    info = """This widget allows to choose the resolution input to the AI.\n
 For example for a 100x100px image:
-- Input resolution 50% => input to AI 50x50px
-- Input resolution 100% => input to AI 100x100px
-- Input resolution 200% => input to AI 200x200px """
+ • Input resolution 50% => input to AI 50x50px
+ • Input resolution 100% => input to AI 100x100px
+ • Input resolution 200% => input to AI 200x200px """
 
     tk.messagebox.showinfo(title = 'Input resolution %', message = info)
 
 def open_info_vram_limiter():
-    info = """This widget allows to set a limit on the gpu's VRAM memory usage: \n
-- For a gpu with 4 GB of Vram you must select 4
-- For a gpu with 6 GB of Vram you must select 6
-- For a gpu with 8 GB of Vram you must select 8
-- For integrated gpus (Intel-HD series | Vega 3,5,7) 
-  that do not have dedicated memory, you must select 2 \n
+    info = """This widget allows to set a limit on the gpu's VRAM memory usage.\n
+ • For a gpu with 4 GB of Vram you must select 4
+ • For a gpu with 6 GB of Vram you must select 6
+ • For a gpu with 8 GB of Vram you must select 8
+ • For integrated gpus (Intel-HD series | Vega 3,5,7) 
+   with no dedicated memory, you must select 2 \n
 Selecting a value greater than the actual amount of gpu VRAM may result in upscale failure """
 
     tk.messagebox.showinfo(title = 'GPU Vram (GB)', message = info)
@@ -1179,26 +1498,26 @@ Where possible the app will use the number of cpus selected."""
     tk.messagebox.showinfo(title = 'Cpu number', message = info)
 
 def open_info_AI_precision():
-    info = """This widget allows you to choose the AI upscaling mode:
+    info = """This widget allows you to choose the AI upscaling mode.
 
-- Full precision (>=8GB Vram recommended)
-  > compatible with all GPUs 
-  > uses 50% more GPU memory than Half precision mode
-  > is 30-70% faster than Half precision mode
+ • Full precision (>=8GB Vram recommended)
+    • compatible with all GPUs 
+    • uses 50% more GPU memory than Half precision mode
+    • is 30-70% faster than Half precision mode
   
-- Half precision
-  > some old GPUs are not compatible with this mode
-  > uses 50% less GPU memory than Full precision mode
-  > is 30-70% slower than Full precision mode"""
+ • Half precision
+    • some old GPUs are not compatible with this mode
+    • uses 50% less GPU memory than Full precision mode
+    • is 30-70% slower than Full precision mode"""
 
     tk.messagebox.showinfo(title = 'AI precision', message = info)
 
 def open_info_video_extension():
-    info = """This widget allows you to choose the video output:
+    info = """This widget allows you to choose the video output.
 
-- .mp4  | produces good quality and well compressed video
-- .avi  | produces the highest quality video
-- .webm | produces low quality but light video"""
+ • .mp4  | produces good quality and well compressed video
+ • .avi  | produces the highest quality video
+ • .webm | produces low quality but light video"""
 
     tk.messagebox.showinfo(title = 'Video output', message = info)    
 
@@ -1206,11 +1525,13 @@ def open_info_interpolation():
     info = """This widget allows you to choose interpolating 
 the upscaled image/frame with the original image/frame.
 
-- Interpolation allows to increase the quality of the final result, 
-  especially when using the tilling/merging function.
-
-- It also increases the the quality of the final result at low 
-  "Input resolution %" values (e.g. <50%)."""
+[ INTERPOLATION ]
+ • Interpolation is intended as, the fusion of the original 
+   image with the one produced by the AI
+ • Allows to increase the quality of the final result, 
+   especially when using the tilling/merging function.
+ • Allows to increase the quality of the final result at low 
+   "Input resolution %" values (e.g. <50%)."""
 
     tk.messagebox.showinfo(title = 'Video output', message = info) 
 
@@ -1608,9 +1929,10 @@ if __name__ == "__main__":
     if   AI_modes_list[0] == "Half precision": half_precision = True
     elif AI_modes_list[0] == "Full precision": half_precision = False
 
-    selected_interpolation = True
-    selected_AI_device     = 0
+    if interpolation_list[0]   == "No": selected_interpolation = False
+    elif interpolation_list[0] == "Yes": selected_interpolation = True
 
+    selected_AI_device       = 0
     selected_AI_model        = AI_models_list[0]
     selected_image_extension = image_extension_list[0]
     selected_video_extension = video_extension_list[0]
@@ -1635,11 +1957,11 @@ if __name__ == "__main__":
     bold20 = CTkFont(family = "Segoe UI", size = 20, weight = "bold")
     bold21 = CTkFont(family = "Segoe UI", size = 21, weight = "bold")
 
-    logo_git      = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "github_logo.png")), size=(15, 15))
+    logo_git      = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "github_logo.png")),    size=(15, 15))
     logo_telegram = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "telegram_logo.png")),  size=(15, 15))
-    stop_icon     = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "stop_icon.png")), size=(15, 15))
-    play_icon     = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "upscale_icon.png")), size=(15, 15))
-    clear_icon    = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "clear_icon.png")), size=(15, 15))
+    stop_icon     = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "stop_icon.png")),      size=(15, 15))
+    play_icon     = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "upscale_icon.png")),   size=(15, 15))
+    clear_icon    = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "clear_icon.png")),     size=(15, 15))
 
     app = App(window)
     window.update()
