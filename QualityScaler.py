@@ -1,6 +1,7 @@
 import multiprocessing
 import os.path
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -15,47 +16,58 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 import torch_directml
-from customtkinter import (CTk, 
-                           CTkButton, 
-                           CTkEntry, 
-                           CTkFont, 
-                           CTkImage,
-                           CTkLabel, 
-                           CTkOptionMenu, 
-                           CTkScrollableFrame,
-                           filedialog, 
-                           set_appearance_mode,
-                           set_default_color_theme)
+from customtkinter import (CTk, CTkButton, CTkEntry, CTkFont, CTkImage,
+                           CTkLabel, CTkOptionMenu, CTkScrollableFrame,
+                           CTkToplevel, filedialog,
+                           set_appearance_mode, set_default_color_theme)
 from moviepy.editor import VideoFileClip
 from moviepy.video.io import ImageSequenceClip
 from PIL import Image
 
+# Changelog 2.6
+
+# NEW
+# Support for .heic images
+# Added metadata copy from original file to upscaled file
+#
+# GUI
+# Completely revised GUI, now cleaner and more elegant
+# Added new widget for info button and in case of error
+# Updated info texts and widget texts
+#   
+# BUGFIX/IMPROVEMENTS
+# Changed default AI model to RealESR_Gx4 (the fastest model)
+# When the application is closed during upscale now upscale process is stopped correctly
+# General code cleaning and bugfixes
+# Updated dependencies
 
 app_name  = "QualityScaler"
-version   = "2.5"
+version   = "2.6"
+app_name_color = "#DA70D6"
 
 githubme    = "https://github.com/Djdefrag/QualityScaler"
 telegramme  = "https://linktr.ee/j3ngystudio"
 
+
+# SRVGGNetCompact
+SRVGGNetCompact_vram_multiplier = 1.8
+SRVGGNetCompact_models_list     = [ 'RealESR_Gx4', 'RealSRx4_Anime' ]
 
 # RRDB models
 RRDB_vram_multiplier   = 0.9
 BSRGAN_models_list     = [ 'BSRGANx4', 'BSRGANx2' ]
 RealESRGAN_models_list = [ 'RealESRGANx4' ]
 
-# SRVGGNetCompact
-SRVGGNetCompact_vram_multiplier = 1.8
-SRVGGNetCompact_models_list     = [ 'RealESR_Gx4', 'RealSRx4_Anime' ]
-
 # SAFM models
 # SAFM_vram_multiplier = 2
 # SAFM_models_list     = ['SAFMN_x4', 'SAFMN_L_x4', 'SAFMN_L_Real_x4', 'SAFMN_L_Real_x4_v2']
 
-AI_models_list = BSRGAN_models_list + RealESRGAN_models_list + SRVGGNetCompact_models_list
+
+AI_models_list = SRVGGNetCompact_models_list + BSRGAN_models_list + RealESRGAN_models_list
 
 image_extension_list  = [ '.jpg', '.png', '.bmp', '.tiff' ]
 video_extension_list  = [ '.mp4', '.avi', '.webm' ]
-interpolation_list    = [ 'Yes', 'No' ]
+interpolation_list    = [ 'Enabled', 'Disabled' ]
 AI_modes_list         = [ "Half precision", "Full precision" ]
 
 log_file_path  = f"{app_name}.log"
@@ -69,24 +81,63 @@ gpus_found           = torch_directml.device_count()
 downscale_algorithm  = cv2.INTER_AREA
 upscale_algorithm    = cv2.INTER_CUBIC
 
-offset_y_options = 0.1125
-row0_y           = 0.6
+offset_y_options = 0.125
+row0_y           = 0.56
 row1_y           = row0_y + offset_y_options
 row2_y           = row1_y + offset_y_options
 row3_y           = row2_y + offset_y_options
 
-app_name_color = "#DA70D6"
+offset_x_options = 0.28
+column1_x        = 0.5
+column0_x        = column1_x - offset_x_options
+column2_x        = column1_x + offset_x_options
+
 dark_color     = "#080808"
 
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 
+supported_file_extensions = [
+                            '.heic', 
+                            '.jpg', '.jpeg', '.JPG', '.JPEG',
+                            '.png', '.PNG',
+                            '.webp', '.WEBP',
+                            '.bmp', '.BMP',
+                            '.tif', '.tiff', '.TIF', '.TIFF',
+                            '.mp4', '.MP4',
+                            '.webm', '.WEBM',
+                            '.mkv', '.MKV',
+                            '.flv', '.FLV',
+                            '.gif', '.GIF',
+                            '.m4v', ',M4V',
+                            '.avi', '.AVI',
+                            '.mov', '.MOV',
+                            '.qt', '.3gp', 
+                            '.mpg', '.mpeg'
+                            ]
+
+supported_video_extensions  = [
+                                '.mp4', '.MP4',
+                                '.webm', '.WEBM',
+                                '.mkv', '.MKV',
+                                '.flv', '.FLV',
+                                '.gif', '.GIF',
+                                '.m4v', ',M4V',
+                                '.avi', '.AVI',
+                                '.mov', '.MOV',
+                                '.qt', '.3gp', 
+                                '.mpg', '.mpeg'
+                            ]
 
 
 # AI models -------------------
 
-def prepare_model(selected_AI_model, scaling_factor, backend, half_precision):
-    update_process_status(f"Preparing AI model")
+def load_AI_model(selected_AI_model, 
+                  scaling_factor, 
+                  backend, 
+                  half_precision):
+    
+    update_process_status(f"Loading AI model")
 
     model_path = find_by_relative_path(f"AI{os.sep}{selected_AI_model}.pth")
     
@@ -352,7 +403,7 @@ class SRVGGNetCompact(nn.Module):
         out += base
         return out
 
-## SAFM Architecture
+# SAFM Architecture
 
 class LayerNorm(nn.Module):
     def __init__(self, normalized_shape, eps=1e-6, data_format="channels_first"):
@@ -458,6 +509,8 @@ class SAFMN(nn.Module):
         x = self.to_img(x)
         return x
 
+
+
 # AI inference -------------------
 
 def get_image_mode(image):
@@ -473,16 +526,16 @@ def preprocess_image(image, half_precision, backend):
     
     return image
 
+def postprocess_output(output_image, max_range):
+    output = (output_image * max_range).round().astype(np.uint16 if max_range == 65535 else np.uint8)
+    return output
+
 def process_image_with_model(AI_model, image):
     output_image = AI_model(image)
     output_image = output_image.squeeze().float().clamp(0, 1).cpu().numpy()
     output_image = np.transpose(output_image, (1, 2, 0))
     
     return output_image
-
-def postprocess_output(output_image, max_range):
-    output = (output_image * max_range).round().astype(np.uint16 if max_range == 65535 else np.uint8)
-    return output
 
 def AI_enhance(AI_model, image, backend, half_precision):
     with torch.no_grad():
@@ -536,8 +589,13 @@ class Gpu:
         self.name   = name
         self.index  = index
 
+for index in range(gpus_found): 
+    gpu = Gpu(index = index, name = torch_directml.device_name(index))
+    device_list.append(gpu)
+    device_list_names.append(gpu.name)
+
 class ScrollableImagesTextFrame(CTkScrollableFrame):
-    def __init__(self, master, command=None, **kwargs):
+    def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
         self.grid_columnconfigure(0, weight=1)
         self.label_list  = []
@@ -550,15 +608,17 @@ class ScrollableImagesTextFrame(CTkScrollableFrame):
     def add_clean_button(self):
         label = CTkLabel(self, text = "")
         button = CTkButton(self, 
-                            font  = bold11,
-                            text  = "CLEAN", 
-                            fg_color   = "#282828",
-                            text_color = "#E0E0E0",
-                            image    = clear_icon,
-                            compound = "left",
-                            width    = 85, 
-                            height   = 27,
-                            corner_radius = 25)
+                            image        = clear_icon,
+                            font         = bold11,
+                            text         = "CLEAN", 
+                            compound     = "left",
+                            width        = 100, 
+                            height       = 28,
+                            border_width = 1,
+                            fg_color     = "#282828",
+                            text_color   = "#E0E0E0",
+                            border_color = "#0096FF")
+
         button.configure(command=lambda: self.clean_all_items())
         button.grid(row = len(self.button_list), column=1, pady=(0, 10), padx = 5)
         self.label_list.append(label)
@@ -574,11 +634,10 @@ class ScrollableImagesTextFrame(CTkScrollableFrame):
                         compound = "left", 
                         padx     = 10,
                         pady     = 5,
-                        corner_radius = 25,
+                        corner_radius = 12,
                         anchor   = "center")
                         
-        label.grid(row  = len(self.label_list), column = 0, 
-                   pady = (3, 3), padx = (3, 3), sticky = "w")
+        label.grid(row = len(self.label_list), column = 0, pady = (3, 3), padx = (3, 3), sticky = "w")
         self.label_list.append(label)
         self.file_list.append(file_element)    
 
@@ -586,44 +645,125 @@ class ScrollableImagesTextFrame(CTkScrollableFrame):
         self.label_list  = []
         self.button_list = []
         self.file_list   = []
-        place_up_background()
         place_loadFile_section()
 
-for index in range(gpus_found): 
-    gpu = Gpu(index = index, name = torch_directml.device_name(index))
-    device_list.append(gpu)
-    device_list_names.append(gpu.name)
+class CTkMessageBox(CTkToplevel):
+    def __init__(self,
+                 title: str = "CTkDialog",
+                 text: str = "CTkDialog",
+                 type: str = "info"):
 
-supported_file_extensions = [
-                            '.jpg', '.jpeg', '.JPG', '.JPEG',
-                            '.png', '.PNG',
-                            '.webp', '.WEBP',
-                            '.bmp', '.BMP',
-                            '.tif', '.tiff', '.TIF', '.TIFF',
-                            '.mp4', '.MP4',
-                            '.webm', '.WEBM',
-                            '.mkv', '.MKV',
-                            '.flv', '.FLV',
-                            '.gif', '.GIF',
-                            '.m4v', ',M4V',
-                            '.avi', '.AVI',
-                            '.mov', '.MOV',
-                            '.qt', '.3gp', 
-                            '.mpg', '.mpeg'
-                            ]
+        super().__init__()
 
-supported_video_extensions  = [
-                                '.mp4', '.MP4',
-                                '.webm', '.WEBM',
-                                '.mkv', '.MKV',
-                                '.flv', '.FLV',
-                                '.gif', '.GIF',
-                                '.m4v', ',M4V',
-                                '.avi', '.AVI',
-                                '.mov', '.MOV',
-                                '.qt', '.3gp', 
-                                '.mpg', '.mpeg'
-                            ]
+        self._running: bool = False
+        self._title = title
+        self._text = text
+        self.type = type
+
+        self.title('')
+        self.lift()                          # lift window on top
+        self.attributes("-topmost", True)    # stay on top
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+        self.after(10, self._create_widgets)  # create widgets with slight delay, to avoid white flickering of background
+        self.resizable(False, False)
+        self.grab_set()                       # make other windows not clickable
+
+    def _create_widgets(self):
+
+        self.grid_columnconfigure((0, 1), weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self._text = '\n' + self._text +'\n'
+
+        if self.type == "info":
+            color_for_messagebox_title = "#0096FF"
+        elif self.type == "error":
+            color_for_messagebox_title = "#ff1a1a"
+
+
+        self._titleLabel = CTkLabel(master  = self,
+                                    width      = 500,
+                                    anchor     = 'w',
+                                    justify    = "left",
+                                    fg_color   = "transparent",
+                                    text_color = color_for_messagebox_title,
+                                    font       = bold24,
+                                    text       = self._title)
+        
+        self._titleLabel.grid(row=0, column=0, columnspan=2, padx=30, pady=20, sticky="ew")
+
+        self._label = CTkLabel(master = self,
+                                width      = 550,
+                                wraplength = 550,
+                                corner_radius = 10,
+                                anchor     = 'w',
+                                justify    = "left",
+                                text_color = "#C0C0C0",
+                                bg_color   = "transparent",
+                                fg_color   = "#303030",
+                                font       = bold12,
+                                text       = self._text)
+        
+        self._label.grid(row=1, column=0, columnspan=2, padx=30, pady=5, sticky="ew")
+
+        self._ok_button = CTkButton(master  = self,
+                                    command = self._ok_event,
+                                    text    = 'OK',
+                                    width   = 125,
+                                    font         = bold11,
+                                    border_width = 1,
+                                    fg_color     = "#282828",
+                                    text_color   = "#E0E0E0",
+                                    border_color = "#0096FF")
+        
+        self._ok_button.grid(row=2, column=1, columnspan=1, padx=(10, 20), pady=(10, 20), sticky="e")
+
+    def _ok_event(self, event = None):
+        self.grab_release()
+        self.destroy()
+
+    def _on_closing(self):
+        self.grab_release()
+        self.destroy()
+
+def create_option_menu(command, values):
+    return CTkOptionMenu(master = window, 
+                        command = command,
+                        values  = values,
+                        width              = 150,
+                        height             = 31,
+                        anchor             = "center",
+                        dropdown_font      = bold11,
+                        font               = bold11,
+                        text_color         = "#C0C0C0",
+                        fg_color           = "#000000",
+                        button_color       = "#000000",
+                        button_hover_color = "#000000",
+                        dropdown_fg_color  = "#000000")
+
+def create_info_button(command, text):
+    return CTkButton(master  = window, 
+                    command  = command,
+                    text          = text,
+                    fg_color      = "transparent",
+                    text_color    = "#C0C0C0",
+                    anchor        = "w",
+                    height        = 23,
+                    width         = 150,
+                    corner_radius = 12,
+                    font          = bold12,
+                    image         = info_icon)
+
+def create_text_box(textvariable):
+    return CTkEntry(master        = window, 
+                    textvariable  = textvariable,
+                    border_width  = 1,
+                    width         = 150,
+                    height        = 30,
+                    font          = bold11,
+                    justify       = "center",
+                    fg_color      = "#000000",
+                    border_color  = "#404040")
 
 
 
@@ -715,7 +855,7 @@ def fix_tile_shape(tile, tile_upscaled, scaling_factor):
 
 # Utils functions ------------------------
 
-def opengithub(): webbrowser.open(githubme, new=1)
+def opengithub():   webbrowser.open(githubme, new=1)
 
 def opentelegram(): webbrowser.open(telegramme, new=1)
 
@@ -859,6 +999,7 @@ def video_reconstruction_by_frames(input_video_path,
         clip.write_videofile(upscaled_video_path,
                             fps     = frame_rate,
                             audio   = audio_path,
+                            #bitrate = '3M',
                             codec   = codec,
                             verbose = False,
                             logger  = None,
@@ -871,6 +1012,8 @@ def video_reconstruction_by_frames(input_video_path,
                              logger  = None,
                              threads = cpu_number)  
         
+    return upscaled_video_path
+
 def interpolate_images(starting_image, 
                        upscaled_image, 
                        image_target_height, 
@@ -919,16 +1062,60 @@ def calculate_time_to_complete_video(start_timer,
 
     time_left = ""
 
-    if int(hours_left) > 0: 
-        time_left = f"{int(hours_left):02d}h:"
+    if int(hours_left) > 0: time_left = f"{int(hours_left):02d}h:"
     
-    if int(minutes_left) > 0:
-        time_left = f"{time_left}{int(minutes_left):02d}m:"
+    if int(minutes_left) > 0 and minutes_left < 60 : time_left = f"{time_left}{int(minutes_left):02d}m:"
 
-    if seconds_left > 0:
-        time_left = f"{time_left}{seconds_left:02d}s"
+    if seconds_left > 0 and seconds_left < 60 : time_left = f"{time_left}{seconds_left:02d}s"
 
     return time_left        
+
+def copy_file_metadata(original_file_path, 
+                       upscaled_file_path):
+    
+    exiftool_path  = find_by_relative_path(f"Assets{os.sep}exiftool_12.67.exe")
+
+    exiftool_cmd = [
+                    exiftool_path, 
+                    '-fast', 
+                    '-TagsFromFile', 
+                    original_file_path, 
+                    '-overwrite_original', 
+                    '-all:all'
+                    ]
+
+    exiftool_cmd.extend([
+                        '-unsafe', 
+                        '-largetags', 
+                        upscaled_file_path
+                        ])
+
+    try: 
+        subprocess.run(exiftool_cmd, check = True, shell = 'False')
+    except Exception as ex:
+        print(f"Error while copying metadata to {upscaled_file_path}: {ex}")
+
+'''
+import concurrent.futures
+def copy_file_metadata_list(original_files_path_list, 
+                            upscaled_files_path_list, 
+                            level, 
+                            cpu_number = 4):
+    
+    update_process_status("Copying video frames metadata")
+
+    with concurrent.futures.ThreadPoolExecutor(cpu_number) as executor:
+        futures = {
+            executor.submit(copy_file_metadata, original_file_path, upscaled_file_path, level): (original_file_path, upscaled_file_path)
+            for original_file_path, upscaled_file_path in zip(original_files_path_list, upscaled_files_path_list)
+        }
+
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                future.result()
+            except Exception as ex:
+                pass
+'''
 
 
 
@@ -936,23 +1123,30 @@ def calculate_time_to_complete_video(start_timer,
 
 def stop_upscale_process():
     global process_upscale_orchestrator
-    process_upscale_orchestrator.terminate()
-    process_upscale_orchestrator.join()
+
+    try:
+        process_upscale_orchestrator
+    except NameError:
+        pass
+    else:
+        process_upscale_orchestrator.terminate()
+        process_upscale_orchestrator.join()
 
 def check_upscale_steps():
     time.sleep(2)
     try:
         while True:
-            step = read_log_file()
+            actual_step = read_log_file()
 
-            info_message.set(step)
+            info_message.set(actual_step)
 
-            if "All files completed! :)" in step or "Upscaling stopped" in step:
+            if "All files completed! :)" in actual_step or "Upscaling stopped" in actual_step:
                 stop_upscale_process()
                 remove_temp_files()
                 stop_thread()
-            elif "Error during upscale process :(" in step:
+            elif "Error during upscale process" in actual_step:
                 info_message.set('Error during upscale process :(')
+                show_error_message(actual_step.replace("Error during upscale process", ""))
                 remove_temp_files()
                 stop_thread()
 
@@ -1038,12 +1232,13 @@ def upscale_orchestrator(selected_file_list,
     torch.autograd.set_detect_anomaly(False)
     torch.autograd.profiler.profile(False)
     torch.autograd.profiler.emit_nvtx(False)
+    
     torch.set_num_threads(1)
 
     scaling_factor = 2 if 'x2' in selected_AI_model else 4
 
     try:
-        AI_model = prepare_model(selected_AI_model, scaling_factor, backend, half_precision)
+        AI_model = load_AI_model(selected_AI_model, scaling_factor, backend, half_precision)
 
         for file_number, file_path in enumerate(selected_file_list, 0):
             file_number = file_number + 1
@@ -1079,8 +1274,7 @@ def upscale_orchestrator(selected_file_list,
         update_process_status(f"All files completed! :)")
 
     except Exception as exception:
-        update_process_status(f"Error during upscale process :(\n\n {str(exception)}")
-        show_error(exception)
+        update_process_status(f"Error during upscale process {str(exception)}")
 
 # Images
 
@@ -1109,12 +1303,12 @@ def upscale_image(image_path,
     image_target_height, image_target_width = get_final_image_shape(image_to_upscale, scaling_factor)
     need_tiles, num_tiles_x, num_tiles_y    = file_need_tiles(image_to_upscale, tiles_resolution)
 
-    # Complete image
+    # Complete image w/out tilling
     if need_tiles == False:
         update_process_status(f"{file_number}. Upscaling image")
         image_upscaled = AI_enhance(AI_model, image_to_upscale, backend, half_precision)
 
-    # Tilled image
+    # Image with tilling
     else:
         tiles_list     = split_image_into_tiles(image_to_upscale, file_number, num_tiles_x, num_tiles_y, True)
         how_many_tiles = len(tiles_list)
@@ -1132,6 +1326,9 @@ def upscale_image(image_path,
         image_write(result_image_path, image_upscaled)
     else: 
         image_write(result_image_path, image_upscaled)
+
+    # Metadata copy from original image
+    copy_file_metadata(image_path, result_image_path)
 
 # Videos
 
@@ -1191,25 +1388,27 @@ def upscale_video(video_path,
             image_write(result_frame_path, frame_upscaled)
         else: 
             image_write(result_frame_path, frame_upscaled)
-        
+    
         frames_upscaled_paths_list.append(result_frame_path)
 
-        # Update process status every 4 frames
-        if index_frame != 0 and (index_frame + 1) % 4 == 0: 
+        # Update process status every 6 frames
+        if index_frame != 0 and (index_frame + 1) % 6 == 0: 
             end_timer        = timer()    
             percent_complete = (index_frame + 1) / how_many_frames * 100 
             time_left        = calculate_time_to_complete_video(start_timer, end_timer, how_many_frames, index_frame)
         
             update_process_status(f"{file_number}. Upscaling video {percent_complete:.2f}% ({time_left})")
 
-    video_reconstruction_by_frames(video_path, 
-                                   file_number,
-                                   frames_upscaled_paths_list, 
-                                   selected_AI_model, 
-                                   resize_factor, 
-                                   cpu_number, 
-                                   selected_video_extension,
-                                   selected_interpolation)
+    upscaled_video_path = video_reconstruction_by_frames(video_path, 
+                                                        file_number,
+                                                        frames_upscaled_paths_list, 
+                                                        selected_AI_model, 
+                                                        resize_factor, 
+                                                        cpu_number, 
+                                                        selected_video_extension,
+                                                        selected_interpolation)
+    
+    copy_file_metadata(video_path, upscaled_video_path)
 
 
 
@@ -1301,7 +1500,7 @@ def extract_image_info(image_file):
     width  = int(image.shape[1])
     height = int(image.shape[0])
 
-    image_label = ( "IMAGE" + " | " + image_name + " | " + str(width) + "x" + str(height) )
+    image_label = f"IMAGE • {image_name} • {width}x{height}"
 
     ctkimage = CTkImage(Image.open(image_file), size = (25, 25))
 
@@ -1325,10 +1524,7 @@ def extract_video_info(video_file):
         break
     cap.release()
 
-    video_label = ( "VIDEO" + " | " + video_name + " | " + str(width) + "x" 
-                   + str(height) + " | " + str(minutes) + 'm:' 
-                   + str(round(seconds)) + "s | " + str(num_frames) 
-                   + "frames | " + str(round(frame_rate)) + "fps" )
+    video_label = f"VIDEO • {video_name} • {width}x{height} • {minutes}m:{round(seconds)}s • {num_frames}frames • {round(frame_rate)}fps"
 
     ctkimage = CTkImage(Image.open("temp.jpg"), size = (25, 25))
     
@@ -1349,53 +1545,13 @@ def check_supported_selected_files(uploaded_file_list):
 
     return supported_files_list
 
-def open_files_action():
-    info_message.set("Selecting files...")
+def show_error_message(exception):
+    messageBox_title = "Upscale error"
 
-    uploaded_files_list    = list(filedialog.askopenfilenames())
-    uploaded_files_counter = len(uploaded_files_list)
+    messageBox_text  = str(exception) + "\n\n" + "Please report the error on Github/Telegram"
 
-    supported_files_list    = check_supported_selected_files(uploaded_files_list)
-    supported_files_counter = len(supported_files_list)
-    
-    print("> Uploaded files: " + str(uploaded_files_counter) + " => Supported files: " + str(supported_files_counter))
+    CTkMessageBox(text = messageBox_text, title = messageBox_title, type = "error")
 
-    if supported_files_counter > 0:
-        place_up_background()
-
-        global scrollable_frame_file_list
-        scrollable_frame_file_list = ScrollableImagesTextFrame(master = window, fg_color = dark_color, bg_color = dark_color)
-        scrollable_frame_file_list.place(relx = 0.5, rely = 0.25, relwidth = 1.0, relheight = 0.475, anchor = tk.CENTER)
-        
-        scrollable_frame_file_list.add_clean_button()
-
-        for index in range(supported_files_counter):
-
-            actual_file = supported_files_list[index]
-
-            if check_if_file_is_video(actual_file):
-                # video
-                video_label, ctkimage = extract_video_info(actual_file)
-                scrollable_frame_file_list.add_item(text_to_show = video_label, image = ctkimage, file_element = actual_file)
-                remove_file("temp.jpg")
-                
-            else:
-                # image
-                image_label, ctkimage = extract_image_info(actual_file)
-                scrollable_frame_file_list.add_item(text_to_show = image_label, image = ctkimage, file_element = actual_file)
-    
-        info_message.set("Ready")
-
-    else: 
-        info_message.set("Not supported files :(")
-
-def show_error(exception):
-    import tkinter as tk
-    tk.messagebox.showerror(title   = 'Error', 
-                            message = 'Upscale failed caused by:\n\n' +
-                                        str(exception) + '\n\n' +
-                                        'Please report the error on Github.com or Telegram group' +
-                                        '\n\nThank you :)')
 
 
 
@@ -1428,9 +1584,9 @@ def select_video_extension_from_menu(new_value: str):
 
 def select_interpolation_from_menu(new_value: str):
     global selected_interpolation
-    if new_value == 'Yes':
+    if new_value == 'Enabled':
         selected_interpolation = True
-    elif new_value == 'No':
+    elif new_value == 'Disabled':
         selected_interpolation = False
 
 
@@ -1438,181 +1594,241 @@ def select_interpolation_from_menu(new_value: str):
 # GUI info functions ---------------------------
 
 def open_info_AI_model():
-    info = """This widget allows to choose between different AIs.
+    messageBox_title = "AI model"
+    messageBox_text = """This widget allows to choose between different AIs.
 
-[ RRDB (2020) ]
-Complex and heavy AIs, high-quality upscale
- • BSRGANx4 | upscale by 4
- • BSRGANx2 | upscale by 2
- • RealESRGANx4 | upscale by 4
-_________________________________________
+• SRVGGNetCompact (2022)
+    • Fast and lightweight AI architecture • good-quality upscale
+    • Recommended for video upscaling
+        • RealESR_Gx4 (default)
+        • RealSRx4_Anime    
 
-[ SRVGGNetCompact (2022) ]
-Fast and lightweight AIs, good-quality upscale
- • RealESR_Gx4 | upscale by 4
- • RealSRx4_Anime | upscale by 4 
+• RRDB (2020)
+    • Complex and heavy AI architecture • high-quality upscale
+    • Recommended for image upscaling
+        • BSRGANx4 
+        • BSRGANx2
+        • RealESRGANx4
+
+AI model tagged with _x4 will upscale with factor 4
+AI model tagged with _x2 will upscale with factor 2
 """ 
-    
-    tk.messagebox.showinfo(title = 'AI model', message = info)
+
+    CTkMessageBox(text = messageBox_text, title = messageBox_title)
 
 def open_info_device():
-    info = """This widget allows you to select the GPU for AI processing. \n 
- • Keep in mind that the more powerful your GPU is, the faster the upscaling will be
+    messageBox_title = "GPU"
+
+    messageBox_text = """This widget allows you to select the GPU for AI processing.
+
+ • Keep in mind that the more powerful your GPU is, faster the upscaling will be
  • For optimal results, it's essential to regularly update your GPU drivers"""
 
-    tk.messagebox.showinfo(title='GPU', message=info)
+    CTkMessageBox(text = messageBox_text, title = messageBox_title)
 
-def open_info_file_extension():
-    info = """This widget allows to choose the extension of upscaled image/frame:\n
- • png | very good quality | supports transparent images
- • jpg | good quality | very fast
- • bmp | highest quality | slow
- • tiff | highest quality | very slow"""
+def open_info_AI_output():
+    messageBox_title = "AI output"
 
-    tk.messagebox.showinfo(title = 'Image output', message = info)
+    messageBox_text = """This widget allows to choose the extension of upscaled image/frame.
 
-def open_info_resize():
-    info = """This widget allows to choose the resolution input to the AI.\n
+ • .jpg • good quality • very fast
+ • .png • very good quality • slow • supports transparent images
+ • .bmp • highest quality • slow
+ • .tiff • highest quality • very slow"""
+
+    CTkMessageBox(text = messageBox_text, title = messageBox_title)
+
+def open_info_input_resolution():
+    messageBox_title = "Input resolution %"
+
+    messageBox_text = """This widget allows to choose the resolution input to the AI.
+
 For example for a 100x100px image:
  • Input resolution 50% => input to AI 50x50px
  • Input resolution 100% => input to AI 100x100px
  • Input resolution 200% => input to AI 200x200px """
 
-    tk.messagebox.showinfo(title = 'Input resolution %', message = info)
+    CTkMessageBox(text = messageBox_text, title = messageBox_title)
 
 def open_info_vram_limiter():
-    info = """This widget allows to set a limit on the gpu's VRAM memory usage.\n
+    messageBox_title = "GPU Vram (GB)"
+
+    messageBox_text = """This widget allows to set a limit on the gpu's VRAM memory usage.
+
  • For a gpu with 4 GB of Vram you must select 4
  • For a gpu with 6 GB of Vram you must select 6
  • For a gpu with 8 GB of Vram you must select 8
- • For integrated gpus (Intel-HD series | Vega 3,5,7) 
-   with no dedicated memory, you must select 2 \n
+ • For integrated gpus (Intel-HD series • Vega 3,5,7) you must select 2
+
 Selecting a value greater than the actual amount of gpu VRAM may result in upscale failure """
 
-    tk.messagebox.showinfo(title = 'GPU Vram (GB)', message = info)
-    
+    CTkMessageBox(text = messageBox_text, title = messageBox_title)
+
 def open_info_cpu():
-    info = """This widget allows you to choose how many cpus to devote to the app.\n
+    messageBox_title = "Cpu number"
+
+    messageBox_text = """This widget allows you to choose how many cpus to devote to the app.
+    
 Where possible the app will use the number of cpus selected."""
 
-    tk.messagebox.showinfo(title = 'Cpu number', message = info)
+    CTkMessageBox(text = messageBox_text, title = messageBox_title)
 
 def open_info_AI_precision():
-    info = """This widget allows you to choose the AI upscaling mode.
+    messageBox_title = "AI precision"
+
+    messageBox_text = """This widget allows you to choose the AI upscaling mode.
 
  • Full precision (>=8GB Vram recommended)
     • compatible with all GPUs 
-    • uses 50% more GPU memory than Half precision mode
-    • is 30-70% faster than Half precision mode
+    • uses 50% more GPU memory
+    • is 30-70% faster
   
  • Half precision
     • some old GPUs are not compatible with this mode
-    • uses 50% less GPU memory than Full precision mode
-    • is 30-70% slower than Full precision mode"""
+    • uses 50% less GPU memory
+    • is 30-70% slower"""
 
-    tk.messagebox.showinfo(title = 'AI precision', message = info)
+    CTkMessageBox(text = messageBox_text, title = messageBox_title)
 
 def open_info_video_extension():
-    info = """This widget allows you to choose the video output.
+    messageBox_title = "Video output"
 
- • .mp4  | produces good quality and well compressed video
- • .avi  | produces the highest quality video
- • .webm | produces low quality but light video"""
+    messageBox_text = """This widget allows you to choose the video output.
 
-    tk.messagebox.showinfo(title = 'Video output', message = info)    
+ • .mp4  • produces good quality and well compressed video
+ • .avi  • produces the highest quality video
+ • .webm • produces low quality but light video"""
+
+    CTkMessageBox(text = messageBox_text, title = messageBox_title)
 
 def open_info_interpolation():
-    info = """This widget allows you to choose interpolating 
-the upscaled image/frame with the original image/frame.
+    messageBox_title = "Interpolation"
 
-[ INTERPOLATION ]
- • Interpolation is intended as, the fusion of the original 
-   image with the one produced by the AI
- • Allows to increase the quality of the final result, 
-   especially when using the tilling/merging function.
- • Allows to increase the quality of the final result at low 
-   "Input resolution %" values (e.g. <50%)."""
+    messageBox_text = """This widget allows you to choose interpolating the upscaled image/frame with the original image/frame.
 
-    tk.messagebox.showinfo(title = 'Video output', message = info) 
+ • Is the fusion of the original image with the image produced by the AI
+ • Increase the quality of the final result
+     • especially when using the tilling/merging function
+     • especially at low "Input resolution %" values (<50%)"""
+
+    CTkMessageBox(text = messageBox_text, title = messageBox_title)
 
 
 
 # GUI place functions ---------------------------
-        
-def place_up_background():
-    up_background = CTkLabel(master  = window, 
-                            text    = "",
-                            fg_color = dark_color,
-                            font     = bold12,
-                            anchor   = "w")
+
+def open_files_action():
+    info_message.set("Selecting files")
+
+    uploaded_files_list    = list(filedialog.askopenfilenames())
+    uploaded_files_counter = len(uploaded_files_list)
+
+    supported_files_list    = check_supported_selected_files(uploaded_files_list)
+    supported_files_counter = len(supported_files_list)
     
-    up_background.place(relx = 0.5, 
-                        rely = 0.0, 
-                        relwidth = 1.0,  
-                        relheight = 1.0,  
-                        anchor = tk.CENTER)
+    print("> Uploaded files: " + str(uploaded_files_counter) + " => Supported files: " + str(supported_files_counter))
+
+    if supported_files_counter > 0:
+        global scrollable_frame_file_list
+        scrollable_frame_file_list = ScrollableImagesTextFrame(master = window, fg_color = dark_color, bg_color = dark_color)
+        scrollable_frame_file_list.place(relx = 0.0, 
+                                        rely = 0.0, 
+                                        relwidth  = 1.0,  
+                                        relheight = 0.45)
+        
+        scrollable_frame_file_list.add_clean_button()
+
+        for index in range(supported_files_counter):
+
+            actual_file = supported_files_list[index]
+
+            if check_if_file_is_video(actual_file):
+                # video
+                video_label, ctkimage = extract_video_info(actual_file)
+                scrollable_frame_file_list.add_item(text_to_show = video_label, image = ctkimage, file_element = actual_file)
+                remove_file("temp.jpg")
+                
+            else:
+                # image
+                image_label, ctkimage = extract_image_info(actual_file)
+                scrollable_frame_file_list.add_item(text_to_show = image_label, image = ctkimage, file_element = actual_file)
+    
+        info_message.set("Ready")
+
+    else: 
+        info_message.set("Not supported files :(")
 
 def place_github_button():
     git_button = CTkButton(master      = window, 
-                            width      = 30,
-                            height     = 30,
-                            fg_color   = "black",
-                            text       = "", 
-                            font       = bold11,
+                            command    = opengithub,
                             image      = logo_git,
-                            command    = opengithub)
+                            width         = 30,
+                            height        = 30,
+                            border_width  = 1,
+                            fg_color      = "transparent",
+                            text_color    = "#C0C0C0",
+                            border_color  = "#404040",
+                            anchor        = "center",                           
+                            text          = "", 
+                            font          = bold11)
     
     git_button.place(relx = 0.045, rely = 0.87, anchor = tk.CENTER)
 
 def place_telegram_button():
     telegram_button = CTkButton(master     = window, 
-                                width      = 30,
-                                height     = 30,
-                                fg_color   = "black",
-                                text       = "", 
-                                font       = bold11,
                                 image      = logo_telegram,
-                                command    = opentelegram)
+                                command    = opentelegram,
+                                width         = 30,
+                                height        = 30,
+                                border_width  = 1,
+                                fg_color      = "transparent",
+                                text_color    = "#C0C0C0",
+                                border_color  = "#404040",
+                                anchor        = "center",                           
+                                text          = "", 
+                                font          = bold11)
     telegram_button.place(relx = 0.045, rely = 0.93, anchor = tk.CENTER)
  
-def place_stop_button(): 
-    stop_button = CTkButton(master   = window, 
-                            width      = 140,
-                            height     = 30,
-                            fg_color   = "#282828",
-                            text_color = "#E0E0E0",
-                            text       = "STOP", 
-                            font       = bold11,
-                            image      = stop_icon,
-                            command    = stop_button_command)
-    stop_button.place(relx = 0.79, rely = row3_y, anchor = tk.CENTER)
-
 def place_loadFile_section():
-
-    text_drop = """ - SUPPORTED FILES -
-
-IMAGES - jpg png tif bmp webp
-VIDEOS - mp4 webm mkv flv gif avi mov mpg qt 3gp"""
-
-    input_file_text = CTkLabel(master    = window, 
-                                text     = text_drop,
-                                fg_color = dark_color,
-                                bg_color = dark_color,
-                                width   = 300,
-                                height  = 150,
-                                font    = bold12,
-                                anchor  = "center")
+    up_background = CTkLabel(master  = window, 
+                            text     = "",
+                            fg_color = dark_color,
+                            font     = bold12,
+                            anchor   = "w")
     
-    input_file_button = CTkButton(master = window, 
-                                width    = 140,
-                                height   = 30,
-                                text     = "SELECT FILES", 
-                                font     = bold11,
-                                border_spacing = 0,
-                                command        = open_files_action)
+    up_background.place(relx = 0.0, 
+                        rely = 0.0, 
+                        relwidth  = 1.0,  
+                        relheight = 0.45)
 
-    input_file_text.place(relx = 0.5, rely = 0.22,  anchor = tk.CENTER)
-    input_file_button.place(relx = 0.5, rely = 0.385, anchor = tk.CENTER)
+    text_drop = """ •  SUPPORTED FILES  •
+
+IMAGES • jpg png tif bmp webp heic
+VIDEOS • mp4 webm mkv flv gif avi mov mpg qt 3gp"""
+
+    input_file_text = CTkLabel(master      = window, 
+                                text       = text_drop,
+                                fg_color   = dark_color,
+                                bg_color   = dark_color,
+                                text_color = "#C0C0C0",
+                                width      = 300,
+                                height     = 150,
+                                font       = bold12,
+                                anchor     = "center")
+    
+    input_file_button = CTkButton(master = window,
+                                command  = open_files_action, 
+                                text     = "SELECT FILES",
+                                width      = 140,
+                                height     = 30,
+                                font       = bold11,
+                                border_width = 1,
+                                fg_color     = "#282828",
+                                text_color   = "#E0E0E0",
+                                border_color = "#0096FF")
+
+    input_file_text.place(relx = 0.5, rely = 0.20,  anchor = tk.CENTER)
+    input_file_button.place(relx = 0.5, rely = 0.35, anchor = tk.CENTER)
 
 def place_app_name():
     app_name_label = CTkLabel(master     = window, 
@@ -1621,233 +1837,79 @@ def place_app_name():
                               font       = bold20,
                               anchor     = "w")
     
-    app_name_label.place(relx = 0.21, rely = 0.56, anchor = tk.CENTER)
+    app_name_label.place(relx = column0_x, rely = row0_y - 0.025, anchor = tk.CENTER)
 
 def place_AI_menu():
-    AI_menu_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "AI model",
-                              height   = 23,
-                              width    = 125,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_AI_model)
 
-    AI_menu = CTkOptionMenu(master  = window, 
-                            values  = AI_models_list,
-                            width      = 140,
-                            font       = bold11,
-                            height     = 30,
-                            fg_color   = "#000000",
-                            anchor     = "center",
-                            command    = select_AI_from_menu,
-                            dropdown_font = bold11,
-                            dropdown_fg_color = "#000000")
+    AI_menu_button = create_info_button(open_info_AI_model, "AI model")
+    AI_menu        = create_option_menu(select_AI_from_menu, AI_models_list)
 
-    AI_menu_button.place(relx = 0.21, rely = row1_y - 0.05, anchor = tk.CENTER)
-    AI_menu.place(relx = 0.21, rely = row1_y, anchor = tk.CENTER)
+    AI_menu_button.place(relx = column0_x, rely = row1_y - 0.053, anchor = tk.CENTER)
+    AI_menu.place(relx = column0_x, rely = row1_y, anchor = tk.CENTER)
 
 def place_AI_mode_menu():
-    AI_mode_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "AI precision",
-                              height   = 23,
-                              width    = 125,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_AI_precision)
 
-    AI_mode_menu = CTkOptionMenu(master    = window, 
-                                values     = AI_modes_list,
-                                width      = 140,
-                                font       = bold11,
-                                height     = 30,
-                                fg_color   = "#000000",
-                                anchor     = "center",
-                                dynamic_resizing = False,
-                                command          = select_AI_mode_from_menu,
-                                dropdown_font    = bold11,
-                                dropdown_fg_color = "#000000")
+    AI_mode_button = create_info_button(open_info_AI_precision, "AI precision")
+    AI_mode_menu   = create_option_menu(select_AI_mode_from_menu, AI_modes_list)
     
-    AI_mode_button.place(relx = 0.21, rely = row2_y - 0.05, anchor = tk.CENTER)
-    AI_mode_menu.place(relx = 0.21, rely = row2_y, anchor = tk.CENTER)
+    AI_mode_button.place(relx = column0_x, rely = row2_y - 0.053, anchor = tk.CENTER)
+    AI_mode_menu.place(relx = column0_x, rely = row2_y, anchor = tk.CENTER)
 
 def place_interpolation_menu():
-    interpolation_button = CTkButton(master    = window, 
-                                    fg_color   = "black",
-                                    text_color = "#ffbf00",
-                                    text       = "Interpolation",
-                                    height     = 23,
-                                    width      = 125,
-                                    font       = bold11,
-                                    corner_radius = 25,
-                                    anchor     = "center",
-                                    command    = open_info_interpolation)
 
-    interpolation_menu = CTkOptionMenu(master      = window, 
-                                        values     = interpolation_list,
-                                        width      = 140,
-                                        font       = bold10,
-                                        height     = 30,
-                                        fg_color   = "#000000",
-                                        anchor     = "center",
-                                        dynamic_resizing = False,
-                                        command    = select_interpolation_from_menu,
-                                        dropdown_font     = bold11,
-                                        dropdown_fg_color = "#000000")
+    interpolation_button = create_info_button(open_info_interpolation, "Interpolation")
+    interpolation_menu   = create_option_menu(select_interpolation_from_menu, interpolation_list)
     
-    interpolation_button.place(relx = 0.21, rely = row3_y - 0.05, anchor = tk.CENTER)
-    interpolation_menu.place(relx = 0.21, rely  = row3_y, anchor = tk.CENTER)
+    interpolation_button.place(relx = column0_x, rely = row3_y - 0.053, anchor = tk.CENTER)
+    interpolation_menu.place(relx = column0_x, rely  = row3_y, anchor = tk.CENTER)
 
-def place_image_extension_menu():
-    file_extension_button = CTkButton(master   = window, 
-                                    fg_color   = "black",
-                                    text_color = "#ffbf00",
-                                    text       = "Image output",
-                                    height     = 23,
-                                    width      = 125,
-                                    font       = bold11,
-                                    corner_radius = 25,
-                                    anchor     = "center",
-                                    command    = open_info_file_extension)
+def place_AI_output_menu():
 
-    file_extension_menu = CTkOptionMenu(master     = window, 
-                                        values     = image_extension_list,
-                                        width      = 140,
-                                        font       = bold11,
-                                        height     = 30,
-                                        fg_color   = "#000000",
-                                        anchor     = "center",
-                                        command    = select_image_extension_from_menu,
-                                        dropdown_font = bold11,
-                                        dropdown_fg_color = "#000000")
+    file_extension_button = create_info_button(open_info_AI_output, "AI output")
+    file_extension_menu   = create_option_menu(select_image_extension_from_menu, image_extension_list)
     
-    file_extension_button.place(relx = 0.5, rely = row0_y - 0.05, anchor = tk.CENTER)
-    file_extension_menu.place(relx = 0.5, rely = row0_y, anchor = tk.CENTER)
+    file_extension_button.place(relx = column1_x, rely = row0_y - 0.053, anchor = tk.CENTER)
+    file_extension_menu.place(relx = column1_x, rely = row0_y, anchor = tk.CENTER)
 
 def place_video_extension_menu():
-    video_extension_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "Video output",
-                              height   = 23,
-                              width    = 125,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_video_extension)
 
-    video_extension_menu = CTkOptionMenu(master  = window, 
-                                    values     = video_extension_list,
-                                    width      = 140,
-                                    font       = bold11,
-                                    height     = 30,
-                                    fg_color   = "#000000",
-                                    anchor     = "center",
-                                    dynamic_resizing = False,
-                                    command    = select_video_extension_from_menu,
-                                    dropdown_font = bold11,
-                                    dropdown_fg_color = "#000000")
+    video_extension_button = create_info_button(open_info_video_extension, "Video output")
+    video_extension_menu   = create_option_menu(select_video_extension_from_menu, video_extension_list)
     
-    video_extension_button.place(relx = 0.5, rely = row1_y - 0.05, anchor = tk.CENTER)
-    video_extension_menu.place(relx = 0.5, rely = row1_y, anchor = tk.CENTER)
+    video_extension_button.place(relx = column1_x, rely = row1_y - 0.053, anchor = tk.CENTER)
+    video_extension_menu.place(relx = column1_x, rely = row1_y, anchor = tk.CENTER)
 
 def place_gpu_menu():
-    AI_device_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "GPU",
-                              height   = 23,
-                              width    = 125,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_device)
 
-    AI_device_menu = CTkOptionMenu(master  = window, 
-                                    values   = device_list_names,
-                                    width      = 140,
-                                    font       = bold9,
-                                    height     = 30,
-                                    fg_color   = "#000000",
-                                    anchor     = "center",
-                                    dynamic_resizing = False,
-                                    command    = select_AI_device_from_menu,
-                                    dropdown_font = bold11,
-                                    dropdown_fg_color = "#000000")
+    gpu_button = create_info_button(open_info_device, "GPU")
+    gpu_menu   = create_option_menu(select_AI_device_from_menu, device_list_names)
     
-    AI_device_button.place(relx = 0.5, rely = row2_y - 0.05, anchor = tk.CENTER)
-    AI_device_menu.place(relx = 0.5, rely  = row2_y, anchor = tk.CENTER)
+    gpu_button.place(relx = 0.5, rely = row2_y - 0.053, anchor = tk.CENTER)
+    gpu_menu.place(relx = 0.5, rely  = row2_y, anchor = tk.CENTER)
 
 def place_vram_textbox():
-    vram_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "GPU Vram (GB)",
-                              height   = 23,
-                              width    = 125,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_vram_limiter)
 
-    vram_textbox = CTkEntry(master      = window, 
-                            width      = 140,
-                            font       = bold11,
-                            height     = 30,
-                            fg_color   = "#000000",
-                            textvariable = selected_VRAM_limiter)
-    
-    vram_button.place(relx = 0.5, rely = row3_y - 0.05, anchor = tk.CENTER)
-    vram_textbox.place(relx = 0.5, rely  = row3_y, anchor = tk.CENTER)
+    vram_button  = create_info_button(open_info_vram_limiter,  "GPU Vram (GB)")
+    vram_textbox = create_text_box(selected_VRAM_limiter) 
+  
+    vram_button.place(relx = column1_x, rely = row3_y - 0.053, anchor = tk.CENTER)
+    vram_textbox.place(relx = column1_x, rely  = row3_y, anchor = tk.CENTER)
 
 def place_input_resolution_textbox():
-    resize_factor_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "Input resolution (%)",
-                              height   = 23,
-                              width    = 125,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_resize)
 
-    resize_factor_textbox = CTkEntry(master    = window, 
-                                    width      = 140,
-                                    font       = bold11,
-                                    height     = 30,
-                                    fg_color   = "#000000",
-                                    textvariable = selected_resize_factor)
-    
-    resize_factor_button.place(relx = 0.790, rely = row0_y - 0.05, anchor = tk.CENTER)
-    resize_factor_textbox.place(relx = 0.790, rely = row0_y, anchor = tk.CENTER)
+    resize_factor_button  = create_info_button(open_info_input_resolution, "Input resolution %")
+    resize_factor_textbox = create_text_box(selected_resize_factor) 
+
+    resize_factor_button.place(relx = column2_x, rely = row0_y - 0.053, anchor = tk.CENTER)
+    resize_factor_textbox.place(relx = column2_x, rely = row0_y, anchor = tk.CENTER)
 
 def place_cpu_textbox():
-    cpu_button = CTkButton(master  = window, 
-                              fg_color   = "black",
-                              text_color = "#ffbf00",
-                              text     = "CPU number",
-                              height   = 23,
-                              width    = 125,
-                              font     = bold11,
-                              corner_radius = 25,
-                              anchor  = "center",
-                              command = open_info_cpu)
 
-    cpu_textbox = CTkEntry(master    = window, 
-                            width      = 140,
-                            font       = bold11,
-                            height     = 30,
-                            fg_color   = "#000000",
-                            textvariable = selected_cpu_number)
+    cpu_button  = create_info_button(open_info_cpu, "CPU number")
+    cpu_textbox = create_text_box(selected_cpu_number)
 
-    cpu_button.place(relx = 0.79, rely = row1_y - 0.05, anchor = tk.CENTER)
-    cpu_textbox.place(relx = 0.79, rely  = row1_y, anchor = tk.CENTER)
+    cpu_button.place(relx = column2_x, rely = row1_y - 0.053, anchor = tk.CENTER)
+    cpu_textbox.place(relx = column2_x, rely  = row1_y, anchor = tk.CENTER)
 
 def place_message_label():
     message_label = CTkLabel(master  = window, 
@@ -1857,25 +1919,51 @@ def place_message_label():
                             fg_color     = "#ffbf00",
                             text_color   = "#000000",
                             anchor       = "center",
-                            corner_radius = 25)
-    message_label.place(relx = 0.79, rely = row2_y, anchor = tk.CENTER)
+                            corner_radius = 12)
+    message_label.place(relx = column2_x, rely = row2_y, anchor = tk.CENTER)
+
+def place_stop_button(): 
+    stop_button = CTkButton(master     = window,
+                            command    = stop_button_command, 
+                            image      = stop_icon,
+                            text       = "STOP",
+                            width      = 140,
+                            height     = 30,
+                            font       = bold11,
+                            border_width = 1,
+                            fg_color     = "#282828",
+                            text_color   = "#E0E0E0",
+                            border_color = "#EC1D1D")
+    stop_button.place(relx = column2_x, rely = row3_y, anchor = tk.CENTER)
 
 def place_upscale_button(): 
-    upscale_button = CTkButton(master    = window, 
+    upscale_button = CTkButton(master      = window, 
+                                command    = upscale_button_command,
+                                text       = "UPSCALE",
+                                image      = upscale_icon,
                                 width      = 140,
                                 height     = 30,
-                                fg_color   = "#282828",
-                                text_color = "#E0E0E0",
-                                text       = "UPSCALE", 
                                 font       = bold11,
-                                image      = play_icon,
-                                command    = upscale_button_command)
-    upscale_button.place(relx = 0.79, rely = row3_y, anchor = tk.CENTER)
+                                border_width = 1,
+                                fg_color     = "#282828",
+                                text_color   = "#E0E0E0",
+                                border_color = "#0096FF")
+    upscale_button.place(relx = column2_x, rely = row3_y, anchor = tk.CENTER)
    
 
 
+# GUI functions ---------------------------
+
+def on_app_close():
+    window.grab_release()
+    window.destroy()
+    stop_button_command()
+
 class App():
     def __init__(self, window):
+
+        self.toplevel_window = None
+
         window.title('')
         width        = 675
         height       = 600
@@ -1883,7 +1971,7 @@ class App():
         window.minsize(width, height)
         window.iconbitmap(find_by_relative_path("Assets" + os.sep + "logo.ico"))
 
-        place_up_background()
+        window.protocol("WM_DELETE_WINDOW", on_app_close)
 
         place_app_name()
         place_github_button()
@@ -1893,7 +1981,7 @@ class App():
         place_AI_mode_menu()
         place_interpolation_menu()
 
-        place_image_extension_menu()
+        place_AI_output_menu()
         place_video_extension_menu()
         place_gpu_menu()
         place_vram_textbox()
@@ -1929,8 +2017,8 @@ if __name__ == "__main__":
     if   AI_modes_list[0] == "Half precision": half_precision = True
     elif AI_modes_list[0] == "Full precision": half_precision = False
 
-    if interpolation_list[0]   == "No": selected_interpolation = False
-    elif interpolation_list[0] == "Yes": selected_interpolation = True
+    if interpolation_list[0]   == "Disabled": selected_interpolation = False
+    elif interpolation_list[0] == "Enabled": selected_interpolation = True
 
     selected_AI_device       = 0
     selected_AI_model        = AI_models_list[0]
@@ -1947,21 +2035,28 @@ if __name__ == "__main__":
     selected_VRAM_limiter.set("8")
     selected_cpu_number.set(str(int(os.cpu_count()/2)))
 
-    bold8  = CTkFont(family = "Segoe UI", size = 8, weight = "bold")
-    bold9  = CTkFont(family = "Segoe UI", size = 9, weight = "bold")
-    bold10 = CTkFont(family = "Segoe UI", size = 10, weight = "bold")
-    bold11 = CTkFont(family = "Segoe UI", size = 11, weight = "bold")
-    bold12 = CTkFont(family = "Segoe UI", size = 12, weight = "bold")
-    bold18 = CTkFont(family = "Segoe UI", size = 18, weight = "bold")
-    bold19 = CTkFont(family = "Segoe UI", size = 19, weight = "bold")
-    bold20 = CTkFont(family = "Segoe UI", size = 20, weight = "bold")
-    bold21 = CTkFont(family = "Segoe UI", size = 21, weight = "bold")
+    font = "Segoe UI"    
+    bold8  = CTkFont(family = font, size = 8, weight = "bold")
+    bold9  = CTkFont(family = font, size = 9, weight = "bold")
+    bold10 = CTkFont(family = font, size = 10, weight = "bold")
+    bold11 = CTkFont(family = font, size = 11, weight = "bold")
+    bold12 = CTkFont(family = font, size = 12, weight = "bold")
+    bold18 = CTkFont(family = font, size = 18, weight = "bold")
+    bold19 = CTkFont(family = font, size = 19, weight = "bold")
+    bold20 = CTkFont(family = font, size = 20, weight = "bold")
+    bold21 = CTkFont(family = font, size = 21, weight = "bold")
+    bold24 = CTkFont(family = font, size = 24, weight = "bold")
 
-    logo_git      = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "github_logo.png")),    size=(15, 15))
-    logo_telegram = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "telegram_logo.png")),  size=(15, 15))
-    stop_icon     = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "stop_icon.png")),      size=(15, 15))
-    play_icon     = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "upscale_icon.png")),   size=(15, 15))
-    clear_icon    = CTkImage(Image.open(find_by_relative_path("Assets" + os.sep + "clear_icon.png")),     size=(15, 15))
+
+
+    # Images
+    logo_git       = CTkImage(Image.open(find_by_relative_path(f"Assets{os.sep}github_logo.png")),    size=(15, 15))
+    logo_telegram  = CTkImage(Image.open(find_by_relative_path(f"Assets{os.sep}telegram_logo.png")),  size=(15, 15))
+    stop_icon      = CTkImage(Image.open(find_by_relative_path(f"Assets{os.sep}stop_icon.png")),      size=(15, 15))
+    upscale_icon   = CTkImage(Image.open(find_by_relative_path(f"Assets{os.sep}upscale_icon.png")),   size=(15, 15))
+    clear_icon     = CTkImage(Image.open(find_by_relative_path(f"Assets{os.sep}clear_icon.png")),     size=(15, 15))
+    info_icon      = CTkImage(Image.open(find_by_relative_path(f"Assets{os.sep}info_icon.png")),      size=(14, 14))
+
 
     app = App(window)
     window.update()
