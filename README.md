@@ -17,10 +17,11 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/d59dbf41-3565-411b-91df-761943a09573">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/73c56df7-97b9-4daa-bc16-60146e0c951d">
     </div>
 </body>
 </html>
+
 
 
 ## What is QualityScaler?
@@ -77,6 +78,7 @@ External packages are:
     - [x] Choose upscaled video extension
     - [x] Interpolation between the original and upscaled image/video
     - [x] Show the remaining time to complete video upscaling
+    - [ ] Metadata extraction and application from original file to upscaled file (via exiftool)
     - [ ] Python 3.11 (expecting ~30% more performance)
     - [ ] Torch/torch-directml 2.0 (expecting ~20% more performance)
 
