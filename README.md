@@ -17,11 +17,10 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/73c56df7-97b9-4daa-bc16-60146e0c951d">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/82b6da15-d445-4fc1-99fd-b75578830004">
     </div>
 </body>
 </html>
-
 
 
 ## What is QualityScaler?
