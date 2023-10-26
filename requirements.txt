@@ -3,6 +3,7 @@ torch-directml==0.1.13.1.dev230413
 
 #GUI
 customtkinter
+packaging
 
 #UTILS
 pyinstaller==5.13.2
