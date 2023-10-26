@@ -17,11 +17,10 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/82b6da15-d445-4fc1-99fd-b75578830004">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/55680db0-c1ef-40e1-b0e4-e05db8314f4e">
     </div>
 </body>
 </html>
-
 
 ## What is QualityScaler?
 Qualityscaler is a Windows app powered by AI to enhance, enlarge and reduce noise in photographs and videos.
@@ -30,21 +29,22 @@ Qualityscaler is a Windows app powered by AI to enhance, enlarge and reduce nois
 - https://github.com/Djdefrag/RealESRScaler / RealESRScaler - image/video AI upscaler app (Real-ESRGAN)
 - https://github.com/Djdefrag/FluidFrames.RIFE / FluidFrames.RIFE - video AI interpolation app (RIFE-HDv3)
 
-## Citations. ❤
-- https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-images/
-- https://timesavervfx.com/ai-upscale/
-
 ## Credits.
 - BSRGAN - https://github.com/cszn/BSRGAN
 - Real-ESRGAN - https://github.com/xinntao/Real-ESRGAN
+- SAFMN - https://github.com/sunny2109/SAFMN
+
+## Citations. ❤
+- https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-images/
+- https://timesavervfx.com/ai-upscale/
 
 ## How is made. 🛠
 QualityScaler is completely written in Python, from backend to frontend. 
 External packages are:
 - AI  -> torch / torch-directml
 - GUI -> customtkinter
-- Image/video -> openCV / moviepy
-- Packaging   -> pyinstaller / upx
+- Image/video -> OpenCV / moviepy
+- Packaging   -> pyinstaller
 
 ## Requirements. 🤓
 - Windows 11 / Windows 10
@@ -77,9 +77,13 @@ External packages are:
     - [x] Choose upscaled video extension
     - [x] Interpolation between the original and upscaled image/video
     - [x] Show the remaining time to complete video upscaling
-    - [ ] Metadata extraction and application from original file to upscaled file (via exiftool)
+    - [x] Support for SRVGGNetCompact AI architecture
+    - [x] Metadata extraction and application from original file to upscaled file (via exiftool)
+    - [ ] Support for SAFMN AI architecture
     - [ ] Python 3.11 (expecting ~30% more performance)
-    - [ ] Torch/torch-directml 2.0 (expecting ~20% more performance)
+    - [ ] torch/torch-directml 2.0 (expecting ~20% more performance)
+    - [ ] Python 3.12
+    - [ ] torch/torch-directml 2.1 
 
 ## Some Example.
 
