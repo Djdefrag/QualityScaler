@@ -1,0 +1,1 @@
+Example assets that will be deployed with python code.

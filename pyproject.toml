@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quality_scaler"
+description = "upscales images using ai"
+requires-python = ">=3.7"
+keywords = ["template-python-cmd"]
+license = { text = "BSD 3-Clause License" }
+classifiers = ["Programming Language :: Python :: 3"]
+dependencies = [
+    #AI
+    "torch-directml==0.1.13.1.dev230413",
+
+    #GUI
+    "customtkinter",
+    "packaging",
+
+    #UTILS
+    "pyinstaller==5.13.2",
+    "moviepy",
+    "opencv-python-headless",
+    "Pillow",
+    "download",
+]
+# Change this with the version number bump.
+version = "1.0.0"
+
+[tool.ruff]
+line-length = 200
+
+[tool.pylint."MESSAGES CONTROL"]
+good-names = [
+    "c",
+    "i",
+    "ok",
+    "id",
+    "e",
+    "f"
+]
+disable = [
+    "missing-function-docstring",
+    "missing-module-docstring"
+]
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+
+[project.scripts]
+quality-scaler = "quality_scaler.cli:main"

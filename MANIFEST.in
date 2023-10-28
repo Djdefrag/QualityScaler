@@ -1,0 +1,13 @@
+include pyproject.toml
+include requirements.testing.txt
+include src/quality_scaler/assets/clear/clear_icon.png
+include src/quality_scaler/assets/clear/exiftool_12.68.exe
+include src/quality_scaler/assets/clear/github_logo.png
+include src/quality_scaler/assets/clear/info_icon.png
+include src/quality_scaler/assets/clear/logo.ico
+include src/quality_scaler/assets/clear/logo.png
+include src/quality_scaler/assets/clear/out.txt
+include src/quality_scaler/assets/clear/stop_icon.png
+include src/quality_scaler/assets/clear/telegram_logo.png
+include src/quality_scaler/assets/clear/upscale_icon.png
+include src/quality_scaler/AI/readme.txt
