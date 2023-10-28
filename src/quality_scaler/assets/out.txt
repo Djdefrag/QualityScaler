@@ -1,0 +1,11 @@
+clear_icon.png
+example.txt
+exiftool_12.68.exe
+github_logo.png
+info_icon.png
+logo.ico
+logo.png
+out.txt
+stop_icon.png
+telegram_logo.png
+upscale_icon.png
