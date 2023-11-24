@@ -17,7 +17,7 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/629c520b-4a88-4d38-a12c-795e6833f842">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/cb20c2dd-c51d-46b0-8895-b22848b314b2">
     </div>
 </body>
 </html>
@@ -44,7 +44,7 @@ External packages are:
 - AI  -> torch / torch-directml
 - GUI -> customtkinter
 - Image/video -> OpenCV / moviepy
-- Packaging   -> pyinstaller
+- Packaging   -> nuitka
 
 ## Requirements. 🤓
 - Windows 11 / Windows 10
