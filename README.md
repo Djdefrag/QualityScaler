@@ -17,7 +17,7 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/cb20c2dd-c51d-46b0-8895-b22848b314b2">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/20e96a7c-1572-4ee8-ac1a-aee9dbf37a13">
     </div>
 </body>
 </html>
@@ -76,12 +76,14 @@ External packages are:
     - [x] Upscale multiple videos at once
     - [x] Choose upscaled video extension
     - [x] Interpolation between the original and upscaled image/video
+    - [x] More Interpolation levels (Low, Medium, High)
     - [x] Show the remaining time to complete video upscaling
     - [x] Support for SRVGGNetCompact AI architecture
     - [x] Metadata extraction and application from original file to upscaled file (via exiftool)
     - [x] Support for SAFMN AI architecture
     - [ ] Python 3.11 (expecting ~30% better performance)
     - [ ] torch/torch-directml 2.0 (expecting ~20% better performance)
+- [ ] 3.X versions
     - [ ] Python 3.12
     - [ ] torch/torch-directml 2.1 
 
