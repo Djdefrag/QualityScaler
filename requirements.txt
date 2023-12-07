@@ -6,6 +6,6 @@ customtkinter
 packaging
 
 #UTILS
-nuitka
 moviepy
 opencv-python-headless
+nuitka
