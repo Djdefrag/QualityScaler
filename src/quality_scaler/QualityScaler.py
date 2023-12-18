@@ -241,7 +241,7 @@ supported_video_extensions  = [
 
 
 def get_model_url(model_name: str) -> str:
-    return f"https://github.com/Djdefrag/QualityScaler/raw/main/AI/{model_name}"
+    return f"https://zackees.github.io/ai-image-video-models/{model_name}"
 
 def torch_load_model(model_path, map_location = None) -> Module:
     print(f"Loading model from {model_path}")

@@ -24,8 +24,11 @@ dependencies = [
     "Pillow",
     "download",
 ]
-# Change this with the version number bump.
 version = "1.0.0"
+# readme is labeled as dynamic
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
 
 [tool.ruff]
 line-length = 200
@@ -52,4 +55,4 @@ ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
 
 [project.scripts]
-quality-scaler = "quality_scaler.cli:main"
+qualityscaler = "quality_scaler.cli:main"
