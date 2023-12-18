@@ -1,7 +1,6 @@
 #!/bin/bash
 set -e
 rm -rf build dist
-. ./activate.sh
 pip install wheel twine
 echo "Building Source and Wheel (universal) distribution…"
 python setup.py sdist bdist_wheel --universal
