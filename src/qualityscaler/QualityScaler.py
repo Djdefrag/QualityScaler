@@ -1,6 +1,7 @@
 
 # Standard library imports
 import sys
+import os
 from shutil          import rmtree as remove_directory
 from timeit          import default_timer as timer
 from subprocess      import run  as subprocess_run
@@ -215,8 +216,9 @@ def get_model_url(model_name: str) -> str:
 def torch_load_model(model_path, map_location = None) -> Module:
     print(f"Loading model from {model_path}")
     model_name = os_path.basename(model_path)
-    donwload_url = get_model_url(model_name)
-    download(donwload_url, model_path, replace = False, timeout=60)
+    download_url = get_model_url(model_name)
+    os.makedirs(os_path_join(HERE, "AI"), exist_ok = True)
+    download(download_url, model_path, replace = False, timeout=60)
     return torch_load(model_path, map_location = map_location)
 
 @torch_inference_mode(True)
@@ -231,16 +233,16 @@ def load_AI_model(
     # BSRGAN
     if selected_AI_model == 'BSRGANx4':
         AI_model = BSRGANx4_Net()
-        pretrained_model = torch_load(model_path)
+        pretrained_model = torch_load_model(model_path)
 
     elif selected_AI_model == 'BSRGANx2':
         AI_model = BSRGANx2_Net()
-        pretrained_model = torch_load(model_path)
+        pretrained_model = torch_load_model(model_path)
 
     # SRVGGNetCompact
     elif selected_AI_model == 'RealESR_Gx4':
         AI_model = SRVGGNetCompact_Plus()
-        pretrained_model = torch_load(model_path, map_location = torch_device('cpu'))['params']
+        pretrained_model = torch_load_model(model_path, map_location = torch_device('cpu'))['params']
 
     elif selected_AI_model == 'RealSRx4_Anime':
         AI_model = SRVGGNetCompact()
@@ -249,11 +251,11 @@ def load_AI_model(
     # SAFMNet
     elif selected_AI_model == 'SAFMNLx4_Real':
         AI_model = SAFM_Net()
-        pretrained_model = torch_load(model_path)['params']
+        pretrained_model = torch_load_model(model_path)['params']
     
     elif selected_AI_model == 'SAFMNLx4':
         AI_model = SAFM_Net()
-        pretrained_model = torch_load(model_path)['params']
+        pretrained_model = torch_load_model(model_path)['params']
         
     AI_model.load_state_dict(pretrained_model, strict = True)
     AI_model.eval()
