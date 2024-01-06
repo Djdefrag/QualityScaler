@@ -59,7 +59,6 @@ from torch.nn import (
     PixelShuffle,
     GELU,
     PReLU,
-    ReLU,
     LeakyReLU
 )
 
@@ -132,13 +131,7 @@ if sys.stderr is None: sys.stderr = open(os_devnull, "w")
 
 
 app_name = "QualityScaler"
-version = "2.11"
-
-# 2.11 changelog
-# More interpolation options
-# Fixed upscaled video colorspace
-# Tilling/merging improvements
-
+version = "2.12"
 
 app_name_color = "#DA70D6"
 dark_color = "#080808"
@@ -166,10 +159,6 @@ video_extension_list = [ '.mp4 (x264)', '.mp4 (x265)', '.avi' ]
 interpolation_list   = [ 'Low', 'Medium', 'High', 'Disabled' ]
 AI_modes_list        = [ 'Half precision', 'Full precision' ]
 
-temp_dir = f"{app_name}_temp"
-audio_path = f"{app_name}_temp{os_separator}audio.mp3"
-frame_sequence = f"{app_name}_temp{os_separator}frame_%01d.jpg"
-
 COMPLETED_STATUS = "Completed"
 ERROR_STATUS = "Error"
 STOP_STATUS = "Stop"
@@ -184,7 +173,6 @@ offset_x_options = 0.28
 column1_x = 0.5
 column0_x = column1_x - offset_x_options
 column2_x = column1_x + offset_x_options
-
 
 supported_file_extensions = [
     '.heic', '.jpg', '.jpeg', '.JPG', '.JPEG', '.png',
@@ -208,47 +196,46 @@ supported_video_extensions = [
 
 @torch_inference_mode(True)
 def load_AI_model(
-        processing_queue: multiprocessing_Queue, 
         selected_AI_model: str, 
         backend: directml_device, 
         half_precision: bool
         ) -> any:
     
-    
-    write_process_status(processing_queue, f"Loading AI model")
     model_path = find_by_relative_path(f"AI{os_separator}{selected_AI_model}.pth")
 
-    # RRDB AI
+    # BSRGAN
     if selected_AI_model == 'BSRGANx4':
-        AI_model = BSRGAN_Net(sf = 4)
+        AI_model = BSRGANx4_Net()
         pretrained_model = torch_load(model_path)
 
     elif selected_AI_model == 'BSRGANx2':
-        AI_model = BSRGAN_Net(sf = 2)
+        AI_model = BSRGANx2_Net()
         pretrained_model = torch_load(model_path)
 
-    # SRVGGNetCompact AI
+    # SRVGGNetCompact
     elif selected_AI_model == 'RealESR_Gx4':
-        AI_model = SRVGGNetCompact(num_conv = 32)
+        AI_model = SRVGGNetCompact_Plus()
         pretrained_model = torch_load(model_path, map_location = torch_device('cpu'))['params']
 
     elif selected_AI_model == 'RealSRx4_Anime':
-        AI_model = SRVGGNetCompact(num_conv = 16)
+        AI_model = SRVGGNetCompact()
         pretrained_model = torch_load(model_path, map_location = torch_device('cpu'))['params']
 
-    # SAFM AI
+    # SAFMNet
     elif selected_AI_model == 'SAFMNLx4_Real':
-        AI_model = SAFM_Net(dim = 128, n_blocks = 16)
+        AI_model = SAFM_Net()
         pretrained_model = torch_load(model_path)['params']
     
     elif selected_AI_model == 'SAFMNLx4':
-        AI_model = SAFM_Net(dim = 128, n_blocks = 16)
+        AI_model = SAFM_Net()
         pretrained_model = torch_load(model_path)['params']
         
     AI_model.load_state_dict(pretrained_model, strict = True)
     AI_model.eval()
 
-    if half_precision: AI_model = AI_model.half()
+    if half_precision: 
+        AI_model = AI_model.half()
+
     AI_model = AI_model.to(backend)     
 
     return AI_model
@@ -414,22 +401,19 @@ class RRDB_BSRGAN(Module):
         out = self.RDB3(out)
         return out * 0.2 + x
 
-class BSRGAN_Net(Module):
+class BSRGANx4_Net(Module):
 
-    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=23, gc=32, sf=4):
-        super(BSRGAN_Net, self).__init__()
-        self.sf = sf
+    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=23, gc=32):
+        super(BSRGANx4_Net, self).__init__()
 
         self.conv_first = Conv2d(in_nc, nf, 3, 1, 1, bias=True)
         self.RRDB_trunk = Sequential(*[RRDB_BSRGAN(nf, gc) for _ in range(nb)])
         self.trunk_conv = Conv2d(nf, nf, 3, 1, 1, bias=True)
         self.upconv1    = Conv2d(nf, nf, 3, 1, 1, bias=True)
-
-        if sf == 4: self.upconv2 = Conv2d(nf, nf, 3, 1, 1, bias=True)
-
-        self.HRconv    = Conv2d(nf, nf, 3, 1, 1, bias=True)
-        self.conv_last = Conv2d(nf, out_nc, 3, 1, 1, bias=True)
-        self.lrelu     = LeakyReLU(negative_slope=0.2, inplace=True)
+        self.upconv2    = Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.HRconv     = Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.conv_last  = Conv2d(nf, out_nc, 3, 1, 1, bias=True)
+        self.lrelu      = LeakyReLU(negative_slope=0.2, inplace=True)
 
         self._initialize_weights()
 
@@ -446,7 +430,39 @@ class BSRGAN_Net(Module):
         fea   = fea + trunk
 
         fea = self.lrelu(self.upconv1(torch_nn_interpolate(fea, scale_factor=2, mode='nearest')))
-        if self.sf == 4: fea = self.lrelu(self.upconv2(torch_nn_interpolate(fea, scale_factor=2, mode='nearest')))
+        fea = self.lrelu(self.upconv2(torch_nn_interpolate(fea, scale_factor=2, mode='nearest')))
+        out = self.conv_last(self.lrelu(self.HRconv(fea)))
+
+        return out
+
+class BSRGANx2_Net(Module):
+
+    def __init__(self, in_nc=3, out_nc=3, nf=64, nb=23, gc=32):
+        super(BSRGANx2_Net, self).__init__()
+
+        self.conv_first = Conv2d(in_nc, nf, 3, 1, 1, bias=True)
+        self.RRDB_trunk = Sequential(*[RRDB_BSRGAN(nf, gc) for _ in range(nb)])
+        self.trunk_conv = Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.upconv1    = Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.HRconv     = Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.conv_last  = Conv2d(nf, out_nc, 3, 1, 1, bias=True)
+        self.lrelu      = LeakyReLU(negative_slope=0.2, inplace=True)
+
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for module in self.modules():
+            if isinstance(module, Conv2d):
+                torch_nn_init.kaiming_normal_(module.weight, a=0, mode='fan_in')
+                if module.bias is not None:
+                    module.bias.data.zero_()
+
+    def forward(self, x):
+        fea   = self.conv_first(x)
+        trunk = self.trunk_conv(self.RRDB_trunk(fea))
+        fea   = fea + trunk
+
+        fea = self.lrelu(self.upconv1(torch_nn_interpolate(fea, scale_factor=2, mode='nearest')))
         out = self.conv_last(self.lrelu(self.HRconv(fea)))
 
         return out
@@ -544,13 +560,12 @@ class AttBlock(Module):
         
 class SAFM_Net(Module):
 
-    def __init__(self, dim, n_blocks=8, ffn_scale=2.0, upscaling_factor=4):
+    def __init__(self, dim=128, n_blocks=16, ffn_scale=2.0, upscaling_factor=4):
         super().__init__()
+
         self.to_feat = Conv2d(3, dim, 3, 1, 1)
-
-        self.feats = Sequential(*[AttBlock(dim, ffn_scale) for _ in range(n_blocks)])
-
-        self.to_img = Sequential(
+        self.feats   = Sequential(*[AttBlock(dim, ffn_scale) for _ in range(n_blocks)])
+        self.to_img  = Sequential(
             Conv2d(dim, 3 * upscaling_factor**2, 3, 1, 1),
             PixelShuffle(upscaling_factor)
         )
@@ -565,51 +580,64 @@ class SAFM_Net(Module):
 
 class SRVGGNetCompact(Module):
 
-    def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=16, upscale=4, act_type='prelu'):
+    def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=16, upscale=4):
         super(SRVGGNetCompact, self).__init__()
-        self.num_in_ch = num_in_ch
+        self.num_in_ch  = num_in_ch
         self.num_out_ch = num_out_ch
-        self.num_feat = num_feat
-        self.num_conv = num_conv
-        self.upscale = upscale
-        self.act_type = act_type
+        self.num_feat   = num_feat
+        self.num_conv   = num_conv
+        self.upscale    = upscale
 
         self.body = ModuleList()
-        # the first conv
         self.body.append(Conv2d(num_in_ch, num_feat, 3, 1, 1))
-        # the first activation
-        if act_type == 'relu':
-            activation = ReLU(inplace=True)
-        elif act_type == 'prelu':
-            activation = PReLU(num_parameters=num_feat)
-        elif act_type == 'leakyrelu':
-            activation = LeakyReLU(negative_slope=0.1, inplace=True)
+        activation = PReLU(num_parameters=num_feat)
         self.body.append(activation)
 
-        # the body structure
         for _ in range(num_conv):
             self.body.append(Conv2d(num_feat, num_feat, 3, 1, 1))
-            # activation
-            if act_type == 'relu':
-                activation = ReLU(inplace=True)
-            elif act_type == 'prelu':
-                activation = PReLU(num_parameters=num_feat)
-            elif act_type == 'leakyrelu':
-                activation = LeakyReLU(negative_slope=0.1, inplace=True)
+            activation = PReLU(num_parameters=num_feat)
             self.body.append(activation)
 
-        # the last conv
         self.body.append(Conv2d(num_feat, num_out_ch * upscale * upscale, 3, 1, 1))
-        # upsample
         self.upsampler = PixelShuffle(upscale)
 
     def forward(self, x):
         out = x
         for i in range(0, len(self.body)):
             out = self.body[i](out)
-
         out = self.upsampler(out)
-        # add the nearest upsampled image, so that the network learns the residual
+        base = torch_nn_interpolate(x, scale_factor=self.upscale, mode='nearest')
+        out += base
+        return out
+
+class SRVGGNetCompact_Plus(Module):
+
+    def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4):
+        super(SRVGGNetCompact_Plus, self).__init__()
+        self.num_in_ch  = num_in_ch
+        self.num_out_ch = num_out_ch
+        self.num_feat   = num_feat
+        self.num_conv   = num_conv
+        self.upscale    = upscale
+
+        self.body = ModuleList()
+        self.body.append(Conv2d(num_in_ch, num_feat, 3, 1, 1))
+        activation = PReLU(num_parameters=num_feat)
+        self.body.append(activation)
+
+        for _ in range(num_conv):
+            self.body.append(Conv2d(num_feat, num_feat, 3, 1, 1))
+            activation = PReLU(num_parameters=num_feat)
+            self.body.append(activation)
+
+        self.body.append(Conv2d(num_feat, num_out_ch * upscale * upscale, 3, 1, 1))
+        self.upsampler = PixelShuffle(upscale)
+
+    def forward(self, x):
+        out = x
+        for i in range(0, len(self.body)):
+            out = self.body[i](out)
+        out = self.upsampler(out)
         base = torch_nn_interpolate(x, scale_factor=self.upscale, mode='nearest')
         out += base
         return out
@@ -726,7 +754,7 @@ def remove_dir(
     if os_path_exists(name_dir): 
         remove_directory(name_dir)
 
-def create_temp_dir(
+def create_dir(
         name_dir: str
         ) -> None:
     
@@ -734,9 +762,6 @@ def create_temp_dir(
         remove_directory(name_dir)
     if not os_path_exists(name_dir): 
         os_makedirs(name_dir, mode=0o777)
-
-def remove_temp_files() -> None:
-    remove_dir(temp_dir)
 
 def stop_thread() -> None: 
     stop = 1 + "x"
@@ -747,7 +772,7 @@ def stop_thread() -> None:
 
 def image_write(
         file_path: str, 
-        file_data
+        file_data: numpy_ndarray
         ) -> None: 
     
     _, file_extension = os_path_splitext(file_path)
@@ -813,41 +838,42 @@ def extract_video_fps(
     return frame_rate
    
 def extract_video_frames_and_audio(
-        processing_queue: multiprocessing_Queue,
+        target_directory: str,
         video_path: str, 
-        file_number: int
     ) -> list[str]:
-    
-    frame_rate = extract_video_fps(video_path)
 
-    video_file_clip = VideoFileClip(video_path)
-    try: 
-        write_process_status(processing_queue, f"{file_number}. Extracting video audio")
-        video_file_clip.audio.write_audiofile(audio_path, verbose = False, logger = None)
-    except:
-        pass
+    create_dir(target_directory)
 
-    write_process_status(processing_queue, f"{file_number}. Extracting video frames")
-    video_frames_list = []
-    video_frames_list = video_file_clip.write_images_sequence(frame_sequence, verbose = False, logger = None, fps = frame_rate)
-    
-    return video_frames_list
+    with VideoFileClip(video_path) as video_file_clip:
+        try: 
+            audio_path = f"{target_directory}{os_separator}audio.mp3"
+            video_file_clip.audio.write_audiofile(audio_path, verbose = False, logger = None)
+        except:
+            pass
+        
+        video_frame_rate = extract_video_fps(video_path)
+        frames_sequence_path = f"{target_directory}{os_separator}frame_%01d.jpg"
+        video_frames_list = video_file_clip.write_images_sequence(
+            nameformat = frames_sequence_path, 
+            fps        = video_frame_rate,
+            verbose    = False, 
+            withmask   = True,
+            logger     = None, 
+            )
+        
+    return video_frames_list, audio_path
 
 def video_reconstruction_by_frames(
-        processing_queue: multiprocessing_Queue,
         video_path: str,
-        file_number: int, 
+        audio_path: str,
         frames_upscaled_list: list[str], 
         selected_AI_model: str, 
         resize_factor: int, 
         cpu_number: int,
         selected_video_extension: str, 
-        selected_interpolation: bool,
         selected_interpolation_factor: float
         ) -> None:
-    
-    write_process_status(processing_queue, f"{file_number}. Processing upscaled video")
-    
+        
     frame_rate = extract_video_fps(video_path)
 
     if selected_video_extension == '.mp4 (x264)':  
@@ -860,7 +886,7 @@ def video_reconstruction_by_frames(
         selected_video_extension = '.avi' 
         codec = 'png'
 
-    upscaled_video_path = prepare_output_video_filename(video_path, selected_AI_model, resize_factor, selected_video_extension, selected_interpolation, selected_interpolation_factor)
+    upscaled_video_path = prepare_output_video_filename(video_path, selected_AI_model, resize_factor, selected_video_extension, selected_interpolation_factor)
 
     clip = ImageSequenceClip.ImageSequenceClip(frames_upscaled_list, fps = frame_rate)
     if os_path_exists(audio_path):
@@ -871,7 +897,7 @@ def video_reconstruction_by_frames(
                             bitrate = '16M',
                             verbose = False,
                             logger  = None,
-                            ffmpeg_params = ['-vf', 'scale=out_range=full' ],
+                            ffmpeg_params = [ '-vf', 'scale=out_range=full' ],
                             threads = cpu_number)
     else:
         clip.write_videofile(upscaled_video_path,
@@ -880,7 +906,7 @@ def video_reconstruction_by_frames(
                              bitrate = '16M',
                              verbose = False,
                              logger  = None,
-                             ffmpeg_params = ['-vf', 'scale=out_range=full' ],
+                             ffmpeg_params = [ '-vf', 'scale=out_range=full' ],
                              threads = cpu_number)  
         
     return upscaled_video_path
@@ -1024,13 +1050,11 @@ def check_upscale_steps() -> None:
             if actual_step == COMPLETED_STATUS:
                 info_message.set(f"All files completed! :)")
                 stop_upscale_process()
-                remove_temp_files()
                 stop_thread()
 
             elif actual_step == STOP_STATUS:
                 info_message.set(f"Upscaling stopped")
                 stop_upscale_process()
-                remove_temp_files()
                 stop_thread()
 
             elif ERROR_STATUS in actual_step:
@@ -1038,7 +1062,6 @@ def check_upscale_steps() -> None:
                 error = actual_step.replace(ERROR_STATUS, "")
                 info_message.set(error_message)
                 show_error_message(error)
-                remove_temp_files()
                 stop_thread()
 
             else:
@@ -1128,23 +1151,30 @@ def prepare_output_image_filename(
         selected_AI_model: str, 
         resize_factor: int, 
         selected_image_extension: str,
-        selected_interpolation: bool,
         selected_interpolation_factor: float
         ) -> str:
     
-    result_path, _    = os_path_splitext(image_path)
-    resize_percentage = str(int(resize_factor * 100)) + "%"
+    result_path, _ = os_path_splitext(image_path)
 
-    if selected_interpolation:
-        if selected_interpolation_factor == 0.3:
-            to_append = f"_{selected_AI_model}_{resize_percentage}_Interpolatation-Low{selected_image_extension}"
-        elif selected_interpolation_factor == 0.5:
-            to_append = f"_{selected_AI_model}_{resize_percentage}_Interpolatation-Medium{selected_image_extension}"
-        elif selected_interpolation_factor == 0.7:
-            to_append = f"_{selected_AI_model}_{resize_percentage}_Interpolatation-High{selected_image_extension}"
-    else:
-        to_append = f"_{selected_AI_model}_{resize_percentage}{selected_image_extension}"
+    # Selected AI model
+    to_append = f"_{selected_AI_model}"
 
+    # Selected resize
+    to_append += f"_Resize-{str(int(resize_factor * 100))}"
+
+    # Selected intepolation
+    if selected_interpolation_factor == 0.3:
+        to_append += f"_Interpolatation-Low"
+
+    elif selected_interpolation_factor == 0.5:
+        to_append += f"_Interpolatation-Medium"
+
+    elif selected_interpolation_factor == 0.7:
+        to_append += f"_Interpolatation-High"
+
+    # Selected image extension
+    to_append += f"{selected_image_extension}"
+        
     result_path += to_append
 
     return result_path
@@ -1154,22 +1184,58 @@ def prepare_output_video_filename(
         selected_AI_model: str, 
         resize_factor: int, 
         selected_video_extension: str,
-        selected_interpolation: bool,
         selected_interpolation_factor: float
         ) -> str:
     
-    result_path, _    = os_path_splitext(video_path)
-    resize_percentage = str(int(resize_factor * 100)) + "%"
+    result_path, _ = os_path_splitext(video_path)
 
-    if selected_interpolation:
-        if selected_interpolation_factor == 0.3:
-            to_append = f"_{selected_AI_model}_{resize_percentage}_Interpolatation-Low{selected_video_extension}"
-        elif selected_interpolation_factor == 0.5:
-            to_append = f"_{selected_AI_model}_{resize_percentage}_Interpolatation-Medium{selected_video_extension}"
-        elif selected_interpolation_factor == 0.7:
-            to_append = f"_{selected_AI_model}_{resize_percentage}_Interpolatation-High{selected_video_extension}"
-    else:
-        to_append = f"_{selected_AI_model}_{resize_percentage}{selected_video_extension}"
+    # Selected AI model
+    to_append = f"_{selected_AI_model}"
+
+    # Selected resize
+    to_append += f"_Resize-{str(int(resize_factor * 100))}"
+
+    # Selected intepolation
+    if selected_interpolation_factor == 0.3:
+        to_append += f"_Interpolatation-Low"
+
+    elif selected_interpolation_factor == 0.5:
+        to_append += f"_Interpolatation-Medium"
+
+    elif selected_interpolation_factor == 0.7:
+        to_append += f"_Interpolatation-High"
+
+    # Selected video extension
+    to_append += f"{selected_video_extension}"
+        
+    result_path += to_append
+
+    return result_path
+
+def prepare_output_video_frames_directory_filename(
+        video_path: str, 
+        selected_AI_model: str, 
+        resize_factor: int, 
+        selected_interpolation_factor: float
+        ) -> str:
+    
+    result_path, _  = os_path_splitext(video_path)
+
+    # Selected AI model
+    to_append = f"_{selected_AI_model}"
+
+    # Selected resize
+    to_append += f"_Resize-{str(int(resize_factor * 100))}"
+
+    # Selected intepolation
+    if selected_interpolation_factor == 0.3:
+        to_append += f"_Interpolatation-Low"
+
+    elif selected_interpolation_factor == 0.5:
+        to_append += f"_Interpolatation-Medium"
+
+    elif selected_interpolation_factor == 0.7:
+        to_append += f"_Interpolatation-High"
 
     result_path += to_append
 
@@ -1198,22 +1264,43 @@ def upscale_orchestrator(
     torch_set_num_threads(2)
 
     try:
-        AI_model = load_AI_model(processing_queue, selected_AI_model, backend, half_precision)
+        write_process_status(processing_queue, f"Loading AI model")
+        AI_model = load_AI_model(selected_AI_model, backend, half_precision)
 
         how_many_files = len(selected_file_list)
-
         for file_number in range(how_many_files):
             file_path   = selected_file_list[file_number]
             file_number = file_number + 1
 
             if check_if_file_is_video(file_path):
-                upscale_video(processing_queue, file_path, file_number, AI_model, selected_AI_model, upscaling_factor, 
-                              backend, tiles_resolution, resize_factor, cpu_number, half_precision, selected_video_extension, 
-                              selected_interpolation, selected_interpolation_factor)
+                upscale_video(processing_queue, 
+                                file_path, 
+                                file_number, 
+                                AI_model, 
+                                selected_AI_model, 
+                                upscaling_factor, 
+                                backend, 
+                                tiles_resolution, 
+                                resize_factor, 
+                                cpu_number, 
+                                half_precision, 
+                                selected_video_extension, 
+                                selected_interpolation, 
+                                selected_interpolation_factor)
             else:
-                upscale_image(processing_queue, file_path, file_number, AI_model, selected_AI_model, upscaling_factor, 
-                              backend, selected_image_extension, tiles_resolution, resize_factor, half_precision, 
-                              selected_interpolation, selected_interpolation_factor)
+                upscale_image(processing_queue, 
+                                file_path, 
+                                file_number, 
+                                AI_model, 
+                                selected_AI_model, 
+                                upscaling_factor, 
+                                backend, 
+                                selected_image_extension, 
+                                tiles_resolution, 
+                                resize_factor, 
+                                half_precision, 
+                                selected_interpolation, 
+                                selected_interpolation_factor)
 
         write_process_status(processing_queue, f"{COMPLETED_STATUS}")
 
@@ -1236,7 +1323,7 @@ def upscale_image(
         selected_interpolation_factor: float
         ) -> None:
     
-    result_image_path = prepare_output_image_filename(image_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation, selected_interpolation_factor)
+    result_image_path = prepare_output_image_filename(image_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation_factor)
         
     starting_image   = image_read(image_path)
     image_to_upscale = resize_file(starting_image, resize_factor)
@@ -1282,11 +1369,15 @@ def upscale_video(
         selected_interpolation_factor: float
         ) -> None:
     
-    create_temp_dir(temp_dir)
+    # Directory for video frames and audio
+    target_directory = prepare_output_video_frames_directory_filename(video_path, selected_AI_model, resize_factor, selected_interpolation_factor)
 
-    frame_list_paths = extract_video_frames_and_audio(processing_queue, video_path, file_number)
-    how_many_frames  = len(frame_list_paths) 
+    # Extract video frames and audio
+    write_process_status(processing_queue, f"{file_number}. Extracting video frames and audio")
+    frame_list_paths, audio_path = extract_video_frames_and_audio(target_directory, video_path)
+
     target_height, target_width, need_tiles, num_tiles_x, num_tiles_y = get_video_info_for_upscaling(frame_list_paths, resize_factor, upscaling_factor, tiles_resolution)
+    how_many_frames = len(frame_list_paths) 
 
     write_process_status(processing_queue, f"{file_number}. Upscaling video")  
     for index_frame in range(how_many_frames):
@@ -1314,21 +1405,25 @@ def upscale_video(
         # Update process status every 4 frames
         update_process_status_videos(processing_queue, file_number, start_timer, index_frame, how_many_frames)
 
-    upscaled_video_path = video_reconstruction_by_frames(processing_queue, video_path, file_number, frame_list_paths, selected_AI_model, resize_factor, 
-                                                        cpu_number, selected_video_extension, selected_interpolation, selected_interpolation_factor)
+    # Upscaled video reconstuction
+    write_process_status(processing_queue, f"{file_number}. Processing upscaled video")
+    upscaled_video_path = video_reconstruction_by_frames(video_path, audio_path, frame_list_paths, selected_AI_model, resize_factor, cpu_number, selected_video_extension, selected_interpolation_factor)
     
-    # Metadata copy from original video
+    # Metadata copy from original video to upscaled video
     copy_file_metadata(video_path, upscaled_video_path)
+
+    # Remove upscaled frames directory after video reconstruction
+    remove_dir(target_directory)
 
 
 
 # GUI utils function ---------------------------
 
 def opengithub() -> None:   
-    open_browser.open(githubme, new=1)
+    open_browser(githubme, new=1)
 
 def opentelegram() -> None: 
-    open_browser.open(telegramme, new=1)
+    open_browser(telegramme, new=1)
 
 def check_if_file_is_video(
         file: str
@@ -1384,9 +1479,12 @@ def user_input_checks() -> None:
         is_ready = False 
 
     if tiles_resolution > 0: 
-        if   selected_AI_model in BSRGAN_models_list:          vram_multiplier = RRDB_vram_multiplier
-        elif selected_AI_model in SRVGGNetCompact_models_list: vram_multiplier = SRVGGNetCompact_vram_multiplier
-        elif selected_AI_model in SAFMN_models_list:           vram_multiplier = SAFMN_vram_multiplier
+        if   selected_AI_model in BSRGAN_models_list:          
+            vram_multiplier = RRDB_vram_multiplier
+        elif selected_AI_model in SRVGGNetCompact_models_list: 
+            vram_multiplier = SRVGGNetCompact_vram_multiplier
+        elif selected_AI_model in SAFMN_models_list:           
+            vram_multiplier = SAFMN_vram_multiplier
 
         selected_vram = (vram_multiplier * int(float(str(selected_VRAM_limiter.get()))))
 
@@ -1467,8 +1565,14 @@ def show_error_message(
         ) -> None:
     
     messageBox_title = "Upscale error"
-    messageBox_text  = str(exception) + "\n\n" + "Please report the error on Github/Telegram"
-    CTkMessageBox(text = messageBox_text, title = messageBox_title, type = "error")
+    messageBox_subtitle = "Please report the error on Github or Telegram"
+    messageBox_text  = f" {str(exception)} "
+
+    CTkInfoMessageBox(messageType = "error", 
+                      title = messageBox_title, 
+                      subtitle = messageBox_subtitle,
+                      default_value = None,
+                      option_list = [messageBox_text])
 
 
 
@@ -1491,7 +1595,7 @@ def select_AI_mode_from_menu(
     elif selected_option == "Half precision": 
         half_precision = True
 
-def select_AI_device_from_menu(
+def select_gpu_from_menu(
         selected_option: str
         ) -> None:
     
@@ -1538,157 +1642,141 @@ def select_interpolation_from_menu(
 # GUI info functions ---------------------------
 
 def open_info_AI_model():
-    messageBox_title = "AI model"
-    messageBox_text = """ This widget allows to choose between different AIs.
+    option_list = [
+        "\n SRVGGNetCompact (2022) - Fast and lightweight AI architecture\n" + 
+        " Good-quality upscale\n" + 
+        " Recommended for video upscaling\n" + 
+        "  • RealESR_Gx4\n" + 
+        "  • RealSRx4_Anime\n",
 
-  Default: RealESR_Gx4
+        "\n RRDB (2020) - Complex and heavy AI architecture\n" + 
+        " High-quality upscale\n" + 
+        " Recommended for image upscaling\n" +
+        "  • BSRGANx2\n" + 
+        "  • BSRGANx4\n",
 
-  SRVGGNetCompact (2022)
-     • Fast and lightweight AI 
-     • Good-quality upscale
-     • Recommended for video upscaling
-         • RealESR_Gx4
-         • RealSRx4_Anime    
+        "\n SAFM (2023) - Slow but lightweight AI architecture\n" + 
+        " High-quality upscale\n" +
+        " Recommended for image upscaling\n" + 
+        " Does not support Half-precision\n" +
+        "  • SAFMNLx4\n" + 
+        "  • SAFMNLx4_Real\n",
+    ]
 
-  RRDB (2020)
-     • Complex and heavy AI architecture 
-     • High-quality upscale
-     • Recommended for image upscaling
-         • BSRGANx4 
-         • BSRGANx2
-
-  SAFMN (2023)
-     • Slow but lightweight AI 
-     • High-quality upscale
-     • Recommended for image upscaling
-     • Does not support Half-precision
-         • SAFMNLx4 
-         • SAFMNLx4_Real
-
-  • AI model tagged with _x4 will upscale with factor 4
-  • AI model tagged with _x2 will upscale with factor 2""" 
-
-    CTkMessageBox(text = messageBox_text, title = messageBox_title)
-
-def open_info_device():
-    messageBox_title = "GPU"
-
-    messageBox_text = """ This widget allows you to select the GPU for AI processing.
-
-  • Keep in mind that the more powerful your GPU is, faster the upscaling will be
-  • For optimal results, it's essential to regularly update your GPU drivers"""
-
-    CTkMessageBox(text = messageBox_text, title = messageBox_title)
-
-def open_info_AI_output():
-    messageBox_title = "Image output"
-
-    messageBox_text = """ This widget allows to choose the extension of upscaled images.
-
-  Default: .png   
-    
-  • png ( very good quality / slow / supports transparent images )
-  • jpg ( good quality / very fast )
-  • bmp ( highest quality / slow )
-  • tiff ( highest quality / very slow )"""
-
-    CTkMessageBox(text = messageBox_text, title = messageBox_title)
-
-def open_info_input_resolution():
-    messageBox_title = "Input resolution %"
-
-    messageBox_text = """ This widget allows to choose the resolution input to the AI.
-
-  Default: 60%     
-
-  • A high value (>70%) will create high quality photos/videos but will be slow
-  
-  • While a low value (<40%) will create decent quality photos/videos but much faster
-  
-  • For example for a 100x100px image/video:
-     • Input resolution 50% => input to AI 50x50px
-     • Input resolution 100% => input to AI 100x100px"""
-
-    CTkMessageBox(text = messageBox_text, title = messageBox_title)
-
-def open_info_vram_limiter():
-    messageBox_title = "GPU Vram (GB)"
-
-    messageBox_text = """ This widget allows to set a limit on the gpu's VRAM memory usage.
-
-  Default: 8 GB    
-
-  • It is important to enter the correct value according to the VRAM memory of the chosen gpu
-  
-  • Selecting a value greater than the actual amount of gpu VRAM may result in upscale failure
-  
-  • For example: 
-     • gpu with 4 GB of Vram - select 4
-     • gpu with 8 GB of Vram - select 8
-     • integrated gpus (Intel-HD series • Vega 3,5,7) - select 2"""
-
-    CTkMessageBox(text = messageBox_text, title = messageBox_title)
-
-def open_info_cpu():
-    messageBox_title = "Cpu number"
-
-    messageBox_text = """ This widget allows you to choose how many cpus to devote to the app.
-    
-  • Where possible the app will use the number of cpus selected"""
-
-    CTkMessageBox(text = messageBox_text, title = messageBox_title)
+    CTkInfoMessageBox(messageType = "info",
+                    title = "AI model", 
+                    subtitle = "This widget allows to choose between different AI models for upscaling",
+                    default_value = "RealESR_Gx4",
+                    option_list = option_list)
 
 def open_info_AI_precision():
-    messageBox_title = "AI precision"
+    option_list = [
+        " \n Half precision\n  • 50% less GPU memory\n  • 30-70% slower\n  • old GPUs are not compatible with this mode \n",
+        " \n Full precision (>=8GB VRAM recommended)\n  • 50% more GPU memory\n  • 30-70% faster\n  • compatible with all GPUs \n",
+    ]
 
-    messageBox_text = """ This widget allows you to choose the AI upscaling mode.
- 
-  Default: Half precision
-
-  • Half precision
-     • some old GPUs are not compatible with this mode
-     • uses 50% less GPU memory
-     • is 30-70% slower
-
-  • Full precision (>=8GB Vram recommended)
-     • compatible with all GPUs 
-     • uses 50% more GPU memory
-     • is 30-70% faster"""
-
-    CTkMessageBox(text = messageBox_text, title = messageBox_title)
-
-def open_info_video_extension():
-    messageBox_title = "Video output"
-
-    messageBox_text = """ This widget allows you to choose the video output.
- 
-  Default: .mp4 (x264)
-
-  • mp4 (x264) - produces well compressed video using x264 codec
-  • mp4 (x265) - produces well compressed video using x265 codec
-  • avi - produces the highest quality video"""
-
-    CTkMessageBox(text = messageBox_text, title = messageBox_title)
+    CTkInfoMessageBox(messageType = "info",
+                    title = "AI precision", 
+                    subtitle = "This widget allows to choose the AI upscaling mode",
+                    default_value = "Half precision",
+                    option_list = option_list)
 
 def open_info_interpolation():
-    messageBox_title = "Interpolation"
+    option_list = [
+        " Interpolation is the fusion of the upscaled image produced by AI and the original image",
+        " \n Increase the quality of the final result\n  • especially when using the tilling/merging function (with low VRAM) \n  • especially at low Input resolution % values (<50%)\n",
+        " \n Levels of interpolation\n  • Disabled - 100% upscaled\n  • Low - 30% original / 70% upscaled\n  • Medium - 50% original / 50% upscaled\n  • High - 70% original / 30% upscaled\n"
+    ]
 
-    messageBox_text = """ This widget allows you to choose interpolating the upscaled image/frame with the original image/frame.
+    CTkInfoMessageBox(messageType = "info",
+                    title = "Interpolation", 
+                    subtitle = "This widget allows to choose interpolation between upscaled and original image/frame",
+                    default_value = "Low",
+                    option_list = option_list)
 
-  Default: Low  
+def open_info_AI_output():
+    option_list = [
+        " \n PNG\n  • very good quality\n  • slow and heavy file\n  • supports transparent images\n",
+        " \n JPG\n  • good quality\n  • fast and lightweight file\n",
+        " \n BMP\n  • highest quality\n  • slow and heavy file\n",
+        " \n TIFF\n  • highest quality\n  • very slow and heavy file\n",
+    ]
 
-  • Interpolation is the fusion of the upscaled image produced by AI and the original image
-  
-  • Increase the quality of the final result
-      • especially when using the tilling/merging function (with low VRAM)
-      • especially at low "Input resolution %" values (<50%)
+    CTkInfoMessageBox(messageType = "info",
+                    title = "Image output", 
+                    subtitle = "This widget allows to choose the extension of upscaled images",
+                    default_value = ".png",
+                    option_list = option_list)
 
-  • Levels of interpolation:
-      • Low - 30% original / 70% upscaled
-      • Medium - 50% original / 50% upscaled
-      • High - 70% original / 30% upscaled"""
+def open_info_video_extension():
+    option_list = [
+        " MP4 (x264) - produces well compressed video using x264 codec",
+        " MP4 (x265) - produces well compressed video using x265 codec",
+        " AVI - produces the highest quality video"
+    ]
 
-    CTkMessageBox(text = messageBox_text, title = messageBox_title)
+    CTkInfoMessageBox(messageType = "info",
+                title = "Video output", 
+                subtitle = "This widget allows to choose the extension of the upscaled video",
+                default_value = ".mp4 (x264)",
+                option_list = option_list)
+
+def open_info_gpu():
+    option_list = [
+        "Keep in mind that the more powerful the chosen gpu is, the faster the upscaling will be",
+        "For optimal results, it is essential to regularly update your GPU drivers"
+    ]
+
+    CTkInfoMessageBox(messageType = "info",
+                    title = "GPU", 
+                    subtitle = "This widget allows to select the GPU for AI processing",
+                    default_value = None,
+                    option_list = option_list)
+
+def open_info_vram_limiter():
+    option_list = [
+        " It is important to enter the correct value according to the VRAM memory of the chosen GPU",
+        " Selecting a value greater than the actual amount of GPU VRAM may result in upscale failure",
+        " For integrated GPUs (Intel-HD series • Vega 3,5,7) - select 2 GB",
+    ]
+
+    CTkInfoMessageBox(messageType = "info",
+                    title = "GPU Vram (GB)",
+                    subtitle = "This widget allows to set a limit on the GPU VRAM memory usage",
+                    default_value = "8 GB",
+                    option_list = option_list)
+
+def open_info_input_resolution():
+    option_list = [
+        " A high value (>70%) will create high quality photos/videos but will be slower",
+        " While a low value (<40%) will create good quality photos/videos but will much faster",
+
+        " \n For example, for a 1080p (1920x1080) image/video\n" + 
+        " • Input resolution 25% => input to AI 270p (480x270)\n" +
+        " • Input resolution 50% => input to AI 540p (960x540)\n" + 
+        " • Input resolution 75% => input to AI 810p (1440x810)\n" + 
+        " • Input resolution 100% => input to AI 1080p (1920x1080) \n",
+    ]
+
+    CTkInfoMessageBox(messageType = "info",
+                    title = "Input resolution %", 
+                    subtitle = "This widget allows to choose the resolution input to the AI",
+                    default_value = "60%",
+                    option_list = option_list)
+
+def open_info_cpu():
+    option_list = [
+        " When possible the app will use the number of cpus selected",
+        " Currently this value is only used for the video encoding phase",
+    ]
+
+    default_cpus = str(int(os_cpu_count()/2))
+
+    CTkInfoMessageBox(messageType = "info",
+                    title = "Cpu number",
+                    subtitle = "This widget allows to choose how many cpus to devote to the app",
+                    default_value = default_cpus,
+                    option_list = option_list)
 
 
 
@@ -1768,15 +1856,12 @@ def place_telegram_button():
  
 def place_loadFile_section():
     up_background = CTkLabel(master  = window, 
-                            text     = "",
-                            fg_color = dark_color,
-                            font     = bold12,
-                            anchor   = "w")
+                        text     = "",
+                        fg_color = dark_color,
+                        font     = bold12,
+                        anchor   = "w")
     
-    up_background.place(relx = 0.0, 
-                        rely = 0.0, 
-                        relwidth  = 1.0,  
-                        relheight = 0.45)
+    up_background.place(relx = 0.0, rely = 0.0, relwidth  = 1.0, relheight = 0.45)
 
     text_drop = """ SUPPORTED FILES
 
@@ -1794,15 +1879,15 @@ VIDEOS • mp4 webm mkv flv gif avi mov mpg qt 3gp """
                                 anchor     = "center")
     
     input_file_button = CTkButton(master = window,
-                                command  = open_files_action, 
-                                text     = "SELECT FILES",
-                                width      = 140,
-                                height     = 30,
-                                font       = bold11,
-                                border_width = 1,
-                                fg_color     = "#282828",
-                                text_color   = "#E0E0E0",
-                                border_color = "#0096FF")
+                            command  = open_files_action, 
+                            text     = "SELECT FILES",
+                            width    = 140,
+                            height   = 30,
+                            font     = bold11,
+                            border_width = 1,
+                            fg_color     = "#282828",
+                            text_color   = "#E0E0E0",
+                            border_color = "#0096FF")
 
     input_file_text.place(relx = 0.5, rely = 0.20,  anchor = "center")
     input_file_button.place(relx = 0.5, rely = 0.35, anchor = "center")
@@ -1858,8 +1943,8 @@ def place_video_extension_menu():
 
 def place_gpu_menu():
 
-    gpu_button = create_info_button(open_info_device, "GPU")
-    gpu_menu   = create_option_menu(select_AI_device_from_menu, gpu_list_names)
+    gpu_button = create_info_button(open_info_gpu, "GPU")
+    gpu_menu   = create_option_menu(select_gpu_from_menu, gpu_list_names)
     
     gpu_button.place(relx = 0.5, rely = row2_y - 0.053, anchor = "center")
     gpu_menu.place(relx = 0.5, rely  = row2_y, anchor = "center")
@@ -1929,7 +2014,7 @@ def place_upscale_button():
    
 
 
-# Main functions ---------------------------
+# GUI utils ---------------------------
 
 class Gpu:
     def __init__(
@@ -1946,11 +2031,13 @@ class Gpu:
         self.float64: bool = float64
 
 class ScrollableImagesTextFrame(CTkScrollableFrame):
+
     def __init__(
             self, 
             master, 
             **kwargs
             ) -> None:
+        
         super().__init__(master, **kwargs)
         self.grid_columnconfigure(0, weight = 1)
         self.file_list   = []
@@ -1981,7 +2068,8 @@ class ScrollableImagesTextFrame(CTkScrollableFrame):
                         border_color = "#0096FF")
 
         button.configure(command=lambda: self.clean_all_items())
-        button.grid(row = len(self.button_list), column=1, pady=(0, 10), padx = 5)
+        
+        button.grid(row = len(self.button_list), column=1, pady=(7, 7), padx = (0, 7))
         self.label_list.append(label)
         self.button_list.append(button)
 
@@ -1993,14 +2081,14 @@ class ScrollableImagesTextFrame(CTkScrollableFrame):
             ) -> None:
         
         label = CTkLabel(self, 
-                        text          = text_to_show,
-                        font          = bold11,
-                        image         = image, 
-                        text_color    = "#E0E0E0",
-                        compound      = "left", 
-                        padx          = 10,
-                        pady          = 5,
-                        anchor        = "center")
+                    text       = text_to_show,
+                    font       = bold11,
+                    image      = image, 
+                    text_color = "#E0E0E0",
+                    compound   = "left", 
+                    padx       = 10,
+                    pady       = 5,
+                    anchor     = "center")
                         
         label.grid(row = len(self.label_list), column = 0, pady = (3, 3), padx = (3, 3), sticky = "w")
         self.label_list.append(label)
@@ -2016,21 +2104,27 @@ class ScrollableImagesTextFrame(CTkScrollableFrame):
         self.destroy()
         place_loadFile_section()
 
-class CTkMessageBox(CTkToplevel):
+class CTkInfoMessageBox(CTkToplevel):
+
     def __init__(
             self,
-            title: str = "title",
-            text: str = "text",
-            type: str = "info"
+            messageType: str,
+            title: str,
+            subtitle: str,
+            default_value: str,
+            option_list: list,
             ) -> None:
 
         super().__init__()
 
         self._running: bool = False
 
-        self.type = type
-        self._title = title
-        self._text = text
+        self._messageType = messageType
+        self._title = title        
+        self._subtitle = subtitle
+        self._default_value = default_value
+        self._option_list = option_list
+        self._ctkwidgets_index = 0
 
         self.title('')
         self.lift()                          # lift window on top
@@ -2039,63 +2133,6 @@ class CTkMessageBox(CTkToplevel):
         self.after(10, self._create_widgets)  # create widgets with slight delay, to avoid white flickering of background
         self.resizable(False, False)
         self.grab_set()                       # make other windows not clickable
-
-    def _create_widgets(
-            self
-            ) -> None:
-
-        self.grid_columnconfigure((0, 1), weight=1)
-        self.rowconfigure(0, weight=1)
-
-        self._text = '\n' + self._text +'\n'
-
-        if   self.type == "info": color_for_messagebox_title = "#0096FF"
-        elif self.type == "error": color_for_messagebox_title = "#ff1a1a"
-
-        self._titleLabel = CTkLabel(
-            master  = self,
-            width      = 500,
-            anchor     = 'w',
-            justify    = "left",
-            fg_color   = "transparent",
-            text_color = color_for_messagebox_title,
-            font       = bold24,
-            text       = self._title
-            )
-        
-        self._textLabel = CTkLabel(master = self,
-                                width      = 620,
-                                wraplength = 620,
-                                corner_radius = 6,
-                                anchor     = 'w',
-                                justify    = "left",
-                                text_color = "#C0C0C0",
-                                bg_color   = "transparent",
-                                fg_color   = "#252525",
-                                font       = bold12,
-                                text       = self._text)
-        
-
-
-
-
-
-        
-        self._ok_button = CTkButton(
-            master  = self,
-            command = self._ok_event,
-            text    = 'OK',
-            width   = 125,
-            font         = bold11,
-            border_width = 1,
-            fg_color     = "#282828",
-            text_color   = "#E0E0E0",
-            border_color = "#0096FF"
-            )
-
-        self._titleLabel.grid(row=0, column=0, columnspan=2, padx=30, pady=20, sticky="ew")
-        self._textLabel.grid(row=1, column=0, columnspan=2, padx=25, pady=5, sticky="ew")
-        self._ok_button.grid(row=2, column=1, columnspan=1, padx=(10, 20), pady=(10, 20), sticky="e")
 
     def _ok_event(
             self, 
@@ -2109,6 +2146,133 @@ class CTkMessageBox(CTkToplevel):
             ) -> None:
         self.grab_release()
         self.destroy()
+
+    def createEmptyLabel(
+            self
+            ) -> CTkLabel:
+        
+        return CTkLabel(master = self, 
+                        fg_color = "transparent",
+                        width    = 500,
+                        height   = 17,
+                        text     = '')
+
+    def placeInfoMessageTitleSubtitle(
+            self,
+            ) -> None:
+
+        spacingLabel1 = self.createEmptyLabel()
+        spacingLabel2 = self.createEmptyLabel()
+
+        if self._messageType == "info":
+            title_subtitle_text_color = "#3399FF"
+        elif self._messageType == "error":
+            title_subtitle_text_color = "#FF3131"
+
+        titleLabel = CTkLabel(
+            master     = self,
+            width      = 500,
+            anchor     = 'w',
+            justify    = "left",
+            fg_color   = "transparent",
+            text_color = title_subtitle_text_color,
+            font       = bold22,
+            text       = self._title
+            )
+        
+        if self._default_value != None:
+            defaultLabel = CTkLabel(
+                master     = self,
+                width      = 500,
+                anchor     = 'w',
+                justify    = "left",
+                fg_color   = "transparent",
+                text_color = "#3399FF",
+                font       = bold17,
+                text       = f"Default: {self._default_value}"
+                )
+        
+        subtitleLabel = CTkLabel(
+            master     = self,
+            width      = 500,
+            anchor     = 'w',
+            justify    = "left",
+            fg_color   = "transparent",
+            text_color = title_subtitle_text_color,
+            font       = bold14,
+            text       = self._subtitle
+            )
+        
+        spacingLabel1.grid(row = self._ctkwidgets_index, column = 0, columnspan = 2, padx = 0, pady = 0, sticky = "ew")
+        
+        self._ctkwidgets_index += 1
+        titleLabel.grid(row = self._ctkwidgets_index, column = 0, columnspan = 2, padx = 25, pady = 0, sticky = "ew")
+        
+        if self._default_value != None:
+            self._ctkwidgets_index += 1
+            defaultLabel.grid(row = self._ctkwidgets_index, column = 0, columnspan = 2, padx = 25, pady = 0, sticky = "ew")
+        
+        self._ctkwidgets_index += 1
+        subtitleLabel.grid(row = self._ctkwidgets_index, column = 0, columnspan = 2, padx = 25, pady = 0, sticky = "ew")
+        
+        self._ctkwidgets_index += 1
+        spacingLabel2.grid(row = self._ctkwidgets_index, column = 0, columnspan = 2, padx = 0, pady = 0, sticky = "ew")
+
+    def placeInfoMessageOptionsText(
+            self,
+            ) -> None:
+        
+        for option_text in self._option_list:
+            optionLabel = CTkLabel(master = self,
+                                    width  = 600,
+                                    height = 45,
+                                    corner_radius = 6,
+                                    anchor     = 'w',
+                                    justify    = "left",
+                                    text_color = "#C0C0C0",
+                                    fg_color   = "#282828",
+                                    bg_color   = "transparent",
+                                    font       = bold12,
+                                    text       = option_text)
+            
+            self._ctkwidgets_index += 1
+            optionLabel.grid(row = self._ctkwidgets_index, column = 0, columnspan = 2, padx = 25, pady = 4, sticky = "ew")
+
+        spacingLabel3 = self.createEmptyLabel()
+
+        self._ctkwidgets_index += 1
+        spacingLabel3.grid(row = self._ctkwidgets_index, column = 0, columnspan = 2, padx = 0, pady = 0, sticky = "ew")
+
+    def placeInfoMessageOkButton(
+            self
+            ) -> None:
+        
+        ok_button = CTkButton(
+            master  = self,
+            command = self._ok_event,
+            text    = 'OK',
+            width   = 125,
+            font         = bold11,
+            border_width = 1,
+            fg_color     = "#282828",
+            text_color   = "#E0E0E0",
+            border_color = "#0096FF"
+            )
+        
+        self._ctkwidgets_index += 1
+        ok_button.grid(row = self._ctkwidgets_index, column = 1, columnspan = 1, padx = (10, 20), pady = (10, 20), sticky = "e")
+
+    def _create_widgets(
+            self
+            ) -> None:
+
+        self.grid_columnconfigure((0, 1), weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.placeInfoMessageTitleSubtitle()
+        self.placeInfoMessageOptionsText()
+        self.placeInfoMessageOkButton()
+
 
 def create_info_button(
         command: any, 
@@ -2160,6 +2324,10 @@ def create_text_box(
                     fg_color      = "#000000",
                     border_color  = "#404040")
 
+
+
+# Main functions ---------------------------
+
 def on_app_close() -> None:
     window.grab_release()
     window.destroy()
@@ -2200,7 +2368,7 @@ class App():
 if __name__ == "__main__":
     multiprocessing_freeze_support()
 
-    processing_queue = multiprocessing_Queue()
+    processing_queue = multiprocessing_Queue(maxsize=1)
 
     gpu_list_names = []
     gpu_list = []
@@ -2209,7 +2377,6 @@ if __name__ == "__main__":
     set_default_color_theme("dark-blue")
 
     how_many_gpus = directml_device_count()
-
     for index in range(how_many_gpus): 
         gpu_index   = index
         gpu_name    = directml_device_name(index)
@@ -2274,10 +2441,16 @@ if __name__ == "__main__":
     bold10 = CTkFont(family = font, size = 10, weight = "bold")
     bold11 = CTkFont(family = font, size = 11, weight = "bold")
     bold12 = CTkFont(family = font, size = 12, weight = "bold")
+    bold13 = CTkFont(family = font, size = 13, weight = "bold")
+    bold14 = CTkFont(family = font, size = 14, weight = "bold")
+    bold16 = CTkFont(family = font, size = 16, weight = "bold")
+    bold17 = CTkFont(family = font, size = 17, weight = "bold")
     bold18 = CTkFont(family = font, size = 18, weight = "bold")
     bold19 = CTkFont(family = font, size = 19, weight = "bold")
     bold20 = CTkFont(family = font, size = 20, weight = "bold")
     bold21 = CTkFont(family = font, size = 21, weight = "bold")
+    bold22 = CTkFont(family = font, size = 22, weight = "bold")
+    bold23 = CTkFont(family = font, size = 23, weight = "bold")
     bold24 = CTkFont(family = font, size = 24, weight = "bold")
 
     # Images
