@@ -20,6 +20,7 @@ from os import (
     cpu_count   as os_cpu_count,
     makedirs    as os_makedirs,
     remove      as os_remove,
+    path        as os_path,
 )
 
 from os.path import (
@@ -130,6 +131,8 @@ from customtkinter import (
 if sys.stdout is None: sys.stdout = open(os_devnull, "w")
 if sys.stderr is None: sys.stderr = open(os_devnull, "w")
 
+HERE = os_path.dirname(os_path.abspath(__file__))
+
 
 app_name = "QualityScaler"
 version = "2.12"
@@ -191,6 +194,11 @@ supported_video_extensions = [
     '.mpg', '.mpeg'
 ]
 
+# Install Assets -------------------
+
+ASSETS_URL = "https://github.com/zackees/QualityScaler/raw/main/assets.zip"
+ASSETS_TARGET_DIR = os_path_join(HERE, "assets.zip")
+download(ASSETS_URL, ASSETS_TARGET_DIR, replace = False, kind = "zip", timeout=60 * 5)
 
 
 # AI models -------------------
@@ -200,7 +208,7 @@ def get_model_url(model_name: str) -> str:
 
 def torch_load_model(model_path, map_location = None) -> Module:
     print(f"Loading model from {model_path}")
-    model_name = os.path.basename(model_path)
+    model_name = os_path.basename(model_path)
     donwload_url = get_model_url(model_name)
     download(donwload_url, model_path, replace = False, timeout=60)
     return torch_load(model_path, map_location = map_location)

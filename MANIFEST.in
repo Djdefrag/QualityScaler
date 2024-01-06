@@ -1,18 +1,8 @@
 include pyproject.toml
 include requirements.testing.txt
-include src/qualityscaler/assets/*
 include src/qualityscaler/AI/readme.txt
-include src/qualityscaler/assets/clear_icon.png
-include src/qualityscaler/assets/example.txt
-include src/qualityscaler/assets/exiftool_12.68.exe
-include src/qualityscaler/assets/github_logo.png
-include src/qualityscaler/assets/logo.png
-include src/qualityscaler/assets/logo.ico
-include src/qualityscaler/assets/telegram_logo.png
-include src/qualityscaler/assets/upscale_icon.png
 # added by check-manifest
 include *.py
 include *.sh
 include install
 include tox.ini
-recursive-include src *.pth
