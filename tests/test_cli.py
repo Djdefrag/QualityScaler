@@ -4,7 +4,7 @@ Unit test file.
 import os
 import unittest
 
-COMMAND = "quality_scaler"
+COMMAND = "quality-scaler"
 
 
 class MainTester(unittest.TestCase):

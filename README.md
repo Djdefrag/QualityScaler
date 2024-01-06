@@ -19,3 +19,7 @@ This environment requires you to use `git-bash`.
 # Linting
 
 Run `./lint.sh` to find linting errors using `pylint`, `flake8` and `mypy`.
+
+# Versions
+
+  * `2.12.0` - Updated to upstream 2.12.0 version. 
