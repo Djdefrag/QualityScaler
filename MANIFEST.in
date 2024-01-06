@@ -10,3 +10,9 @@ include src/qualityscaler/assets/logo.png
 include src/qualityscaler/assets/logo.ico
 include src/qualityscaler/assets/telegram_logo.png
 include src/qualityscaler/assets/upscale_icon.png
+# added by check-manifest
+include *.py
+include *.sh
+include install
+include tox.ini
+recursive-include src *.pth

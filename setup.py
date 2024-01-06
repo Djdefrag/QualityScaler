@@ -16,4 +16,4 @@ if __name__ == "__main__":
         keywords=KEYWORDS,
         long_description_content_type="text/markdown",
         url=URL,
-        include_package_data=False)
+        include_package_data=True)
