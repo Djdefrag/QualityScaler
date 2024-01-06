@@ -111,6 +111,8 @@ from numpy import (
     uint8
 )
 
+from shutil import unpack_archive as shutil_unpack_archive
+
 # GUI imports
 from tkinter import StringVar
 from customtkinter import (
@@ -198,7 +200,10 @@ supported_video_extensions = [
 
 ASSETS_URL = "https://github.com/zackees/QualityScaler/raw/main/assets.zip"
 ASSETS_TARGET_DIR = os_path_join(HERE, "assets.zip")
-download(ASSETS_URL, ASSETS_TARGET_DIR, replace = False, kind = "zip", timeout=60 * 5)
+if not os_path_exists(ASSETS_TARGET_DIR):
+    download(ASSETS_URL, ASSETS_TARGET_DIR, replace = True, kind = "file", timeout=60 * 5)
+    shutil_unpack_archive(ASSETS_TARGET_DIR, ASSETS_TARGET_DIR)
+
 
 
 # AI models -------------------
