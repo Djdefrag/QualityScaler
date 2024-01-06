@@ -24,7 +24,7 @@ dependencies = [
     "Pillow",
     "download",
 ]
-version = "2.12.8"
+version = "2.12.9"
 # readme is labeled as dynamic
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
