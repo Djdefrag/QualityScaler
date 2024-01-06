@@ -17,17 +17,18 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/20e96a7c-1572-4ee8-ac1a-aee9dbf37a13">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/9aa539e6-9584-46c2-9af5-6b031bcb6823">
     </div>
 </body>
 </html>
+
 
 ## What is QualityScaler?
 Qualityscaler is a Windows app powered by AI to enhance, enlarge and reduce noise in photographs and videos.
 
 ## Other AI projects.🤓
-- https://github.com/Djdefrag/RealESRScaler / RealESRScaler - image/video AI upscaler app (Real-ESRGAN)
-- https://github.com/Djdefrag/FluidFrames.RIFE / FluidFrames.RIFE - video AI interpolation app (RIFE-HDv3)
+- https://github.com/Djdefrag/RealESRScaler / RealScaler - image/video AI upscaler app (Real-ESRGAN)
+- https://github.com/Djdefrag/FluidFrames.RIFE / FluidFrames.RIFE - video AI frame generation app (RIFE-HDv3)
 
 ## Credits.
 - BSRGAN - https://github.com/cszn/BSRGAN
