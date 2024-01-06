@@ -198,10 +198,11 @@ supported_video_extensions = [
 
 # Install Assets -------------------
 
-ASSETS_URL = "https://github.com/zackees/QualityScaler/raw/main/assets.zip"
-ASSETS_TARGET_DIR = os_path_join(HERE, "assets.zip")
-if not os_path_exists(ASSETS_TARGET_DIR):
-    download(ASSETS_URL, ASSETS_TARGET_DIR, replace = True, kind = "file", timeout=60 * 5)
+ASSETS_ZIP_URL = "https://github.com/zackees/QualityScaler/raw/main/assets.zip"
+ASSETS_TARGET_DIR = os_path_join(HERE, "assets")
+ASSETS_TARGET_ZIP = os_path_join(HERE, "assets.zip")
+if not os_path_exists(ASSETS_TARGET_ZIP):
+    download(ASSETS_ZIP_URL, ASSETS_TARGET_ZIP, replace = True, kind = "file", timeout=60 * 5)
     shutil_unpack_archive(ASSETS_TARGET_DIR, ASSETS_TARGET_DIR)
 
 
