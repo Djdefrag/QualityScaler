@@ -139,4 +139,6 @@ dmypy.json
 **/.DS_Store
 .aider*
 QualityScaler_temp
-src\qualityscaler\AI\
+src/qualityscaler/AI/
+src/qualityscaler/assets/
+src/qualityscaler/assets.zip

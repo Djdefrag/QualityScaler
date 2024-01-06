@@ -1,8 +1,4 @@
 include pyproject.toml
 include requirements.testing.txt
 include src/qualityscaler/AI/readme.txt
-# added by check-manifest
-include *.py
-include *.sh
-include install
-include tox.ini
+exclude assets.zip
