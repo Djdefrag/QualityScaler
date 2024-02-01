@@ -31,10 +31,10 @@ Qualityscaler is a Windows app powered by AI to enhance, enlarge and reduce nois
    ```sh
    git clone https://github.com/Djdefrag/QualityScaler.git
    ```
-2. Install requirements
+2. Install requirements (using Python > 3, &le; 3.10 )
    ```sh
    cd QualityScaler
-   python -m pip install --requirement ./requirements.txt
+   python -m pip install --requirement ./requirements.txt  # torch-directml requires Python 3.10
    ```
 3. Start QualityScaler
    ```sh
