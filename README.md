@@ -26,6 +26,21 @@
 ## What is QualityScaler?
 Qualityscaler is a Windows app powered by AI to enhance, enlarge and reduce noise in photographs and videos.
 
+## Installation
+1. Download the [latest release](../../releases/latest) or clone the repository
+   ```sh
+   git clone https://github.com/Djdefrag/QualityScaler.git
+   ```
+2. Install requirements
+   ```sh
+   cd QualityScaler
+   python -m pip install --requirement ./requirements.txt
+   ```
+3. Start QualityScaler
+   ```sh
+   python ./QualityScaler.py
+   ```
+
 ## Other AI projects.🤓
 - https://github.com/Djdefrag/RealESRScaler / RealScaler - image/video AI upscaler app (Real-ESRGAN)
 - https://github.com/Djdefrag/FluidFrames.RIFE / FluidFrames.RIFE - video AI frame generation app (RIFE-HDv3)
