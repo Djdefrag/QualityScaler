@@ -17,18 +17,18 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/9aa539e6-9584-46c2-9af5-6b031bcb6823">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/6c1a04dd-97e1-4974-a6e6-15150a3e9b73">
     </div>
 </body>
 </html>
 
 
 ## What is QualityScaler?
-Qualityscaler is a Windows app powered by AI to enhance, enlarge and reduce noise in photographs and videos.
+Qualityscaler is a Windows app powered by AI to enhance, upscale and reduce noise in photographs and videos.
 
 ## Other AI projects.🤓
-- https://github.com/Djdefrag/RealESRScaler / RealScaler - image/video AI upscaler app (Real-ESRGAN)
-- https://github.com/Djdefrag/FluidFrames.RIFE / FluidFrames.RIFE - video AI frame generation app (RIFE-HDv3)
+- https://github.com/Djdefrag/RealScaler / RealScaler - image/video AI upscaler (Real-ESRGAN)
+- https://github.com/Djdefrag/FluidFrames.RIFE / FluidFrames.RIFE - video AI frame generation
 
 ## Credits.
 - BSRGAN - https://github.com/cszn/BSRGAN
@@ -71,7 +71,7 @@ External packages are:
     - [x] Optimizing video frame resize and extraction speed
     - [x] Multi GPU support (for pc with double GPU, integrated + dedicated)
     - [x] Python 3.10 (expecting ~10% more performance)
-- [ ] 2.X versions
+- [x] 2.X versions
     - [x] New, completely redesigned graphical interface based on @customtkinter
     - [x] Upscaling images and videos at once (currently it is possible to upscale images or single video)
     - [x] Upscale multiple videos at once
@@ -82,11 +82,11 @@ External packages are:
     - [x] Support for SRVGGNetCompact AI architecture
     - [x] Metadata extraction and application from original file to upscaled file (via exiftool)
     - [x] Support for SAFMN AI architecture
-    - [ ] Python 3.11 (expecting ~30% better performance)
-    - [ ] torch/torch-directml 2.0 (expecting ~20% better performance)
 - [ ] 3.X versions
+    - [ ] New AI engine powered by onnxruntime-directml (https://pypi.org/project/onnxruntime-directml/)
+    - [ ] Python 3.11 (~25% performance improvements)
     - [ ] Python 3.12
-    - [ ] torch/torch-directml 2.1 
+    - [ ] Video upscaling pause and restart
 
 ## Some Example.
 
