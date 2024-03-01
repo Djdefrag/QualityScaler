@@ -17,7 +17,7 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/6c1a04dd-97e1-4974-a6e6-15150a3e9b73">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/4369afa1-3808-4e7c-bbd5-a7db6f9bea34">
     </div>
 </body>
 </html>
@@ -42,7 +42,7 @@ Qualityscaler is a Windows app powered by AI to enhance, upscale and reduce nois
 ## How is made. 🛠
 QualityScaler is completely written in Python, from backend to frontend. 
 External packages are:
-- AI  -> torch / torch-directml
+- AI  -> torch / onnxruntime-directml
 - GUI -> customtkinter
 - Image/video -> OpenCV / moviepy
 - Packaging   -> nuitka
@@ -83,8 +83,8 @@ External packages are:
     - [x] Metadata extraction and application from original file to upscaled file (via exiftool)
     - [x] Support for SAFMN AI architecture
 - [ ] 3.X versions
-    - [ ] New AI engine powered by onnxruntime-directml (https://pypi.org/project/onnxruntime-directml/)
-    - [ ] Python 3.11 (~25% performance improvements)
+    - [x] New AI engine powered by onnxruntime-directml (https://pypi.org/project/onnxruntime-directml/)
+    - [x] Python 3.11 (~10% performance improvements)
     - [ ] Python 3.12
     - [ ] Video upscaling pause and restart
 
