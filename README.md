@@ -17,14 +17,14 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/4369afa1-3808-4e7c-bbd5-a7db6f9bea34">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/a806e714-e5a0-4fcf-ba5b-2417f25b3bb2">
     </div>
 </body>
 </html>
 
 
 ## What is QualityScaler?
-Qualityscaler is a Windows app powered by AI to enhance, upscale and reduce noise in photographs and videos.
+Qualityscaler is a Windows app powered by AI to enhance, upscale and de-noise photographs and videos.
 
 ## Other AI projects.🤓
 - https://github.com/Djdefrag/RealScaler / RealScaler - image/video AI upscaler (Real-ESRGAN)
@@ -59,7 +59,6 @@ External packages are:
 - [x] Automatic image tiling and merging to avoid gpu VRAM limitation
 - [x] Resize image/video before AI upscaling
 - [x] Interpolation between the original and upscaled image/video
-- [x] Multiple Gpu support
 - [x] Compatible images - png, jpeg, bmp, webp, tif  
 - [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
 
@@ -85,6 +84,8 @@ External packages are:
 - [ ] 3.X versions
     - [x] New AI engine powered by onnxruntime-directml (https://pypi.org/project/onnxruntime-directml/)
     - [x] Python 3.11 (~10% performance improvements)
+    - [x] Display images/videos upscaled resolution in the GUI
+    - [x] FFMPEG 6.1.1 (latest release)
     - [ ] Python 3.12
     - [ ] Video upscaling pause and restart
 
