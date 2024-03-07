@@ -9,4 +9,4 @@ customtkinter
 #UTILS
 moviepy
 opencv-python-headless
-nuitka
+Nuitka==2.0.6
