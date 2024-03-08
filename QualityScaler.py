@@ -194,7 +194,8 @@ def load_AI_model(selected_AI_model: str, selected_half_precision: bool) -> onnx
 
 def AI_upscale(AI_model: onnxruntime_inferenceSession, image: numpy_ndarray) -> numpy_ndarray:
     image = numpy_ascontiguousarray(image)
-    image_mode   = get_image_mode(image)
+    image_mode = get_image_mode(image)
+
     image, range = normalize_image(image)
     image = image.astype(float32)
 
@@ -233,6 +234,15 @@ def AI_upscale(AI_model: onnxruntime_inferenceSession, image: numpy_ndarray) -> 
             output_image = process_image_with_AI_model(AI_model, image)
             output_image = opencv_cvtColor(output_image, COLOR_RGB2GRAY)
             return postprocess_output(output_image, range)
+
+def get_image_mode(image: numpy_ndarray) -> str:
+    match image.shape:
+        case (rows, cols):
+            return "Grayscale"
+        case (rows, cols, channels) if channels == 3:
+            return "RGB"
+        case (rows, cols, channels) if channels == 4:
+            return "RGBA"
 
 def normalize_image(image: numpy_ndarray) -> tuple:
     range = 65535 if numpy_max(image) > 256 else 255
@@ -457,6 +467,7 @@ class ScrollableImagesTextFrame(CTkScrollableFrame):
         self.resize_factor  = resize_factor
         self.upscale_factor = upscale_factor
 
+        self.cache_icons = {}
         self.label_list = []
         self._create_widgets()
 
@@ -464,12 +475,10 @@ class ScrollableImagesTextFrame(CTkScrollableFrame):
         self.add_clean_button()
         
         index_row = 1
+
         for file_path in self.file_list:
-            if check_if_file_is_video(file_path):
-                infos, icon = self.extract_video_info(file_path)
-            else:
-                infos, icon = self.extract_image_info(file_path)
-        
+            infos, icon = self.extract_file_info(file_path)
+
             label = CTkLabel(
                 self, 
                 text       = infos,
@@ -520,67 +529,87 @@ class ScrollableImagesTextFrame(CTkScrollableFrame):
     def set_resize_factor(self, resize_factor) -> None:
         self.resize_factor = resize_factor
 
-    def extract_image_info(self, image_file: str) -> tuple:
-        image_name = str(image_file.split("/")[-1])
-        image_icon = CTkImage(pillow_image_open(image_file), size = (25, 25))
-        height, width = get_image_resolution(image_read(image_file))
+    def extract_file_icon(self, file_path) -> CTkImage:
+        if file_path in self.cache_icons:
+            return self.cache_icons[file_path]
+        else:
+            if check_if_file_is_video(file_path):
+                cap = opencv_VideoCapture(file_path)
+                while(cap.isOpened()):
+                    ret, frame = cap.read()
+                    if ret == False: break
+                    video_icon = CTkImage(pillow_image_fromarray(opencv_cvtColor(frame, COLOR_BGR2RGB), mode="RGB"), size = (25, 25))
+                    break
+                cap.release()
+                self.cache_icons[file_path] = video_icon
+                return video_icon
+            else:
+                image_icon = CTkImage(pillow_image_open(file_path), size = (25, 25))
+                self.cache_icons[file_path] = image_icon
+                return image_icon
 
-        match self.resize_factor:
-            case 0:
-                image_info = f"{image_name} • {width}x{height}"
-                return image_info, image_icon
-            case _:
-                resized_height = int(height * (self.resize_factor/100))
-                resized_width  = int(width * (self.resize_factor/100))
-
-                upscaled_height = int(resized_height * self.upscale_factor)
-                upscaled_width = int(resized_width * self.upscale_factor)
-
-                image_info = (
-                    f"{image_name}"
-                    f" • {width}x{height} -> AI {resized_width}x{resized_height} -> {upscaled_width}x{upscaled_height}"
-                )
-                return image_info, image_icon
-
-    def extract_video_info(self, video_file: str) -> tuple:
-        cap          = opencv_VideoCapture(video_file)
-        width        = round(cap.get(CAP_PROP_FRAME_WIDTH))
-        height       = round(cap.get(CAP_PROP_FRAME_HEIGHT))
-        num_frames   = int(cap.get(CAP_PROP_FRAME_COUNT))
-        frame_rate   = cap.get(CAP_PROP_FPS)
-        duration     = num_frames/frame_rate
-        minutes      = int(duration/60)
-        seconds      = duration % 60
-        video_name   = str(video_file.split("/")[-1])
+    def extract_file_info(self, file_path) -> tuple:
         
-        while(cap.isOpened()):
-            ret, frame = cap.read()
-            if ret == False: break
-            video_icon = CTkImage(pillow_image_fromarray(opencv_cvtColor(frame, COLOR_BGR2RGB), mode="RGB"), size = (25, 25))
-            break
-        cap.release()
+        if check_if_file_is_video(file_path):
+            # video
+            cap          = opencv_VideoCapture(file_path)
+            width        = round(cap.get(CAP_PROP_FRAME_WIDTH))
+            height       = round(cap.get(CAP_PROP_FRAME_HEIGHT))
+            num_frames   = int(cap.get(CAP_PROP_FRAME_COUNT))
+            frame_rate   = cap.get(CAP_PROP_FPS)
+            duration     = num_frames/frame_rate
+            minutes      = int(duration/60)
+            seconds      = duration % 60
+            video_name   = str(file_path.split("/")[-1])
+            cap.release()
+            
+            video_icon = self.extract_file_icon(file_path)
 
-        match self.resize_factor:
-            case 0:
-                video_infos = f"{video_name} • {minutes}m:{round(seconds)}s • {num_frames}frames • {round(frame_rate, 2)}fps • {width}x{height}"
-                return video_infos, video_icon
-            case _:
-                resized_height = int(height * (self.resize_factor/100))
-                resized_width  = int(width * (self.resize_factor/100))
+            match self.resize_factor:
+                case 0:
+                    video_infos = f"{video_name} • {minutes}m:{round(seconds)}s • {num_frames}frames • {round(frame_rate, 2)}fps • {width}x{height}"
+                    return video_infos, video_icon
+                case _:
+                    resized_height = int(height * (self.resize_factor/100))
+                    resized_width  = int(width * (self.resize_factor/100))
 
-                upscaled_height = int(resized_height * self.upscale_factor)
-                upscaled_width = int(resized_width * self.upscale_factor)
+                    upscaled_height = int(resized_height * self.upscale_factor)
+                    upscaled_width = int(resized_width * self.upscale_factor)
 
-                video_infos = (
-                    f"{video_name}"
-                    f" • {minutes}m:{round(seconds)}s"
-                    f" • {num_frames}frames"
-                    f" • {round(frame_rate, 2)}fps"
-                    f" • {width}x{height} -> AI {resized_width}x{resized_height} -> {upscaled_width}x{upscaled_height}"
-                )
+                    video_infos = (
+                        f"{video_name}"
+                        f" • {minutes}m:{round(seconds)}s"
+                        f" • {num_frames}frames"
+                        f" • {round(frame_rate, 2)}fps"
+                        f" • {width}x{height} -> AI {resized_width}x{resized_height} -> {upscaled_width}x{upscaled_height}"
+                    )
 
-                return video_infos, video_icon
-    
+                    return video_infos, video_icon
+        
+        else:
+            # image
+            image_name = str(file_path.split("/")[-1])
+            height, width = get_image_resolution(image_read(file_path))
+
+            image_icon = self.extract_file_icon(file_path)
+
+            match self.resize_factor:
+                case 0:
+                    image_info = f"{image_name} • {width}x{height}"
+                    return image_info, image_icon
+                case _:
+                    resized_height = int(height * (self.resize_factor/100))
+                    resized_width  = int(width * (self.resize_factor/100))
+
+                    upscaled_height = int(resized_height * self.upscale_factor)
+                    upscaled_width = int(resized_width * self.upscale_factor)
+
+                    image_info = (
+                        f"{image_name}"
+                        f" • {width}x{height} -> AI {resized_width}x{resized_height} -> {upscaled_width}x{upscaled_height}"
+                    )
+                    return image_info, image_icon
+
     def _destroy_(self) -> None:
         self.file_list = []
         self.destroy()
@@ -834,15 +863,6 @@ def resize_image(file: numpy_ndarray, resize_factor: int) -> numpy_ndarray:
             return opencv_resize(file, (new_width, new_height), interpolation=INTER_LINEAR)
         case _:
             return file
-
-def get_image_mode(image: numpy_ndarray) -> str:
-    match image.shape:
-        case (rows, cols):
-            return 'Grayscale'
-        case (rows, cols, 3):
-            return 'RGB'
-        case (rows, cols, 4):
-            return 'RGBA'
 
 def extract_video_fps(video_path: str) -> float:
     video_capture = opencv_VideoCapture(video_path)
@@ -1970,11 +1990,13 @@ def place_telegram_button():
     telegram_button.place(relx = 0.045, rely = 0.93, anchor = "center")
  
 def place_loadFile_section():
-    up_background = CTkLabel(master  = window, 
-                        text     = "",
-                        fg_color = dark_color,
-                        font     = bold12,
-                        anchor   = "w")
+    up_background = CTkLabel(
+        master   = window,
+        text     = "",
+        fg_color = dark_color,
+        font     = bold12,
+        anchor   = "w"
+    )
     
     up_background.place(relx = 0.0, rely = 0.0, relwidth  = 1.0, relheight = 0.45)
 
