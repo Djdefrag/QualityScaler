@@ -1,5 +1,6 @@
 #AI
 onnx
+onnxoptimizer
 onnxconverter_common
 onnxruntime-directml
 
