@@ -17,7 +17,7 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/4d844969-647b-4454-9de7-6629d552465c">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/851d78a0-5498-41d6-9cf3-e41322387879">
     </div>
 </body>
 </html>
@@ -85,7 +85,8 @@ External packages are:
     - [x] New AI engine powered by onnxruntime-directml (https://pypi.org/project/onnxruntime-directml/)
     - [x] Python 3.11 (~10% performance improvements)
     - [x] Display images/videos upscaled resolution in the GUI
-    - [x] FFMPEG 6.1.1 (latest release)
+    - [x] FFMPEG 7 (latest release)
+    - [x] Video multi-threading AI upscale 
     - [ ] Python 3.12
     - [ ] Video upscaling pause and restart
 
