@@ -2553,8 +2553,6 @@ if __name__ == "__main__":
 
     if os_path_exists(FFMPEG_EXE_PATH): 
         os_environ["IMAGEIO_FFMPEG_EXE"] = FFMPEG_EXE_PATH
-        os_environ['FFMPEG_BINARY']      = FFMPEG_EXE_PATH
-        os_environ['FFMPEG_BIN']      = FFMPEG_EXE_PATH
 
     window = CTk() 
 
