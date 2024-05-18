@@ -8,7 +8,7 @@ from subprocess import run  as subprocess_run
 from shutil     import rmtree as remove_directory
 from timeit     import default_timer as timer
 
-from typing import Callable
+from typing    import Callable
 from threading import Thread
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
@@ -41,21 +41,12 @@ from PIL.Image import (
     fromarray as pillow_image_fromarray
 )
 
-from moviepy.editor import VideoFileClip 
+from moviepy.editor   import VideoFileClip 
 from moviepy.video.io import ImageSequenceClip 
 
-from onnx import ( 
-    load as onnx_load 
-) 
-from onnxoptimizer import (
-    optimize as onnxoptimizer_optimize
-)
-from onnxconverter_common import (
-    float16 as onnx_converter_float16
-) 
-from onnxruntime import (
-    InferenceSession as onnxruntime_inferenceSession 
-)
+from onnx                 import load as onnx_load 
+from onnxruntime          import InferenceSession as onnxruntime_inferenceSession
+from onnxconverter_common import convert_float_to_float16
 
 from cv2 import (
     CAP_PROP_FPS,
@@ -67,8 +58,7 @@ from cv2 import (
     COLOR_RGB2BGRA,
     COLOR_RGB2GRAY,
     IMREAD_UNCHANGED,
-    INTER_AREA,
-    INTER_CUBIC,
+    INTER_LINEAR,
     VideoCapture as opencv_VideoCapture,
     cvtColor     as opencv_cvtColor,
     imdecode     as opencv_imdecode,
@@ -113,27 +103,38 @@ from customtkinter import (
     set_default_color_theme,
 )
 
+
+
 if sys.stdout is None: sys.stdout = open(os_devnull, "w")
 if sys.stderr is None: sys.stderr = open(os_devnull, "w")
+
+def find_by_relative_path(relative_path: str) -> str:
+    base_path = getattr(sys, '_MEIPASS', os_path_dirname(os_path_abspath(__file__)))
+    return os_path_join(base_path, relative_path)
+
+
 
 githubme   = "https://github.com/Djdefrag/QualityScaler"
 telegramme = "https://linktr.ee/j3ngystudio"
 
 app_name = "QualityScaler"
-version  = "3.4"
+version  = "3.5"
 
 app_name_color = "#DA70D6"
-dark_color = "#080808"
+dark_color     = "#080808"
 
-SRVGGNetCompact_vram_multiplier = 2.25
-RRDB_vram_multiplier = 0.7
+very_low_VRAM = 4
+low_VRAM      = 3
+medium_VRAM   = 2.2
+high_VRAM     = 0.7
 full_precision_vram_multiplier = 0.7
 
+IRCNN_models_list           = [ 'IRCNNx1' ]
 SRVGGNetCompact_models_list = [ 'RealESR_Gx4', 'RealSRx4_Anime' ]
-RRDB_models_list   = [ 'BSRGANx4', 'BSRGANx2', 'RealESRGANx4' ]
+RRDB_models_list            = [ 'BSRGANx4', 'BSRGANx2', 'RealESRGANx4' ]
 
-AI_models_list         = ( SRVGGNetCompact_models_list + RRDB_models_list )
-gpus_list              = [ 'High performance', 'Power saving']
+AI_models_list         = ( IRCNN_models_list + SRVGGNetCompact_models_list + RRDB_models_list )
+gpus_list              = [ 'GPU 1', 'GPU 2', 'GPU 3', 'GPU 4' ]
 image_extension_list   = [ '.png', '.jpg', '.bmp', '.tiff' ]
 video_extension_list   = [ '.mp4 (x264)', '.mp4 (x265)', '.avi' ]
 interpolation_list     = [ 'Low', 'Medium', 'High', 'Disabled' ]
@@ -152,9 +153,13 @@ default_resize_factor     = str(50)
 default_VRAM_limiter      = str(8)
 default_cpu_number        = str(int(os_cpu_count()/2))
 
+FFMPEG_EXE_PATH   = find_by_relative_path(f"Assets{os_separator}ffmpeg.exe")
+EXIFTOOL_EXE_PATH = find_by_relative_path(f"Assets{os_separator}exiftool.exe")
+FRAMES_FOR_CPU    = 30
+
 COMPLETED_STATUS = "Completed"
-ERROR_STATUS = "Error"
-STOP_STATUS = "Stop"
+ERROR_STATUS     = "Error"
+STOP_STATUS      = "Stop"
 
 offset_y_options = 0.105
 row0_y = 0.52
@@ -197,16 +202,19 @@ def load_AI_model(
 
     AI_model_path   = find_by_relative_path(f"AI-onnx{os_separator}{selected_AI_model}.onnx")
     AI_model_loaded = onnx_load(AI_model_path)
-    AI_model_loaded = onnxoptimizer_optimize(AI_model_loaded)
 
     match selected_gpu:
-        case "High performance":
-            backend = [('DmlExecutionProvider', {'performance_preference': 'high_performance'})]
-        case "Power saving":
-            backend = [('DmlExecutionProvider', {'performance_preference': 'minimum_power'})]
-
+        case 'GPU 1':
+            backend = [('DmlExecutionProvider', {"device_id": "0"})]
+        case 'GPU 2':
+            backend = [('DmlExecutionProvider', {"device_id": "1"})]
+        case 'GPU 3':
+            backend = [('DmlExecutionProvider', {"device_id": "2"})]
+        case 'GPU 4':
+            backend = [('DmlExecutionProvider', {"device_id": "3"})]
+    
     if selected_half_precision:
-        AI_model_loaded = onnx_converter_float16.convert_float_to_float16(
+        AI_model_loaded = convert_float_to_float16(
             model = AI_model_loaded,
             keep_io_types = True
         )
@@ -274,13 +282,13 @@ def get_image_mode(image: numpy_ndarray) -> str:
             return "RGBA"
 
 def normalize_image(image: numpy_ndarray) -> tuple:
-    range = 65535 if numpy_max(image) > 256 else 255
+    range            = 65535 if numpy_max(image) > 256 else 255
     normalized_image = image / range
 
     return normalized_image, range
 
 def preprocess_image(image: numpy_ndarray) -> numpy_ndarray:
-    image_transposed = numpy_transpose(image, (2, 0, 1))
+    image_transposed          = numpy_transpose(image, (2, 0, 1))
     image_transposed_expanded = numpy_expand_dims(image_transposed, axis=0)
 
     return image_transposed_expanded
@@ -652,7 +660,8 @@ def update_file_widget(a, b, c) -> None:
         return
     
     global selected_AI_model
-    if   'x2' in selected_AI_model: upscale_factor = 2
+    if   'x1' in selected_AI_model: upscale_factor = 1
+    elif 'x2' in selected_AI_model: upscale_factor = 2
     elif 'x4' in selected_AI_model: upscale_factor = 4
 
     try:
@@ -885,10 +894,6 @@ def calculate_num_tiles(file: numpy_ndarray, max_tiles_resolution: int) -> tuple
 
 # File Utils functions ------------------------
 
-def find_by_relative_path(relative_path: str) -> str:
-    base_path = getattr(sys, '_MEIPASS', os_path_dirname(os_path_abspath(__file__)))
-    return os_path_join(base_path, relative_path)
-
 def remove_dir(name_dir: str) -> None:
     if os_path_exists(name_dir): 
         remove_directory(name_dir)
@@ -943,9 +948,9 @@ def resize_image(
 
     match resize_factor:
         case factor if factor > 1:
-            return opencv_resize(file, (new_width, new_height), interpolation=INTER_CUBIC)
+            return opencv_resize(file, (new_width, new_height), interpolation = INTER_LINEAR)
         case factor if factor < 1:
-            return opencv_resize(file, (new_width, new_height), interpolation=INTER_AREA)
+            return opencv_resize(file, (new_width, new_height), interpolation = INTER_LINEAR)
         case _:
             return file
 
@@ -975,8 +980,7 @@ def extract_video_frames_and_audio(
             pass
 
     # Video frame extraction
-    frames_for_cpu = 35
-    frames_number_to_save = cpu_number * frames_for_cpu
+    frames_number_to_save = cpu_number * FRAMES_FOR_CPU
 
     video_capture = opencv_VideoCapture(video_path)
     frame_count   = int(video_capture.get(CAP_PROP_FRAME_COUNT))
@@ -1027,8 +1031,6 @@ def video_reconstruction_by_frames(
         selected_interpolation_factor: float
         ) -> str:
         
-    frame_rate = get_video_fps(video_path)
-
     match selected_video_extension:
         case '.mp4 (x264)':
             selected_video_extension = '.mp4'
@@ -1040,36 +1042,27 @@ def video_reconstruction_by_frames(
             selected_video_extension = '.avi'
             codec = 'png'
 
-    upscaled_video_path = prepare_output_video_filename(video_path, selected_output_path, selected_AI_model, resize_factor, selected_video_extension, selected_interpolation_factor)
+    output_path = prepare_output_video_filename(video_path, selected_output_path, selected_AI_model, resize_factor, selected_video_extension, selected_interpolation_factor)
+    frame_rate  = get_video_fps(video_path)
 
     clip = ImageSequenceClip.ImageSequenceClip(
         sequence = frames_upscaled_list, 
-        fps = frame_rate
+        fps = frame_rate,
     )
-    if os_path_exists(audio_path):
-        clip.write_videofile(
-            upscaled_video_path,
-            fps     = frame_rate,
-            audio   = audio_path,
-            codec   = codec,
-            bitrate = '16M',
-            verbose = False,
-            logger  = None,
-            threads = cpu_number
-        )
-    else:
-        clip.write_videofile(
-            upscaled_video_path,
-            fps     = frame_rate,
-            codec   = codec,
-            bitrate = '16M',
-            verbose = False,
-            logger  = None,
-            threads = cpu_number
-        ) 
-        
-    return upscaled_video_path
-        
+    clip.write_videofile(
+        output_path,
+        fps     = frame_rate,
+        audio   = audio_path if os_path_exists(audio_path) else None,
+        codec   = codec,
+        bitrate = '16M',
+        verbose = False,
+        logger  = None,
+        threads = cpu_number,
+        preset  = "ultrafast"
+    )
+
+    return output_path
+
 def interpolate_images_and_save(
         target_path: str,
         image1: numpy_ndarray,
@@ -1107,13 +1100,13 @@ def interpolate_images_and_save(
 
 def get_upscaled_image_shape(
         image: numpy_ndarray, 
-        upscaling_factor: int
+        upscale_factor: int
         ) -> tuple[int, int]:
     
     image_to_upscale_height, image_to_upscale_width = get_image_resolution(image)
 
-    target_height = image_to_upscale_height * upscaling_factor
-    target_width  = image_to_upscale_width  * upscaling_factor
+    target_height = image_to_upscale_height * upscale_factor
+    target_width  = image_to_upscale_width  * upscale_factor
     
     return target_height, target_width
 
@@ -1206,11 +1199,8 @@ def copy_file_metadata(
         upscaled_file_path: str
         ) -> None:
     
-    exiftool      = "exiftool_12.70.exe"
-    exiftool_path = find_by_relative_path(f"Assets{os_separator}{exiftool}")
-
     exiftool_cmd = [
-        exiftool_path, 
+        EXIFTOOL_EXE_PATH, 
         '-fast', 
         '-TagsFromFile', 
         original_file_path, 
@@ -1507,9 +1497,11 @@ def upscale_orchestrator(
         selected_AI_multithreading: int
         ) -> None:
         
-    if   'x2' in selected_AI_model: upscaling_factor = 2
-    elif 'x4' in selected_AI_model: upscaling_factor = 4
+    if   'x1' in selected_AI_model: upscale_factor = 1
+    elif 'x2' in selected_AI_model: upscale_factor = 2
+    elif 'x4' in selected_AI_model: upscale_factor = 4
 
+    write_process_status(processing_queue, f"Loading AI model")
     AI_model = load_AI_model(selected_AI_model, selected_gpu, selected_half_precision)
 
     try:
@@ -1528,7 +1520,7 @@ def upscale_orchestrator(
                     selected_AI_model,
                     selected_gpu, 
                     selected_half_precision,
-                    upscaling_factor,
+                    upscale_factor,
                     tiles_resolution,
                     resize_factor, 
                     cpu_number, 
@@ -1545,7 +1537,7 @@ def upscale_orchestrator(
                     selected_output_path,
                     AI_model,
                     selected_AI_model,
-                    upscaling_factor, 
+                    upscale_factor, 
                     selected_image_extension, 
                     tiles_resolution, 
                     resize_factor, 
@@ -1567,7 +1559,7 @@ def upscale_image(
         selected_output_path: str,
         AI_model: onnxruntime_inferenceSession,
         selected_AI_model: str,
-        upscaling_factor: int,
+        upscale_factor: int,
         selected_image_extension: str,
         tiles_resolution: int, 
         resize_factor: int, 
@@ -1575,14 +1567,11 @@ def upscale_image(
         selected_interpolation_factor: float
         ) -> None:
     
-    write_process_status(processing_queue, f"Loading AI model")
-
     upscaled_image_path = prepare_output_image_filename(image_path, selected_output_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation_factor)
-        
-    starting_image   = image_read(image_path)
-    image_to_upscale = resize_image(starting_image, resize_factor)
-    need_tiles       = file_need_tilling(image_to_upscale, tiles_resolution)
-    target_height, target_width = get_upscaled_image_shape(image_to_upscale, upscaling_factor)
+    starting_image      = image_read(image_path)
+    image_to_upscale    = resize_image(starting_image, resize_factor)
+    need_tiles          = file_need_tilling(image_to_upscale, tiles_resolution)
+    target_height, target_width = get_upscaled_image_shape(image_to_upscale, upscale_factor)
     if need_tiles:
         num_tiles_x, num_tiles_y = calculate_num_tiles(image_to_upscale, tiles_resolution)
 
@@ -1627,7 +1616,7 @@ def upscale_video(
         selected_AI_model: str,
         selected_gpu: str, 
         selected_half_precision: bool,
-        upscaling_factor: int,
+        upscale_factor: int,
         tiles_resolution: int,
         resize_factor: int, 
         cpu_number: int, 
@@ -1650,7 +1639,7 @@ def upscale_video(
     frame_list_paths, audio_path = extract_video_frames_and_audio(processing_queue, file_number, target_directory, video_path, cpu_number)
     first_frame      = resize_image(image_read(frame_list_paths[0]), resize_factor)
     need_tiles       = file_need_tilling(first_frame, tiles_resolution)
-    target_height, target_width = get_upscaled_image_shape(first_frame, upscaling_factor)
+    target_height, target_width = get_upscaled_image_shape(first_frame, upscale_factor)
 
     if need_tiles:
         num_tiles_x, num_tiles_y = calculate_num_tiles(first_frame, tiles_resolution)
@@ -1922,9 +1911,11 @@ def user_input_checks() -> bool:
 
     if tiles_resolution > 0: 
         if selected_AI_model in RRDB_models_list:          
-            vram_multiplier = RRDB_vram_multiplier
+            vram_multiplier = high_VRAM
         elif selected_AI_model in SRVGGNetCompact_models_list: 
-            vram_multiplier = SRVGGNetCompact_vram_multiplier
+            vram_multiplier = medium_VRAM
+        elif selected_AI_model in IRCNN_models_list:
+            vram_multiplier = very_low_VRAM
 
         selected_vram = (vram_multiplier * int(float(str(selected_VRAM_limiter.get()))))
 
@@ -1981,7 +1972,8 @@ def open_files_action():
         global scrollable_frame_file_list
 
         global selected_AI_model
-        if   'x2' in selected_AI_model: upscale_factor = 2
+        if   'x1' in selected_AI_model: upscale_factor = 1
+        elif 'x2' in selected_AI_model: upscale_factor = 2
         elif 'x4' in selected_AI_model: upscale_factor = 4
 
         try:
@@ -2081,7 +2073,6 @@ def open_info_output_path():
         + "\n the app will save the upscaled files in the Download folder \n",
 
         " Otherwise it is possible to select the desired path using the SELECT button",
-
     ]
 
     CTkMessageBox(
@@ -2094,6 +2085,11 @@ def open_info_output_path():
 
 def open_info_AI_model():
     option_list = [
+        "\n IRCNN (2017) - Very simple and lightweight AI architecture\n" + 
+        " Only denoising (no upscaling)\n" + 
+        " Recommended for both image/video denoising\n" + 
+        "  • IRCNNx1\n",
+
         "\n SRVGGNetCompact (2022) - Fast and lightweight AI architecture\n" + 
         " Good-quality upscale\n" + 
         " Recommended for video upscaling\n" + 
@@ -2107,12 +2103,6 @@ def open_info_AI_model():
         "  • BSRGANx4\n" +
         "  • RealESRGANx4\n",
 
-        #"\n SAFM (2023) - Slow but lightweight AI architecture\n" + 
-        #" High-quality upscale\n" +
-        #" Recommended for image upscaling\n" + 
-        #" Does not support Half-precision\n" +
-        #"  • SAFMNLx4\n" + 
-        #"  • SAFMNLx4_Real\n",
     ]
 
     CTkMessageBox(
@@ -2125,16 +2115,17 @@ def open_info_AI_model():
 
 def open_info_gpu():
     option_list = [
-        " Keep in mind that the more powerful the chosen gpu is, the faster the upscaling will be",
-        
-        " For optimal performance, it is essential to regularly update your GPU drivers",
+        "\n It is possible to select up to 4 GPUs, via the index (also visible in the Task Manager):\n" +
+        "  • GPU 1 (GPU 0 in Task manager)\n" + 
+        "  • GPU 2 (GPU 1 in Task manager)\n" + 
+        "  • GPU 3 (GPU 2 in Task manager)\n" + 
+        "  • GPU 4 (GPU 3 in Task manager)\n",
 
-        "\n Windows handles multiple GPUs by categorising them:\n" +
-        "  • GPU High performance\n" + 
-        "  • GPU Power saving\n" +
-        "\n In the case of a single GPU, select 'High performance'\n"
-
-
+        "\n NOTES\n" +
+        "  • Keep in mind that the more powerful the chosen gpu is, the faster the upscaling will be\n" +
+        "  • For optimal performance, it is essential to regularly update your GPUs drivers\n" +
+        "  • Selecting the index of a GPU not present in the PC will cause the app to use the CPU for AI operations\n"+
+        "  • In the case of a single GPU, select 'GPU 1'\n"
     ]
 
     CTkMessageBox(
@@ -2560,9 +2551,10 @@ if __name__ == "__main__":
     set_appearance_mode("Dark")
     set_default_color_theme("dark-blue")
 
-    ffmpeg_exe_path = find_by_relative_path(f"Assets{os_separator}ffmpeg_7.exe")
-    if os_path_exists(ffmpeg_exe_path):
-        os_environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg_exe_path
+    if os_path_exists(FFMPEG_EXE_PATH): 
+        os_environ["IMAGEIO_FFMPEG_EXE"] = FFMPEG_EXE_PATH
+        os_environ['FFMPEG_BINARY']      = FFMPEG_EXE_PATH
+        os_environ['FFMPEG_BIN']      = FFMPEG_EXE_PATH
 
     window = CTk() 
 
