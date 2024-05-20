@@ -17,7 +17,7 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/851d78a0-5498-41d6-9cf3-e41322387879">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/f02352ad-1549-4fdc-80be-299a68c6f084">
     </div>
 </body>
 </html>
