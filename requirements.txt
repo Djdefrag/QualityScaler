@@ -9,4 +9,3 @@ customtkinter
 #UTILS
 moviepy
 opencv-python-headless
-Nuitka

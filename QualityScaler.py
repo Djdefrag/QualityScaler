@@ -118,7 +118,7 @@ githubme   = "https://github.com/Djdefrag/QualityScaler"
 telegramme = "https://linktr.ee/j3ngystudio"
 
 app_name = "QualityScaler"
-version  = "3.5"
+version  = "3.6"
 
 app_name_color = "#DA70D6"
 dark_color     = "#080808"
@@ -126,7 +126,7 @@ dark_color     = "#080808"
 very_low_VRAM = 4
 low_VRAM      = 3
 medium_VRAM   = 2.2
-high_VRAM     = 0.7
+high_VRAM     = 0.65
 full_precision_vram_multiplier = 0.7
 
 IRCNN_models_list           = [ 'IRCNNx1' ]
@@ -298,8 +298,8 @@ def process_image_with_AI_model(
         image: numpy_ndarray
         ) -> numpy_ndarray:
     
-    onnx_input  = {AI_model.get_inputs()[0].name: image}
-    onnx_output = AI_model.run(None, onnx_input)[0] 
+    onnx_input      = {AI_model.get_inputs()[0].name: image}
+    onnx_output     = AI_model.run(None, onnx_input)[0] 
     output_squeezed = numpy_squeeze(onnx_output, axis=0)
     output_squeezed_clamped = numpy_clip(output_squeezed, 0, 1)
     output_squeezed_clamped_transposed = numpy_transpose(output_squeezed_clamped, (1, 2, 0))
