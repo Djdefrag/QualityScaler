@@ -55,7 +55,7 @@ Getting started.
 - First of all, you need to download the project on your PC (Green button Code > Download ZIP)
 - Extract the project directory from the .zip
 - Now you need to download the AI models (github won't let me upload them directly because they are too big)
-- In "AI-onnx" folder, there is the link to download the AI models, download the .zip and extract the files in the project directory
+- In "AI-onnx" folder, there is the link to download the AI models, download the .zip and extract the files in AI-onnx directory
 - Open the project with VSCode (just Drag&Drop the project directory on VSCode)
 - Click on QualityScaler.py from left bar (VSCode will ask you to install some plugins, go ahead)
 - Now, you need to install dependencies. In VSCode there is the "Terminal" panel, click there and execute the command "pip install -r requirements"
