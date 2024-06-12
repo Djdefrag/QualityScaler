@@ -33,7 +33,6 @@ Qualityscaler is a Windows app powered by AI to enhance, upscale and de-noise ph
 ## Credits.
 - BSRGAN - https://github.com/cszn/BSRGAN
 - Real-ESRGAN - https://github.com/xinntao/Real-ESRGAN
-- SAFMN - https://github.com/sunny2109/SAFMN
 
 ## Citations. ❤
 - https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-images/
@@ -46,6 +45,23 @@ External packages are:
 - GUI -> customtkinter
 - Image/video -> OpenCV / moviepy
 - Packaging   -> nuitka
+
+## Make it work by yourself. 👨‍💻
+Prerequisites.
+- Python installed on your pc, you can download it from here (https://www.python.org/downloads/release/python-3119/)
+- VSCode installed on your pc, you can download it from here (https://code.visualstudio.com/)
+
+Getting started.
+- First of all, you need to download the project on your PC (Green button Code > Download ZIP)
+- Extract the project directory from the .zip
+- Now you need to download the AI models (github won't let me upload them directly because they are too big)
+- In "AI-onnx" folder, there is the link to download the AI models, download the .zip and extract the files in the project directory
+- Open the project with VSCode (just Drag&Drop the project directory on VSCode)
+- Click on QualityScaler.py from left bar (VSCode will ask you to install some plugins, go ahead)
+- Now, you need to install dependencies. In VSCode there is the "Terminal" panel, click there and execute the command "pip install -r requirements"
+- Close VSCode and re-open it (this will refresh all the dependecies installed)
+- Just click on the "Play button" in the upper right corner of VSCode
+- Now the app should work
 
 ## Requirements. 🤓
 - Windows 11 / Windows 10
