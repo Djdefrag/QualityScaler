@@ -11,7 +11,7 @@
 ### Other changes
 - Implemented a maximum output image size of 4096 in any dimension to optimize cases when accidentally a big image is being scaled
 - Randomized the input images order to make visual inspection easier
-- Any downloaded onnx models are now detected and used, but must be in subdirectories IRCNN/SRVGGNetCompact/RRDB and have x1/x2/x4 suffix
+- Any downloaded onnx models are now detected and used, but must be in subdirectories IRCNN/SRVGGNetCompact/RRDB
 - generalized scale factor detection from model name: now they can also start from eg. 4x and any number is accepted
 
 <!DOCTYPE html>
