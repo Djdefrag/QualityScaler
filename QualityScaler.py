@@ -1,4 +1,3 @@
-
 # Standard library imports
 import sys
 import random
@@ -143,10 +142,24 @@ medium_VRAM   = 2.2
 high_VRAM     = 0.6
 full_precision_vram_multiplier = 0.7
 
-AI_LIST_SEPARATOR           = ['----']
-IRCNN_models_list           = [ 'IRCNN_Mx1', 'IRCNN_Lx1' ]
-SRVGGNetCompact_models_list = [ 'RealESR_Gx4', 'RealSRx4_Anime' ]
-RRDB_models_list            = [ 'BSRGANx4', 'BSRGANx2', 'RealESRGANx4' ]
+def listModels(type):
+    path = find_by_relative_path(f'AI-onnx{os_separator}{type}')
+    result = []
+    for fn in os.listdir(path):
+        name, ext = os.path.splitext(fn)
+        if ext == '.onnx': result.append(name)
+    return result
+
+def findModel(name):
+    for type in ['IRCNN', 'SRVGGNetCompact', 'RRDB']:
+        path = find_by_relative_path(f'AI-onnx{os_separator}{type}')
+        fn = f'{path}{os_separator}{name}.onnx'
+        if os.path.exists(fn): return fn
+    return f'[Model {name} not found]'
+
+IRCNN_models_list           = listModels('IRCNN')
+SRVGGNetCompact_models_list = listModels('SRVGGNetCompact')
+RRDB_models_list            = listModels('RRDB')
 
 AI_models_list         = ( SRVGGNetCompact_models_list + AI_LIST_SEPARATOR + RRDB_models_list + AI_LIST_SEPARATOR + IRCNN_models_list )
 gpus_list              = [ 'GPU 1', 'GPU 2', 'GPU 3', 'GPU 4' ]
@@ -156,16 +169,16 @@ interpolation_list     = [ 'Low', 'Medium', 'High', 'Disabled' ]
 AI_precision_list      = [ 'Half precision', 'Full precision' ]
 AI_multithreading_list = [ 'Disabled', '2 threads', '3 threads', '4 threads']
 
-default_AI_model          = AI_models_list[0]
+default_AI_model          = AI_models_list[3]
 default_gpu               = gpus_list[0]
-default_image_extension   = image_extension_list[0]
+default_image_extension   = image_extension_list[1]
 default_video_extension   = video_extension_list[0]
-default_interpolation     = interpolation_list[0]
-default_AI_precision      = AI_precision_list[0]
-default_AI_multithreading = AI_multithreading_list[0]
+default_interpolation     = interpolation_list[3]
+default_AI_precision      = AI_precision_list[1]
+default_AI_multithreading = AI_multithreading_list[3]
 default_output_path       = "Same path as input files"
-default_resize_factor     = str(50)
-default_VRAM_limiter      = str(8)
+default_resize_factor     = str(100)
+default_VRAM_limiter      = str(12)
 default_cpu_number        = str(int(os_cpu_count()/2))
 
 FFMPEG_EXE_PATH   = find_by_relative_path(f"Assets{os_separator}ffmpeg.exe")
@@ -216,7 +229,7 @@ def load_AI_model(
         selected_half_precision: bool
     ) -> onnxruntime_inferenceSession:
 
-    AI_model_path   = find_by_relative_path(f"AI-onnx{os_separator}{selected_AI_model}.onnx")
+    AI_model_path   = findModel(f"{selected_AI_model}")
     AI_model_loaded = onnx_load(AI_model_path)
 
     sess_options = onnxruntime_sessionOptions()
