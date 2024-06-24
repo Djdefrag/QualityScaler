@@ -10,6 +10,7 @@ import cgi
 from urllib.parse import unquote
 from io import BytesIO
 import numpy
+import re
 from functools  import cache
 from time       import sleep
 from webbrowser import open as open_browser
@@ -1533,6 +1534,18 @@ def prepare_output_video_frames_directory_name(
 
     return output_path
 
+
+def getUpscaleFactor(modelName):
+    p = re.compile('([0-9]+)x')
+    m = re.match(p, modelName)
+    if m is None:
+        p = re.compile('x([0-9]+)([\W_]|$)')
+        m = re.search(p, modelName)
+    factor = 0
+    if m is not None: factor = int(m.expand('\\g<1>'))
+    print(f'upscaleFactor: {factor}')
+    return factor
+
 # ORCHESTRATOR
 
 def upscale_orchestrator(
@@ -1552,10 +1565,7 @@ def upscale_orchestrator(
         selected_AI_multithreading: int
         ) -> None:
         
-    if   'x1' in selected_AI_model: upscale_factor = 1
-    elif 'x2' in selected_AI_model: upscale_factor = 2
-    elif 'x4' in selected_AI_model: upscale_factor = 4
-
+    upscale_factor = getUpscaleFactor(selected_AI_model)
     write_process_status(processing_queue, f"Loading AI model")
     AI_model = load_AI_model(selected_AI_model, selected_gpu, selected_half_precision)
 
@@ -2676,9 +2686,7 @@ def startServer(serverPort=12345, hostName='localhost'):
     write_process_status(processing_queue, f"Loading AI model")
     webServer = HTTPServer((hostName, serverPort), MyServer)
     webServer.AI_model = load_AI_model(selected_AI_model, selected_gpu, selected_half_precision)
-    if   'x1' in selected_AI_model: webServer.upscale_factor = 1
-    elif 'x2' in selected_AI_model: webServer.upscale_factor = 2
-    elif 'x4' in selected_AI_model: webServer.upscale_factor = 4
+    webServer.upscale_factor = getUpscaleFactor(selected_AI_model)
     print("Server started http://%s:%s" % (hostName, serverPort))
     webServerThread = Thread(target = webServer.serve_forever)
     webServerThread.start()
