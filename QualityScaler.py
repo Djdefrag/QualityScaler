@@ -1606,6 +1606,10 @@ def upscale_image(
         ) -> None:
     
     upscaled_image_path = prepare_output_image_filename(image_path, selected_output_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation_factor)
+    if os.path.exists(upscaled_image_path):
+        print('Skipping ' + upscaled_image_path)
+        return
+
     starting_image      = image_read(image_path)
     image_to_upscale    = resize_image(starting_image, resize_factor)
     need_tiles          = file_need_tilling(image_to_upscale, tiles_resolution)

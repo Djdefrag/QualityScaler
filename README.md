@@ -3,6 +3,7 @@
 ### Support for long image lists
 - Replaced the slow and memory hungry GUI list for more images than 100 with a button to Explorer, TODO generalize for Linux
 - Added progress percentage, current file name and ETA for images upscaling
+- Implemented skipping of existing output images
 
 ### Other changes
 - Randomized the input images order to make visual inspection easier
