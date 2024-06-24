@@ -1319,7 +1319,8 @@ def stop_upscale_process() -> None:
     try:
         process_upscale_orchestrator
     except:
-        pass
+        stopServerIfActive()
+        place_upscale_button()
     else:
         process_upscale_orchestrator.kill()
 
@@ -2624,7 +2625,7 @@ def place_upscale_button():
     upscale_button.place(relx = column2_x, rely = row4_y, anchor = "center")
    
 
-class MyServer(BaseHTTPRequestHandler):
+class MyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         filepath = unquote(str(self.path)[1:])
         if len(filepath) == 0:
@@ -2683,18 +2684,26 @@ class MyServer(BaseHTTPRequestHandler):
 
 
 def startServer(serverPort=12345, hostName='localhost'):
+    global webServer, webServerThread
     write_process_status(processing_queue, f"Loading AI model")
-    webServer = HTTPServer((hostName, serverPort), MyServer)
+    webServer = HTTPServer((hostName, serverPort), MyHandler)
     webServer.AI_model = load_AI_model(selected_AI_model, selected_gpu, selected_half_precision)
     webServer.upscale_factor = getUpscaleFactor(selected_AI_model)
-    print("Server started http://%s:%s" % (hostName, serverPort))
+    text = f"Server started http://{hostName}:{serverPort}"
+    write_process_status(processing_queue, text)
+    info_message.set(text)
     webServerThread = Thread(target = webServer.serve_forever)
     webServerThread.start()
 
 def stopServerIfActive():
-    if webServerThread is Thread and webServerThread.is_alive():
-        webServerThread.kill()
-        print("Server stopped")
+    global webServer, webServerThread
+    if webServerThread is not None and webServerThread.is_alive():
+        webServer.shutdown()
+        webServer.server_close()
+        webServerThread.join()
+        text = "Server stopped"
+        write_process_status(processing_queue, text)
+        info_message.set(text)
 
 
 # Main functions ---------------------------
