@@ -1,6 +1,7 @@
 
 # Standard library imports
 import sys
+import random
 import os
 import subprocess
 from functools  import cache
@@ -1535,6 +1536,7 @@ def upscale_orchestrator(
 
     try:
         how_many_files = len(selected_file_list)
+        random.shuffle(selected_file_list)
         for file_number in range(how_many_files):
             file_path   = selected_file_list[file_number]
             file_number = file_number + 1
