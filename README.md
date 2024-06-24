@@ -6,6 +6,7 @@
 - Implemented skipping of existing output images
 
 ### Other changes
+- Implemented a maximum output image size of 4096 in any dimension to optimize cases when accidentally a big image is being scaled
 - Randomized the input images order to make visual inspection easier
 
 <!DOCTYPE html>

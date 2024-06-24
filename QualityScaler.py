@@ -1611,6 +1611,15 @@ def upscale_image(
         return
 
     starting_image      = image_read(image_path)
+    height, width = get_image_resolution(starting_image)
+    height *= resize_factor * upscale_factor
+    width *= resize_factor * upscale_factor
+    if height > 4096:
+        resize_factor *= 4096 / height
+        width *= 4096 / height
+    if width > 4096:
+        resize_factor *= 4096 / width
+
     image_to_upscale    = resize_image(starting_image, resize_factor)
     need_tiles          = file_need_tilling(image_to_upscale, tiles_resolution)
     target_height, target_width = get_upscaled_image_shape(image_to_upscale, upscale_factor)
