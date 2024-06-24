@@ -1,6 +1,8 @@
 
 # Standard library imports
 import sys
+import os
+import subprocess
 from functools  import cache
 from time       import sleep
 from webbrowser import open as open_browser
@@ -528,10 +530,27 @@ class ScrollableImagesTextFrame_upscaler(CTkScrollableFrame):
     def _create_widgets(self) -> None:
         self.add_clean_button()
         index_row = 1
-        for file_path in self.file_list:
-            label = self.add_file_information(file_path, index_row)
-            self.label_list.append(label)
-            index_row +=1
+        if len(self.file_list) < 100:
+            for file_path in self.file_list:
+                label = self.add_file_information(file_path, index_row)
+                self.label_list.append(label)
+                index_row +=1
+        else:
+            button = CTkButton(
+                self,
+                image        = view_icon,
+                font         = bold11,
+                text         = f"View {len(self.file_list)} files",
+                compound     = "left",
+                width        = 100,
+                height       = 28,
+                border_width = 1,
+                fg_color     = "#282828",
+                text_color   = "#E0E0E0",
+                border_color = "#0096FF"
+                )
+            button.configure(command=lambda: subprocess.run(["explorer", os.path.abspath(os.path.dirname(self.file_list[0]))]))
+            button.grid(row = 0, column=0, pady=(3, 3), padx = (3, 3))
 
     def clean_file_list(self) -> None:
         for label in self.label_list:
@@ -2669,6 +2688,7 @@ if __name__ == "__main__":
     upscale_icon   = CTkImage(pillow_image_open(find_by_relative_path(f"Assets{os_separator}upscale_icon.png")),   size=(15, 15))
     clear_icon     = CTkImage(pillow_image_open(find_by_relative_path(f"Assets{os_separator}clear_icon.png")),     size=(15, 15))
     info_icon      = CTkImage(pillow_image_open(find_by_relative_path(f"Assets{os_separator}info_icon.png")),      size=(16, 16))
+    view_icon      = CTkImage(pillow_image_open(find_by_relative_path(f"Assets{os_separator}pingle.png")),         size=(16, 16))
 
     app = App(window)
     window.update()

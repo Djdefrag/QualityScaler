@@ -1,3 +1,8 @@
+## Changes in this fork
+
+### Support for long image lists
+- Replaced the slow and memory hungry GUI list for more images than 100 with a button to Explorer, TODO generalize for Linux
+
 <!DOCTYPE html>
 <html>
 <body>
