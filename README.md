@@ -5,6 +5,9 @@
 - Added progress percentage, current file name and ETA for images upscaling
 - Implemented skipping of existing output images
 
+### Added a web server
+- The server can be launched with UPSCALE button when no images are selected and listens on port 12345
+
 ### Other changes
 - Implemented a maximum output image size of 4096 in any dimension to optimize cases when accidentally a big image is being scaled
 - Randomized the input images order to make visual inspection easier
