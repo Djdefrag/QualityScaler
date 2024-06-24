@@ -1676,7 +1676,7 @@ def upscale_image(
             image_to_upscale,
             num_tiles_x, 
             num_tiles_y, 
-            target_height, 
+            target_height,
             target_width
         )
     else:
@@ -2640,11 +2640,16 @@ class MyHandler(BaseHTTPRequestHandler):
     }
 </script>
 <div style="height:100px" ondrop="dropHandler(event);">
-<form method="POST" enctype="multipart/form-data">
+<form method="POST" enctype="multipart/form-data" action="/lastfile.jpeg">
     <input type="file" name="file">
     <input type="submit">
 </form>
 </div></html>''', "utf-8"))
+        elif self.server.lastfile is not None:
+            self.send_response(200)
+            self.send_header("Content-type", "image/jpeg")
+            self.end_headers()
+            self.wfile.write(self.server.lastfile)
 
     def do_POST(self):
         form = cgi.FieldStorage(
@@ -2663,7 +2668,7 @@ class MyHandler(BaseHTTPRequestHandler):
             None, # selected_output_path
             self.server.AI_model,
             selected_AI_model,
-             self.server.upscale_factor,
+            self.server.upscale_factor,
             selected_image_extension,
             tiles_resolution,
             resize_factor,
@@ -2675,7 +2680,8 @@ class MyHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-type", "image/jpeg")
             self.end_headers()
-            self.wfile.write(opencv_imencode(".jpeg", newimg)[1])
+            self.server.lastfile = opencv_imencode(".jpeg", newimg)[1]
+            self.wfile.write(self.server.lastfile)
         else:
             self.send_response(504)
             self.send_header("Content-type", "text/html")
@@ -2683,7 +2689,7 @@ class MyHandler(BaseHTTPRequestHandler):
             self.wfile.write("<html><h1>Error processing file</h1></html>")
 
 
-def startServer(serverPort=12345, hostName='localhost'):
+def startServer(serverPort=12345, hostName='0.0.0.0'):
     global webServer, webServerThread
     write_process_status(processing_queue, f"Loading AI model")
     webServer = HTTPServer((hostName, serverPort), MyHandler)
