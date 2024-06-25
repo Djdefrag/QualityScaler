@@ -2688,6 +2688,8 @@ class MyHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write("<html><h1>Error processing file</h1></html>")
 
+webServerThread = None
+webServer = None
 
 def startServer(serverPort=12345, hostName='0.0.0.0'):
     global webServer, webServerThread
