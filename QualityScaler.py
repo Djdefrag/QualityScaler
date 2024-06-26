@@ -271,7 +271,62 @@ def AI_upscale(
     image_mode   = get_image_mode(image)
     image, range = normalize_image(image)
     image        = image.astype(float32)
+    model_mono = AI_model.get_outputs()[0].shape[1] == 1
 
+    if model_mono:
+        match image_mode:
+            case "RGB":
+                # image = numpy.average(image, 2)
+
+                imageR = image[:, :, 0]
+                imageR = numpy_expand_dims(imageR, axis=2)
+                imageR = preprocess_image(imageR)
+                output_image = process_image_with_AI_model(AI_model, imageR)
+                output_image = numpy.repeat(output_image, 3, 2)
+
+                imageG = image[:, :, 1]
+                imageG = numpy_expand_dims(imageG, axis=2)
+                imageG = preprocess_image(imageG)
+                output_image[:,:,1] = process_image_with_AI_model(AI_model, imageG).squeeze()
+
+                imageB = image[:, :, 2]
+                imageB = numpy_expand_dims(imageB, axis=2)
+                imageB = preprocess_image(imageB)
+                output_image[:,:,2] = process_image_with_AI_model(AI_model, imageB).squeeze()
+
+                # output_image = output_image.squeeze()
+                return postprocess_output(output_image, range)
+
+            case "RGBA":
+                alpha = image[:, :, 3]
+                image = image[:, :, :3]
+                image = opencv_cvtColor(image, COLOR_BGR2RGB)
+                alpha = opencv_cvtColor(alpha, COLOR_GRAY2RGB)
+
+                image = image.astype(float32)
+                alpha = alpha.astype(float32)
+
+                # Image
+                image = preprocess_image(image)
+                output_image = process_image_with_AI_model(AI_model, image)
+                output_image = opencv_cvtColor(output_image, COLOR_RGB2BGRA)
+
+                # Alpha
+                alpha = preprocess_image(alpha)
+                output_alpha = process_image_with_AI_model(AI_model, alpha)
+                output_alpha = opencv_cvtColor(output_alpha, COLOR_RGB2GRAY)
+
+                # Fusion Image + Alpha
+                output_image[:, :, 3] = output_alpha
+                return postprocess_output(output_image, range)
+
+            case "Grayscale":
+                image = numpy_expand_dims(image, axis=2)
+                image = preprocess_image(image)
+                output_image = process_image_with_AI_model(AI_model, image)
+                output_image = output_image.squeeze()
+                return postprocess_output(output_image, range)
+    else:
     match image_mode:
         case "RGB":
             image = preprocess_image(image)
