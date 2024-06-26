@@ -1624,7 +1624,7 @@ def upscale_orchestrator(
 
 def upscale_image(
         processing_queue: multiprocessing_Queue,
-        image_path,
+        image_path_or_content,
         file_number: int,
         total_files: int,
         start_time: float,
@@ -1639,14 +1639,15 @@ def upscale_image(
         selected_interpolation_factor: float
         ) -> None:
     
-    if isinstance(image_path, str):
+    if isinstance(image_path_or_content, str):
+        image_path = image_path_or_content
     upscaled_image_path = prepare_output_image_filename(image_path, selected_output_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation_factor)
     if os.path.exists(upscaled_image_path):
         print('Skipping ' + upscaled_image_path)
         return
     starting_image      = image_read(image_path)
     else:
-        starting_image = image_path
+        starting_image = image_path_or_content
         image_path = 'POST data'
     height, width = get_image_resolution(starting_image)
     height *= resize_factor * upscale_factor
@@ -2632,19 +2633,7 @@ class MyHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-type", "text/html")
             self.end_headers()
-            self.wfile.write(bytes('''<html>
-<script>
-    function dropHandler(ev) {
-        //ev.preventDefault();
-        console.log(ev);
-    }
-</script>
-<div style="height:100px" ondrop="dropHandler(event);">
-<form method="POST" enctype="multipart/form-data" action="/lastfile.jpeg">
-    <input type="file" name="file">
-    <input type="submit">
-</form>
-</div></html>''', "utf-8"))
+            self.wfile.write(bytes(open(find_by_relative_path(f"server.html")).read(), "utf-8"))
         elif self.server.lastfile is not None:
             self.send_response(200)
             self.send_header("Content-type", "image/jpeg")

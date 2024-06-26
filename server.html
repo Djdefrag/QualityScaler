@@ -1,0 +1,33 @@
+<html>
+<script>
+function resetDropDiv(){ document.querySelector('#drop-div').innerHTML = "Drop file here"; }
+window.addEventListener('load', resetDropDiv);
+window.addEventListener('unload', resetDropDiv);
+function allowDrop(ev) { ev.preventDefault(); }
+function dropHandler(ev) {
+    ev.preventDefault();
+    document.querySelector('#file-input').files = ev.dataTransfer.files;
+    document.querySelector('#drop-div').innerHTML = "Processing";
+    document.forms[0].submit();
+}
+</script>
+<style>
+#drop-div {
+    width: 500px;
+    height:500px;
+    line-height: 500px;
+    font-weight: bold;
+    color: lightgray;
+    font-size: 25px;
+    font-family: sans-serif;
+    border: 5px dotted lightgray;
+    text-align: center;
+    vertical-align: middle;
+}
+</style>
+<form method="POST" enctype="multipart/form-data" action="/lastfile.jpeg">
+    <input type="file" name="file" id="file-input">
+    <input type="submit" id="submit-button" value="Upscale">
+</form>
+<div id="drop-div" ondrop="dropHandler(event);" ondragover="allowDrop(event)"></div>
+</html>
