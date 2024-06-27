@@ -1,13 +1,17 @@
 <html>
 <script>
-function resetDropDiv(){ document.querySelector('#drop-div').innerHTML = "Drop file here"; }
-window.addEventListener('load', resetDropDiv);
-window.addEventListener('unload', resetDropDiv);
+function init(){
+    document.forms[0].file.addEventListener('input', (x) => { x.target.form.action = '/' + x.target.files[0].name; });
+    document.querySelector('#drop-div').innerHTML = "Drop file here";
+}
+window.addEventListener('load', init);
+window.addEventListener('unload', init);
 function allowDrop(ev) { ev.preventDefault(); }
 function dropHandler(ev) {
     ev.preventDefault();
     document.querySelector('#file-input').files = ev.dataTransfer.files;
     document.querySelector('#drop-div').innerHTML = "Processing";
+    document.forms[0].action = '/' + ev.dataTransfer.files[0].name
     document.forms[0].submit();
 }
 </script>
@@ -25,7 +29,7 @@ function dropHandler(ev) {
     vertical-align: middle;
 }
 </style>
-<form method="POST" enctype="multipart/form-data" action="/lastfile.jpeg">
+<form method="POST" enctype="multipart/form-data">
     <input type="file" name="file" id="file-input">
     <input type="submit" id="submit-button" value="Upscale">
 </form>
