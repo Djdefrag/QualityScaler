@@ -45,8 +45,12 @@ from moviepy.editor   import VideoFileClip
 from moviepy.video.io import ImageSequenceClip 
 
 from onnx                 import load as onnx_load 
-from onnxruntime          import InferenceSession as onnxruntime_inferenceSession
 from onnxconverter_common import convert_float_to_float16
+from onnxruntime          import (
+    InferenceSession as onnxruntime_inferenceSession,
+    SessionOptions   as onnxruntime_sessionOptions,
+    GraphOptimizationLevel as onnxruntime_graphOptimizationLevel,
+)
 
 from cv2 import (
     CAP_PROP_FPS,
@@ -118,7 +122,7 @@ githubme   = "https://github.com/Djdefrag/QualityScaler"
 telegramme = "https://linktr.ee/j3ngystudio"
 
 app_name = "QualityScaler"
-version  = "3.6"
+version  = "3.7"
 
 app_name_color = "#DA70D6"
 dark_color     = "#080808"
@@ -126,14 +130,15 @@ dark_color     = "#080808"
 very_low_VRAM = 4
 low_VRAM      = 3
 medium_VRAM   = 2.2
-high_VRAM     = 0.65
+high_VRAM     = 0.6
 full_precision_vram_multiplier = 0.7
 
-IRCNN_models_list           = [ 'IRCNNx1' ]
+AI_LIST_SEPARATOR           = ['----']
+IRCNN_models_list           = [ 'IRCNN_Mx1', 'IRCNN_Lx1' ]
 SRVGGNetCompact_models_list = [ 'RealESR_Gx4', 'RealSRx4_Anime' ]
 RRDB_models_list            = [ 'BSRGANx4', 'BSRGANx2', 'RealESRGANx4' ]
 
-AI_models_list         = ( IRCNN_models_list + SRVGGNetCompact_models_list + RRDB_models_list )
+AI_models_list         = ( SRVGGNetCompact_models_list + AI_LIST_SEPARATOR + RRDB_models_list + AI_LIST_SEPARATOR + IRCNN_models_list )
 gpus_list              = [ 'GPU 1', 'GPU 2', 'GPU 3', 'GPU 4' ]
 image_extension_list   = [ '.png', '.jpg', '.bmp', '.tiff' ]
 video_extension_list   = [ '.mp4 (x264)', '.mp4 (x265)', '.avi' ]
@@ -203,6 +208,9 @@ def load_AI_model(
     AI_model_path   = find_by_relative_path(f"AI-onnx{os_separator}{selected_AI_model}.onnx")
     AI_model_loaded = onnx_load(AI_model_path)
 
+    sess_options = onnxruntime_sessionOptions()
+    sess_options.graph_optimization_level = onnxruntime_graphOptimizationLevel.ORT_ENABLE_EXTENDED
+
     match selected_gpu:
         case 'GPU 1':
             backend = [('DmlExecutionProvider', {"device_id": "0"})]
@@ -221,7 +229,8 @@ def load_AI_model(
     
     AI_model = onnxruntime_inferenceSession(
         path_or_bytes = AI_model_loaded.SerializeToString(), 
-        providers     = backend
+        providers     = backend,
+        sess_options  = sess_options
     )    
 
     return AI_model
@@ -613,10 +622,9 @@ class ScrollableImagesTextFrame_upscaler(CTkScrollableFrame):
             cap.release()
 
             video_name = str(file_path.split("/")[-1])
-            
             file_icon = self.extract_file_icon(file_path)
 
-            if self.resize_factor == 0:
+            if self.resize_factor == 0 or self.upscale_factor == 0:
                 file_infos = (f"{video_name}\n"
                               f"{minutes}m:{round(seconds)}s • {num_frames}frames • {width}x{height}\n")
             else:
@@ -636,7 +644,7 @@ class ScrollableImagesTextFrame_upscaler(CTkScrollableFrame):
 
             file_icon = self.extract_file_icon(file_path)
 
-            if self.resize_factor == 0:
+            if self.resize_factor == 0 or self.upscale_factor == 0:
                 file_infos = (f"{image_name}\n"
                               f"Resolution {width}x{height}\n")
             else:
@@ -659,10 +667,7 @@ def update_file_widget(a, b, c) -> None:
     except:
         return
     
-    global selected_AI_model
-    if   'x1' in selected_AI_model: upscale_factor = 1
-    elif 'x2' in selected_AI_model: upscale_factor = 2
-    elif 'x4' in selected_AI_model: upscale_factor = 4
+    upscale_factor = get_upscale_factor()
 
     try:
         resize_factor = int(float(str(selected_resize_factor.get())))
@@ -895,14 +900,11 @@ def calculate_num_tiles(file: numpy_ndarray, max_tiles_resolution: int) -> tuple
 # File Utils functions ------------------------
 
 def remove_dir(name_dir: str) -> None:
-    if os_path_exists(name_dir): 
-        remove_directory(name_dir)
+    if os_path_exists(name_dir): remove_directory(name_dir)
 
 def create_dir(name_dir: str) -> None:
-    if os_path_exists(name_dir): 
-        remove_directory(name_dir)
-    if not os_path_exists(name_dir): 
-        os_makedirs(name_dir, mode=0o777)
+    if os_path_exists(name_dir):     remove_directory(name_dir)
+    if not os_path_exists(name_dir): os_makedirs(name_dir, mode=0o777)
 
 def stop_thread() -> None: 
     stop = 1 + "x"
@@ -1042,8 +1044,16 @@ def video_reconstruction_by_frames(
             selected_video_extension = '.avi'
             codec = 'png'
 
-    output_path = prepare_output_video_filename(video_path, selected_output_path, selected_AI_model, resize_factor, selected_video_extension, selected_interpolation_factor)
-    frame_rate  = get_video_fps(video_path)
+    output_path = prepare_output_video_filename(
+        video_path, 
+        selected_output_path, 
+        selected_AI_model, 
+        resize_factor, 
+        selected_video_extension, 
+        selected_interpolation_factor
+    )
+
+    frame_rate = get_video_fps(video_path)
 
     clip = ImageSequenceClip.ImageSequenceClip(
         sequence = frames_upscaled_list, 
@@ -1635,8 +1645,22 @@ def upscale_video(
     num_tiles_x = None
     num_tiles_y = None
  
-    target_directory = prepare_output_video_frames_directory_name(video_path, selected_output_path, selected_AI_model, resize_factor, selected_interpolation_factor)
-    frame_list_paths, audio_path = extract_video_frames_and_audio(processing_queue, file_number, target_directory, video_path, cpu_number)
+    target_directory = prepare_output_video_frames_directory_name(
+        video_path, 
+        selected_output_path, 
+        selected_AI_model, 
+        resize_factor, 
+        selected_interpolation_factor
+    )
+    
+    frame_list_paths, audio_path = extract_video_frames_and_audio(
+        processing_queue, 
+        file_number, 
+        target_directory, 
+        video_path, 
+        cpu_number
+    )
+
     first_frame      = resize_image(image_read(frame_list_paths[0]), resize_factor)
     need_tiles       = file_need_tilling(first_frame, tiles_resolution)
     target_height, target_width = get_upscaled_image_shape(first_frame, upscale_factor)
@@ -1768,19 +1792,19 @@ def upscale_video_frames_multithreading(
     # INTERNAL FUNCTION
     
     def upscale_single_video_frame_async(
-        processing_queue: multiprocessing_Queue,
-        file_number: int,
-        multiframes_number: int,
-        selected_AI_model: str, 
-        selected_gpu: str, 
-        selected_half_precision: bool,
-        how_many_frames: int,
-        frame_list_paths: list[str],
-        upscaled_frame_list_paths: list[str],
-        resize_factor: int,
-        selected_interpolation: bool,
-        selected_interpolation_factor: float,
-        ) -> None:
+            processing_queue: multiprocessing_Queue,
+            file_number: int,
+            multiframes_number: int,
+            selected_AI_model: str, 
+            selected_gpu: str, 
+            selected_half_precision: bool,
+            how_many_frames: int,
+            frame_list_paths: list[str],
+            upscaled_frame_list_paths: list[str],
+            resize_factor: int,
+            selected_interpolation: bool,
+            selected_interpolation_factor: float,
+            ) -> None:
 
         global processed_frames_async
         global frame_processing_times_async
@@ -1878,36 +1902,40 @@ def user_input_checks() -> bool:
     global resize_factor
     global cpu_number
 
-    is_ready = True
-
     # Selected files 
     try: selected_file_list = scrollable_frame_file_list.get_selected_file_list()
     except:
         info_message.set("Please select a file")
-        is_ready = False
+        return False
 
     if len(selected_file_list) <= 0:
         info_message.set("Please select a file")
-        is_ready = False
+        return False
+
+
+    # AI model
+    if selected_AI_model == AI_LIST_SEPARATOR[0]:
+        info_message.set("Please select the AI model")
+        return False
 
 
     # File resize factor 
     try: resize_factor = int(float(str(selected_resize_factor.get())))
     except:
         info_message.set("Resize % must be a numeric value")
-        is_ready = False
+        return False
 
     if resize_factor > 0: resize_factor = resize_factor/100
     else:
         info_message.set("Resize % must be a value > 0")
-        is_ready = False
+        return False
 
     
     # Tiles resolution 
     try: tiles_resolution = 100 * int(float(str(selected_VRAM_limiter.get())))
     except:
         info_message.set("VRAM/RAM value must be a numeric value")
-        is_ready = False 
+        return False
 
     if tiles_resolution > 0: 
         if selected_AI_model in RRDB_models_list:          
@@ -1927,22 +1955,22 @@ def user_input_checks() -> bool:
         
     else:
         info_message.set("VRAM/RAM value must be > 0")
-        is_ready = False
+        return False
 
 
     # Cpu number 
     try: cpu_number = int(float(str(selected_cpu_number.get())))
     except:
         info_message.set("Cpu number must be a numeric value")
-        is_ready = False 
+        return False
 
     if cpu_number <= 0:         
         info_message.set("Cpu number value must be > 0")
-        is_ready = False
-    else: cpu_number = int(cpu_number)
+        return False
+    else: 
+        cpu_number = int(cpu_number)
 
-
-    return is_ready
+    return True
 
 def show_error_message(exception: str) -> None:
     messageBox_title    = "Upscale error"
@@ -1956,6 +1984,15 @@ def show_error_message(exception: str) -> None:
         default_value = None,
         option_list = [messageBox_text]
     )
+
+def get_upscale_factor() -> int:
+    global selected_AI_model
+    if AI_LIST_SEPARATOR[0] in selected_AI_model: upscale_factor = 0
+    elif 'x1' in selected_AI_model: upscale_factor = 1
+    elif 'x2' in selected_AI_model: upscale_factor = 2
+    elif 'x4' in selected_AI_model: upscale_factor = 4
+
+    return upscale_factor
 
 def open_files_action():
     info_message.set("Selecting files")
@@ -1971,10 +2008,7 @@ def open_files_action():
     if supported_files_counter > 0:
         global scrollable_frame_file_list
 
-        global selected_AI_model
-        if   'x1' in selected_AI_model: upscale_factor = 1
-        elif 'x2' in selected_AI_model: upscale_factor = 2
-        elif 'x4' in selected_AI_model: upscale_factor = 4
+        upscale_factor = get_upscale_factor()
 
         try:
             resize_factor = int(float(str(selected_resize_factor.get())))
@@ -2070,7 +2104,7 @@ def open_info_output_path():
     option_list = [
         "\n The default path is defined by the input files."
         + "\n For example uploading a file from the Download folder,"
-        + "\n the app will save the upscaled files in the Download folder \n",
+        + "\n the app will save the generated files in the Download folder \n",
 
         " Otherwise it is possible to select the desired path using the SELECT button",
     ]
@@ -2088,7 +2122,8 @@ def open_info_AI_model():
         "\n IRCNN (2017) - Very simple and lightweight AI architecture\n" + 
         " Only denoising (no upscaling)\n" + 
         " Recommended for both image/video denoising\n" + 
-        "  • IRCNNx1\n",
+        "  • IRCNN_Mx1 - (medium denoise)\n" +
+        "  • IRCNN_Lx1 - (high denoise)\n",
 
         "\n SRVGGNetCompact (2022) - Fast and lightweight AI architecture\n" + 
         " Good-quality upscale\n" + 

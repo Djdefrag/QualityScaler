@@ -7,5 +7,6 @@ onnxruntime-directml==1.17.3
 customtkinter
 
 #UTILS
+numpy==1.26.4
 moviepy
 opencv-python-headless
