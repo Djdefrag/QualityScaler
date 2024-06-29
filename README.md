@@ -17,7 +17,7 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/f02352ad-1549-4fdc-80be-299a68c6f084">
+        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/57e90bfa-52ac-42e3-bc73-e72690a75697">
     </div>
 </body>
 </html>
@@ -33,6 +33,7 @@ Qualityscaler is a Windows app powered by AI to enhance, upscale and de-noise ph
 ## Credits.
 - BSRGAN - https://github.com/cszn/BSRGAN
 - Real-ESRGAN - https://github.com/xinntao/Real-ESRGAN
+- IRCNN - https://github.com/lipengFu/IRCNN
 
 ## Citations. ❤
 - https://80.lv/articles/80-level-digest-great-ai-powered-tools-for-upscaling-images/
@@ -44,7 +45,7 @@ External packages are:
 - AI  -> torch / onnxruntime-directml
 - GUI -> customtkinter
 - Image/video -> OpenCV / moviepy
-- Packaging   -> nuitka
+- Packaging   -> Pyinstaller
 
 ## Make it work by yourself. 👨‍💻
 Prerequisites.
@@ -103,7 +104,7 @@ Getting started.
     - [x] Display images/videos upscaled resolution in the GUI
     - [x] FFMPEG 7 (latest release)
     - [x] Video multi-threading AI upscale 
-    - [ ] Python 3.12
+    - [x] Python 3.12
     - [ ] Video upscaling pause and restart
 
 ## Some Example.
