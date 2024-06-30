@@ -276,8 +276,29 @@ def AI_upscale(
     if model_mono:
         match image_mode:
             case "RGB":
-                # image = numpy.average(image, 2)
+                useYCbCr = False # gives nearly identical result
+                if useYCbCr:
+                    imageY = image[:, :, 0] * 0.299 + image[:, :, 1] * 0.587 + image[:, :, 2] * 0.114
+                    imageY = numpy_expand_dims(imageY, axis=2)
+                    imageY = preprocess_image(imageY)
+                    output_imageYCbCr = numpy.repeat(process_image_with_AI_model(AI_model, imageY), 3, 2)
 
+                    imageCb = 0.5 - image[:, :, 0] * 0.168736 - image[:, :, 1] * 0.331264 + image[:, :, 2] * 0.5
+                    imageCb = numpy_expand_dims(imageCb, axis=2)
+                    imageCb = preprocess_image(imageCb)
+                    output_imageYCbCr[:,:,1] = process_image_with_AI_model(AI_model, imageCb).squeeze()
+
+                    imageCr = 0.5 + image[:, :, 0] * 0.5 - image[:, :, 1] * 0.418688 - image[:, :, 2] * 0.081312
+                    imageCr = numpy_expand_dims(imageCr, axis=2)
+                    imageCr = preprocess_image(imageCr)
+                    output_imageYCbCr[:,:,2] = process_image_with_AI_model(AI_model, imageCr).squeeze()
+
+                    output_image = numpy.zeros(output_imageYCbCr.shape)
+                    output_image[:,:,0] = numpy.clip(output_imageYCbCr[:,:,0] + 1.402 * (output_imageYCbCr[:,:,2] - 0.5), 0, 1)
+                    output_image[:,:,1] = numpy.clip(output_imageYCbCr[:,:,0] - 0.344136 * (output_imageYCbCr[:,:,1] - 0.5) - 0.714136 * (output_imageYCbCr[:,:,2] - 0.5), 0, 1)
+                    output_image[:,:,2] = numpy.clip(output_imageYCbCr[:,:,0] + 1.772 * (output_imageYCbCr[:,:,1] - 0.5), 0, 1)
+
+                else:
                 imageR = image[:, :, 0]
                 imageR = numpy_expand_dims(imageR, axis=2)
                 imageR = preprocess_image(imageR)
@@ -294,30 +315,30 @@ def AI_upscale(
                 imageB = preprocess_image(imageB)
                 output_image[:,:,2] = process_image_with_AI_model(AI_model, imageB).squeeze()
 
-                # output_image = output_image.squeeze()
                 return postprocess_output(output_image, range)
 
             case "RGBA":
-                alpha = image[:, :, 3]
-                image = image[:, :, :3]
-                image = opencv_cvtColor(image, COLOR_BGR2RGB)
-                alpha = opencv_cvtColor(alpha, COLOR_GRAY2RGB)
+                imageR = image[:, :, 0]
+                imageR = numpy_expand_dims(imageR, axis=2)
+                imageR = preprocess_image(imageR)
+                output_image = process_image_with_AI_model(AI_model, imageR)
+                output_image = numpy.repeat(output_image, 4, 2)
 
-                image = image.astype(float32)
-                alpha = alpha.astype(float32)
+                imageG = image[:, :, 1]
+                imageG = numpy_expand_dims(imageG, axis=2)
+                imageG = preprocess_image(imageG)
+                output_image[:,:,1] = process_image_with_AI_model(AI_model, imageG).squeeze()
 
-                # Image
-                image = preprocess_image(image)
-                output_image = process_image_with_AI_model(AI_model, image)
-                output_image = opencv_cvtColor(output_image, COLOR_RGB2BGRA)
+                imageB = image[:, :, 2]
+                imageB = numpy_expand_dims(imageB, axis=2)
+                imageB = preprocess_image(imageB)
+                output_image[:,:,2] = process_image_with_AI_model(AI_model, imageB).squeeze()
 
-                # Alpha
-                alpha = preprocess_image(alpha)
-                output_alpha = process_image_with_AI_model(AI_model, alpha)
-                output_alpha = opencv_cvtColor(output_alpha, COLOR_RGB2GRAY)
+                imageA = image[:, :, 3]
+                imageA = numpy_expand_dims(imageA, axis=2)
+                imageA = preprocess_image(imageA)
+                output_image[:,:,3] = process_image_with_AI_model(AI_model, imageB).squeeze()
 
-                # Fusion Image + Alpha
-                output_image[:, :, 3] = output_alpha
                 return postprocess_output(output_image, range)
 
             case "Grayscale":
