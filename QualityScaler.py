@@ -2679,8 +2679,8 @@ class MyHandler(BaseHTTPRequestHandler):
                 self.wfile.write(bytes(newPageContent, "utf-8"))
             else:
                 self.send_header("Content-type", "image")
-            self.end_headers()
-            self.wfile.write(self.server.lastfile)
+                self.end_headers()
+                self.wfile.write(self.server.lastfile)
         else:
             self.send_response(400)
             self.send_header("Content-type", "text/html")
