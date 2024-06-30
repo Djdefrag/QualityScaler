@@ -2634,9 +2634,9 @@ class MyHandler(BaseHTTPRequestHandler):
             self.send_header("Content-type", "text/html")
             self.end_headers()
             self.wfile.write(bytes(open(find_by_relative_path(f"server.html")).read(), "utf-8"))
-        elif self.server.lastfile is not None:
+        elif hasattr(self.server, 'lastfile'):
             self.send_response(200)
-            self.send_header("Content-type", "image/jpeg")
+            self.send_header("Content-type", "image")
             self.end_headers()
             self.wfile.write(self.server.lastfile)
 
@@ -2647,6 +2647,7 @@ class MyHandler(BaseHTTPRequestHandler):
                     environ={'REQUEST_METHOD': 'POST'}
                 )
         numpy_buffer = numpy_frombuffer(form.getvalue("file"), uint8)
+        sameWindow = form.getvalue("same-window")
         opencv_decoded = opencv_imdecode(numpy_buffer, IMREAD_UNCHANGED)
         newimg = upscale_image(
             processing_queue,
@@ -2667,12 +2668,21 @@ class MyHandler(BaseHTTPRequestHandler):
         output = BytesIO()
         if isinstance(newimg, numpy.ndarray):
             self.send_response(200)
-            self.send_header("Content-type", "image/jpeg")
+            self.server.lastfile = opencv_imencode(selected_image_extension, newimg)[1]
+            if sameWindow:
+                self.send_header("Content-type", "text/html")
+                self.end_headers()
+                pageContent = open(find_by_relative_path(f"server.html")).read()
+                pageContent = pageContent.replace('id="same-window"', 'id="same-window" checked')
+                pageContent = pageContent.replace('/* background-image: */', f'background-image: url(lastfile.jpeg); width: {newimg.shape[1]}; height: {newimg.shape[0]}')
+                newPageContent = pageContent
+                self.wfile.write(bytes(newPageContent, "utf-8"))
+            else:
+                self.send_header("Content-type", "image")
             self.end_headers()
-            self.server.lastfile = opencv_imencode(".jpeg", newimg)[1]
             self.wfile.write(self.server.lastfile)
         else:
-            self.send_response(504)
+            self.send_response(400)
             self.send_header("Content-type", "text/html")
             self.end_headers()
             self.wfile.write("<html><h1>Error processing file</h1></html>")
@@ -2691,6 +2701,7 @@ def startServer(serverPort=12345, hostName='0.0.0.0'):
     info_message.set(text)
     webServerThread = Thread(target = webServer.serve_forever)
     webServerThread.start()
+    # subprocess.run(["cmd", '/c', 'start', f'http://localhost:{serverPort}'])
 
 def stopServerIfActive():
     global webServer, webServerThread
