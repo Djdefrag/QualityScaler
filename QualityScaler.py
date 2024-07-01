@@ -262,6 +262,8 @@ def load_AI_model(
 
     return AI_model
 
+def get_num_channels(AI_model): return AI_model.get_outputs()[0].shape[1]
+
 def AI_upscale(
         AI_model: onnxruntime_inferenceSession,
         image: numpy_ndarray
@@ -271,7 +273,7 @@ def AI_upscale(
     image_mode   = get_image_mode(image)
     image, range = normalize_image(image)
     image        = image.astype(float32)
-    model_mono = AI_model.get_outputs()[0].shape[1] == 1
+    model_mono = get_num_channels(AI_model) == 1
 
     if model_mono:
         match image_mode:
@@ -2768,6 +2770,7 @@ def startServer(serverPort=12345, hostName='0.0.0.0'):
     write_process_status(processing_queue, f"Loading AI model")
     webServer = HTTPServer((hostName, serverPort), MyHandler)
     webServer.AI_model = load_AI_model(selected_AI_model, selected_gpu, selected_half_precision)
+    print(f'Channels: {get_num_channels(webServer.AI_model)}')
     webServer.upscale_factor = get_upscale_factor()
     text = f"Server started http://{hostName}:{serverPort}"
     write_process_status(processing_queue, text)
