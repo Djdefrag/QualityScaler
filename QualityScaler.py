@@ -73,6 +73,7 @@ from cv2 import (
     COLOR_RGB2GRAY,
     IMREAD_UNCHANGED,
     INTER_LINEAR,
+    INTER_AREA,
     VideoCapture as opencv_VideoCapture,
     cvtColor     as opencv_cvtColor,
     imdecode     as opencv_imdecode,
@@ -994,7 +995,7 @@ def resize_image(
         case factor if factor > 1:
             return opencv_resize(file, (new_width, new_height), interpolation = INTER_LINEAR)
         case factor if factor < 1:
-            return opencv_resize(file, (new_width, new_height), interpolation = INTER_LINEAR)
+            return opencv_resize(file, (new_width, new_height), interpolation = INTER_AREA)
         case _:
             return file
 
