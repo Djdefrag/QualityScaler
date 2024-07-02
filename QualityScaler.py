@@ -144,6 +144,8 @@ medium_VRAM   = 2.2
 high_VRAM     = 0.6
 full_precision_vram_multiplier = 0.7
 
+AI_LIST_SEPARATOR           = ['----']
+
 def listModels(type):
     path = find_by_relative_path(f'AI-onnx{os_separator}{type}')
     result = []
@@ -171,16 +173,16 @@ interpolation_list     = [ 'Low', 'Medium', 'High', 'Disabled' ]
 AI_precision_list      = [ 'Half precision', 'Full precision' ]
 AI_multithreading_list = [ 'Disabled', '2 threads', '3 threads', '4 threads']
 
-default_AI_model          = AI_models_list[3]
+default_AI_model          = AI_models_list[0]
 default_gpu               = gpus_list[0]
 default_image_extension   = image_extension_list[1]
 default_video_extension   = video_extension_list[0]
 default_interpolation     = interpolation_list[3]
-default_AI_precision      = AI_precision_list[1]
-default_AI_multithreading = AI_multithreading_list[3]
+default_AI_precision      = AI_precision_list[0]
+default_AI_multithreading = AI_multithreading_list[0]
 default_output_path       = "Same path as input files"
 default_resize_factor     = str(100)
-default_VRAM_limiter      = str(12)
+default_VRAM_limiter      = str(8)
 default_cpu_number        = str(int(os_cpu_count()/2))
 
 FFMPEG_EXE_PATH   = find_by_relative_path(f"Assets{os_separator}ffmpeg.exe")
@@ -219,9 +221,6 @@ supported_video_extensions = [
     '.avi', '.AVI', '.mov', '.MOV', '.qt', '.3gp',
     '.mpg', '.mpeg'
 ]
-
-webServerThread = None
-
 
 # AI -------------------
 
@@ -1374,29 +1373,29 @@ def upscale_button_command() -> None:
         if len(selected_file_list) == 0:
             startServer()
         else:
-        process_upscale_orchestrator = Process(
-            target = upscale_orchestrator,
-            args = (
-                processing_queue,
-                selected_file_list,
-                selected_output_path.get(),
-                selected_AI_model,
-                selected_gpu,
-                selected_image_extension,
-                tiles_resolution,
-                resize_factor,
-                cpu_number,
-                selected_half_precision,
-                selected_video_extension,
-                selected_interpolation,
-                selected_interpolation_factor,
-                selected_AI_multithreading
+            process_upscale_orchestrator = Process(
+                target = upscale_orchestrator,
+                args = (
+                    processing_queue,
+                    selected_file_list,
+                    selected_output_path.get(),
+                    selected_AI_model,
+                    selected_gpu,
+                    selected_image_extension,
+                    tiles_resolution,
+                    resize_factor,
+                    cpu_number,
+                    selected_half_precision,
+                    selected_video_extension,
+                    selected_interpolation,
+                    selected_interpolation_factor,
+                    selected_AI_multithreading
+                )
             )
-        )
-        process_upscale_orchestrator.start()
+            process_upscale_orchestrator.start()
 
-        thread_wait = Thread(target = check_upscale_steps)
-        thread_wait.start()
+            thread_wait = Thread(target = check_upscale_steps)
+            thread_wait.start()
 
 def prepare_output_image_filename(
         image_path: str,
@@ -1635,11 +1634,11 @@ def upscale_image(
 
     if isinstance(image_path_or_content, str):
         image_path = image_path_or_content
-    upscaled_image_path = prepare_output_image_filename(image_path, selected_output_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation_factor)
-    if os.path.exists(upscaled_image_path):
-        print('Skipping ' + upscaled_image_path)
-        return
-    starting_image      = image_read(image_path)
+        upscaled_image_path = prepare_output_image_filename(image_path, selected_output_path, selected_AI_model, resize_factor, selected_image_extension, selected_interpolation_factor)
+        if os.path.exists(upscaled_image_path):
+            print('Skipping ' + upscaled_image_path)
+            return
+        starting_image      = image_read(image_path)
     else:
         starting_image = image_path_or_content
         image_path = 'POST data'
@@ -1677,21 +1676,21 @@ def upscale_image(
         upscaled_image = AI_upscale(AI_model, image_to_upscale)
 
     if selected_output_path is not None:
-    if selected_interpolation:
-        interpolate_images_and_save(
-            target_path = upscaled_image_path,
-            image1 = starting_image,
-            image2 = upscaled_image,
-            image1_importance = selected_interpolation_factor
-        )
+        if selected_interpolation:
+            interpolate_images_and_save(
+                target_path = upscaled_image_path,
+                image1 = starting_image,
+                image2 = upscaled_image,
+                image1_importance = selected_interpolation_factor
+            )
 
-    else:
-        image_write(
-            file_path = upscaled_image_path,
-            file_data = upscaled_image
-        )
+        else:
+            image_write(
+                file_path = upscaled_image_path,
+                file_data = upscaled_image
+            )
 
-    copy_file_metadata(image_path, upscaled_image_path)
+        copy_file_metadata(image_path, upscaled_image_path)
     else:
         return upscaled_image
 
@@ -2691,7 +2690,7 @@ def startServer(serverPort=12345, hostName='0.0.0.0'):
     write_process_status(processing_queue, f"Loading AI model")
     webServer = HTTPServer((hostName, serverPort), MyHandler)
     webServer.AI_model = load_AI_model(selected_AI_model, selected_gpu, selected_half_precision)
-    webServer.upscale_factor = getUpscaleFactor(selected_AI_model)
+    webServer.upscale_factor = get_upscale_factor()
     text = f"Server started http://{hostName}:{serverPort}"
     write_process_status(processing_queue, text)
     info_message.set(text)
