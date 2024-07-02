@@ -4,6 +4,8 @@ import sys
 import random
 import os
 import subprocess
+import time
+import math
 from functools  import cache
 from time       import sleep
 from webbrowser import open as open_browser
@@ -1537,6 +1539,7 @@ def upscale_orchestrator(
     try:
         how_many_files = len(selected_file_list)
         random.shuffle(selected_file_list)
+        start_time = time.time()
         for file_number in range(how_many_files):
             file_path   = selected_file_list[file_number]
             file_number = file_number + 1
@@ -1565,6 +1568,8 @@ def upscale_orchestrator(
                     processing_queue,
                     file_path, 
                     file_number,
+                    how_many_files,
+                    start_time,
                     selected_output_path,
                     AI_model,
                     selected_AI_model,
@@ -1587,6 +1592,8 @@ def upscale_image(
         processing_queue: multiprocessing_Queue,
         image_path: str, 
         file_number: int,
+        total_files: int,
+        start_time: float,
         selected_output_path: str,
         AI_model: onnxruntime_inferenceSession,
         selected_AI_model: str,
@@ -1606,7 +1613,12 @@ def upscale_image(
     if need_tiles:
         num_tiles_x, num_tiles_y = calculate_num_tiles(image_to_upscale, tiles_resolution)
 
-    write_process_status(processing_queue, f"{file_number}. Upscaling image")
+    bn = os.path.basename(image_path)
+    fn = file_number - 1
+    eta_s = (total_files - fn) / fn * (time.time() - start_time) if fn > 0 else math.inf
+    eta = '∞' if eta_s == math.inf else f'{eta_s/60:.0f}m' if eta_s >= 180 else f'{eta_s:.0f}s'
+    progress = 100 * fn / total_files
+    write_process_status(processing_queue, f"{progress:.1f}% ETA {eta} Upscaling {bn}")
 
     if need_tiles:
         upscaled_image = AI_upscale_with_tilling(
