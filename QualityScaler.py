@@ -175,13 +175,13 @@ AI_multithreading_list = [ 'Disabled', '2 threads', '3 threads', '4 threads']
 
 default_AI_model          = AI_models_list[0]
 default_gpu               = gpus_list[0]
-default_image_extension   = image_extension_list[1]
+default_image_extension   = image_extension_list[0]
 default_video_extension   = video_extension_list[0]
-default_interpolation     = interpolation_list[3]
+default_interpolation     = interpolation_list[0]
 default_AI_precision      = AI_precision_list[0]
 default_AI_multithreading = AI_multithreading_list[0]
 default_output_path       = "Same path as input files"
-default_resize_factor     = str(100)
+default_resize_factor     = str(50)
 default_VRAM_limiter      = str(8)
 default_cpu_number        = str(int(os_cpu_count()/2))
 
@@ -222,10 +222,12 @@ supported_video_extensions = [
     '.mpg', '.mpeg'
 ]
 
+
+
 # AI -------------------
 
 def load_AI_model(
-        selected_AI_model: str,
+        selected_AI_model: str, 
         selected_gpu: str,
         selected_half_precision: bool
     ) -> onnxruntime_inferenceSession:
