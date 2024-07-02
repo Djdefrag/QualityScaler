@@ -1659,7 +1659,8 @@ def upscale_image(
     width *= resize_factor * upscale_factor
 
     biggerDim = max(height, width)
-    if biggerDim > 4096: resize_factor *= 4096 / biggerDim
+    maxDim = 4096
+    if biggerDim > maxDim: resize_factor *= maxDim / biggerDim
 
     image_to_upscale    = resize_image(starting_image, resize_factor)
     need_tiles          = file_need_tilling(image_to_upscale, tiles_resolution)
