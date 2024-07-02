@@ -745,9 +745,11 @@ def create_info_button(
 
 def create_option_menu(
         command: Callable, 
-        values: list) -> CTkOptionMenu:
+        values: list,
+        defaultValue: str
+        ) -> CTkOptionMenu:
     
-    return CTkOptionMenu(
+    menu = CTkOptionMenu(
         master  = window, 
         command = command,
         values  = values,
@@ -763,6 +765,8 @@ def create_option_menu(
         button_hover_color = "#000000",
         dropdown_fg_color  = "#000000"
     )
+    menu.set(defaultValue)
+    return menu
 
 def create_text_box(
         textvariable: StringVar
@@ -2522,49 +2526,49 @@ def place_output_path_textbox():
 
 def place_AI_menu():
     AI_menu_button = create_info_button(open_info_AI_model, "AI model")
-    AI_menu        = create_option_menu(select_AI_from_menu, AI_models_list)
+    AI_menu        = create_option_menu(select_AI_from_menu, AI_models_list, default_AI_model)
 
     AI_menu_button.place(relx = column0_x, rely = row1_y - 0.05, anchor = "center")
     AI_menu.place(relx = column0_x, rely = row1_y, anchor = "center")
 
 def place_AI_precision_menu():
     AI_mode_button = create_info_button(open_info_AI_precision, "AI precision")
-    AI_mode_menu   = create_option_menu(select_AI_precision_from_menu, AI_precision_list)
+    AI_mode_menu   = create_option_menu(select_AI_precision_from_menu, AI_precision_list, default_AI_precision)
     
     AI_mode_button.place(relx = column0_x, rely = row2_y - 0.05, anchor = "center")
     AI_mode_menu.place(relx = column0_x, rely = row2_y, anchor = "center")
 
 def place_interpolation_menu():
     interpolation_button = create_info_button(open_info_interpolation, "Interpolation")
-    interpolation_menu   = create_option_menu(select_interpolation_from_menu, interpolation_list)
+    interpolation_menu   = create_option_menu(select_interpolation_from_menu, interpolation_list, default_interpolation)
     
     interpolation_button.place(relx = column0_x, rely = row4_y - 0.05, anchor = "center")
     interpolation_menu.place(relx = column0_x, rely  = row4_y, anchor = "center")
 
 def place_AI_multithreading_menu():
     AI_multithreading_button = create_info_button(open_info_AI_multithreading, "AI multithreading")
-    AI_multithreading_menu   = create_option_menu(select_AI_multithreading_from_menu, AI_multithreading_list)
+    AI_multithreading_menu   = create_option_menu(select_AI_multithreading_from_menu, AI_multithreading_list, default_AI_multithreading)
     
     AI_multithreading_button.place(relx = column0_x, rely = row3_y - 0.05, anchor = "center")
     AI_multithreading_menu.place(relx = column0_x, rely  = row3_y, anchor = "center")
 
 def place_image_output_menu():
     file_extension_button = create_info_button(open_info_image_output, "Image output")
-    file_extension_menu   = create_option_menu(select_image_extension_from_menu, image_extension_list)
+    file_extension_menu   = create_option_menu(select_image_extension_from_menu, image_extension_list, default_image_extension)
     
     file_extension_button.place(relx = column2_x, rely = row1_y - 0.05, anchor = "center")
     file_extension_menu.place(relx = column2_x, rely = row1_y, anchor = "center")
 
 def place_video_extension_menu():
     video_extension_button = create_info_button(open_info_video_extension, "Video output")
-    video_extension_menu   = create_option_menu(select_video_extension_from_menu, video_extension_list)
+    video_extension_menu   = create_option_menu(select_video_extension_from_menu, video_extension_list, default_video_extension)
     
     video_extension_button.place(relx = column2_x, rely = row2_y - 0.05, anchor = "center")
     video_extension_menu.place(relx = column2_x, rely = row2_y, anchor = "center")
 
 def place_gpu_menu():
     gpu_button = create_info_button(open_info_gpu, "GPU")
-    gpu_menu   = create_option_menu(select_gpu_from_menu, gpus_list)
+    gpu_menu   = create_option_menu(select_gpu_from_menu, gpus_list, default_gpu)
     
     gpu_button.place(relx = column1_x, rely = row1_y - 0.053, anchor = "center")
     gpu_menu.place(relx = column1_x, rely  = row1_y, anchor = "center")
