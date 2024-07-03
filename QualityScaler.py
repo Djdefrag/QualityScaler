@@ -1398,12 +1398,10 @@ def write_process_status(
     processing_queue.put(f"{step}")
 
 def stop_upscale_process() -> None:
-    stopServerIfActive()
     global process_upscale_orchestrator
     try:
         process_upscale_orchestrator
     except:
-        stopServerIfActive()
         place_upscale_button()
     else:
         process_upscale_orchestrator.kill()
@@ -1450,32 +1448,29 @@ def upscale_button_command() -> None:
 
         place_stop_button()
 
-        if len(selected_file_list) == 0:
-            startServer()
-        else:
-            process_upscale_orchestrator = Process(
-                target = upscale_orchestrator,
-                args = (
-                    processing_queue,
-                    selected_file_list,
-                    selected_output_path.get(),
-                    selected_AI_model,
-                    selected_gpu,
-                    selected_image_extension,
-                    tiles_resolution,
-                    resize_factor,
-                    cpu_number,
-                    selected_half_precision,
-                    selected_video_extension,
-                    selected_interpolation,
-                    selected_interpolation_factor,
-                    selected_AI_multithreading
-                )
+        process_upscale_orchestrator = Process(
+            target = upscale_orchestrator,
+            args = (
+                processing_queue,
+                selected_file_list,
+                selected_output_path.get(),
+                selected_AI_model,
+                selected_gpu,
+                selected_image_extension,
+                tiles_resolution,
+                resize_factor,
+                cpu_number,
+                selected_half_precision,
+                selected_video_extension,
+                selected_interpolation,
+                selected_interpolation_factor,
+                selected_AI_multithreading
             )
-            process_upscale_orchestrator.start()
+        )
+        process_upscale_orchestrator.start()
 
-            thread_wait = Thread(target = check_upscale_steps)
-            thread_wait.start()
+        thread_wait = Thread(target = check_upscale_steps)
+        thread_wait.start()
 
 def prepare_output_image_filename(
         image_path: str,
@@ -1639,45 +1634,70 @@ def upscale_orchestrator(
         selected_AI_multithreading: int
         ) -> None:
 
-    upscale_factor = get_upscale_factor()
+    upscale_factor = get_upscale_factor(selected_AI_model)
     write_process_status(processing_queue, f"Loading AI model")
     AI_model = load_AI_model(selected_AI_model, selected_gpu, selected_half_precision)
+    print(f"Channels: {get_num_channels(AI_model)}")
 
     try:
         how_many_files = len(selected_file_list)
         random.shuffle(selected_file_list)
         start_time = time.time()
-        for file_number in range(how_many_files):
-            file_path   = selected_file_list[file_number]
-            file_number = file_number + 1
+        if how_many_files > 0:
+            for file_number in range(how_many_files):
+                file_path   = selected_file_list[file_number]
+                file_number = file_number + 1
 
-            if check_if_file_is_video(file_path):
-                upscale_video(
+                if check_if_file_is_video(file_path):
+                    upscale_video(
+                        processing_queue,
+                        file_path,
+                        file_number,
+                        selected_output_path,
+                        AI_model,
+                        selected_AI_model,
+                        selected_gpu,
+                        selected_half_precision,
+                        upscale_factor,
+                        tiles_resolution,
+                        resize_factor,
+                        cpu_number,
+                        selected_video_extension,
+                        selected_interpolation,
+                        selected_interpolation_factor,
+                        selected_AI_multithreading
+                    )
+                else:
+                    upscale_image(
+                        processing_queue,
+                        file_path,
+                        file_number,
+                        how_many_files,
+                        start_time,
+                        selected_output_path,
+                        AI_model,
+                        selected_AI_model,
+                        upscale_factor,
+                        selected_image_extension,
+                        tiles_resolution,
+                        resize_factor,
+                        selected_interpolation,
+                        selected_interpolation_factor
+                    )
+        else:
+            hostName='0.0.0.0'
+            serverPort=12345
+            webServer = HTTPServer((hostName, serverPort), MyHandler)
+            webServer.AI_model = AI_model
+            webServer.upscale_factor = upscale_factor
+            webServer.selected_image_extension = selected_image_extension
+            webServer.upscaleHandler = lambda file_path: upscale_image(
                     processing_queue,
                     file_path,
-                    file_number,
-                    selected_output_path,
-                    AI_model,
-                    selected_AI_model,
-                    selected_gpu,
-                    selected_half_precision,
-                    upscale_factor,
-                    tiles_resolution,
-                    resize_factor,
-                    cpu_number,
-                    selected_video_extension,
-                    selected_interpolation,
-                    selected_interpolation_factor,
-                    selected_AI_multithreading
-                )
-            else:
-                upscale_image(
-                    processing_queue,
-                    file_path,
-                    file_number,
-                    how_many_files,
-                    start_time,
-                    selected_output_path,
+                    1,
+                    1,
+                    time.time(),
+                    None,
                     AI_model,
                     selected_AI_model,
                     upscale_factor,
@@ -1687,6 +1707,8 @@ def upscale_orchestrator(
                     selected_interpolation,
                     selected_interpolation_factor
                 )
+            write_process_status(processing_queue, f"Server started http://{hostName}:{serverPort}")
+            webServer.serve_forever()
 
         write_process_status(processing_queue, f"{COMPLETED_STATUS}")
 
@@ -2145,13 +2167,15 @@ def show_error_message(exception: str) -> None:
         option_list = [messageBox_text]
     )
 
-def get_upscale_factor() -> int:
-    global selected_AI_model
+def get_upscale_factor(AI_model = None) -> int:
+    if AI_model is None:
+        global selected_AI_model
+        AI_model = selected_AI_model
     p = re.compile('([0-9]+)x')
-    m = re.match(p, selected_AI_model)
+    m = re.match(p, AI_model)
     if m is None:
         p = re.compile('x([0-9]+)([\W_]|$)')
-        m = re.search(p, selected_AI_model)
+        m = re.search(p, AI_model)
     upscale_factor = 0
     if m is not None: upscale_factor = int(m.expand('\\g<1>'))
     print(f'upscale_factor: {upscale_factor}')
@@ -2724,26 +2748,11 @@ class MyHandler(BaseHTTPRequestHandler):
         numpy_buffer = numpy_frombuffer(form.getvalue("file"), uint8)
         sameWindow = form.getvalue("same-window")
         opencv_decoded = opencv_imdecode(numpy_buffer, IMREAD_UNCHANGED)
-        newimg = upscale_image(
-            processing_queue,
-            opencv_decoded,
-            1,
-            1,
-            time.time(),
-            None, # selected_output_path
-            self.server.AI_model,
-            selected_AI_model,
-            self.server.upscale_factor,
-            selected_image_extension,
-            tiles_resolution,
-            resize_factor,
-            selected_interpolation,
-            selected_interpolation_factor
-        )
+        newimg = self.server.upscaleHandler(opencv_decoded)
         output = BytesIO()
         if isinstance(newimg, numpy.ndarray):
             self.send_response(200)
-            self.server.lastfile = opencv_imencode(selected_image_extension, newimg)[1]
+            self.server.lastfile = opencv_imencode(self.server.selected_image_extension, newimg)[1]
             if sameWindow:
                 self.send_header("Content-type", "text/html")
                 self.end_headers()
@@ -2761,33 +2770,6 @@ class MyHandler(BaseHTTPRequestHandler):
             self.send_header("Content-type", "text/html")
             self.end_headers()
             self.wfile.write("<html><h1>Error processing file</h1></html>")
-
-webServerThread = None
-webServer = None
-
-def startServer(serverPort=12345, hostName='0.0.0.0'):
-    global webServer, webServerThread
-    write_process_status(processing_queue, f"Loading AI model")
-    webServer = HTTPServer((hostName, serverPort), MyHandler)
-    webServer.AI_model = load_AI_model(selected_AI_model, selected_gpu, selected_half_precision)
-    print(f'Channels: {get_num_channels(webServer.AI_model)}')
-    webServer.upscale_factor = get_upscale_factor()
-    text = f"Server started http://{hostName}:{serverPort}"
-    write_process_status(processing_queue, text)
-    info_message.set(text)
-    webServerThread = Thread(target = webServer.serve_forever)
-    webServerThread.start()
-    # subprocess.run(["cmd", '/c', 'start', f'http://localhost:{serverPort}'])
-
-def stopServerIfActive():
-    global webServer, webServerThread
-    if webServerThread is not None and webServerThread.is_alive():
-        webServer.shutdown()
-        webServer.server_close()
-        webServerThread.join()
-        text = "Server stopped"
-        write_process_status(processing_queue, text)
-        info_message.set(text)
 
 
 # Main functions ---------------------------
