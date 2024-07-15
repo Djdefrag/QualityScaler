@@ -166,7 +166,7 @@ SRVGGNetCompact_models_list = listModels('SRVGGNetCompact')
 RRDB_models_list            = listModels('RRDB')
 
 AI_models_list         = ( SRVGGNetCompact_models_list + AI_LIST_SEPARATOR + RRDB_models_list + AI_LIST_SEPARATOR + IRCNN_models_list )
-gpus_list              = [ 'GPU 1', 'GPU 2', 'GPU 3', 'GPU 4' ]
+gpus_list              = [ 'CPU', 'GPU 1', 'GPU 2', 'GPU 3', 'GPU 4' ]
 image_extension_list   = [ '.png', '.jpg', '.bmp', '.tiff' ]
 video_extension_list   = [ '.mp4 (x264)', '.mp4 (x265)', '.avi' ]
 interpolation_list     = [ 'Low', 'Medium', 'High', 'Disabled' ]
@@ -174,7 +174,7 @@ AI_precision_list      = [ 'Half precision', 'Full precision' ]
 AI_multithreading_list = [ 'Disabled', '2 threads', '3 threads', '4 threads']
 
 default_AI_model          = AI_models_list[0]
-default_gpu               = gpus_list[0]
+default_gpu               = gpus_list[1]
 default_image_extension   = image_extension_list[0]
 default_video_extension   = video_extension_list[0]
 default_interpolation     = interpolation_list[0]
@@ -239,6 +239,8 @@ def load_AI_model(
     sess_options.graph_optimization_level = onnxruntime_graphOptimizationLevel.ORT_ENABLE_EXTENDED
 
     match selected_gpu:
+        case 'CPU':
+            backend = ['CPUExecutionProvider']
         case 'GPU 1':
             backend = [('DmlExecutionProvider', {"device_id": "0"})]
         case 'GPU 2':
