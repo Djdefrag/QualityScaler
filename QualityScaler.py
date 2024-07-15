@@ -79,7 +79,6 @@ from cv2 import (
     imdecode     as opencv_imdecode,
     imencode     as opencv_imencode,
     addWeighted  as opencv_addWeighted,
-    cvtColor     as opencv_cvtColor,
     resize       as opencv_resize,
 )
 
@@ -184,6 +183,9 @@ default_output_path       = "Same path as input files"
 default_resize_factor     = str(50)
 default_VRAM_limiter      = str(8)
 default_cpu_number        = str(int(os_cpu_count()/2))
+
+maxDim = 4096
+randomize = True
 
 FFMPEG_EXE_PATH   = find_by_relative_path(f"Assets{os_separator}ffmpeg.exe")
 EXIFTOOL_EXE_PATH = find_by_relative_path(f"Assets{os_separator}exiftool.exe")
@@ -1643,7 +1645,7 @@ def upscale_orchestrator(
 
     try:
         how_many_files = len(selected_file_list)
-        random.shuffle(selected_file_list)
+        if randomize: random.shuffle(selected_file_list)
         start_time = time.time()
         if how_many_files > 0:
             for file_number in range(how_many_files):
@@ -1751,7 +1753,6 @@ def upscale_image(
     width *= resize_factor * upscale_factor
 
     biggerDim = max(height, width)
-    maxDim = 4096
     if biggerDim > maxDim: resize_factor *= maxDim / biggerDim
 
     image_to_upscale    = resize_image(starting_image, resize_factor)
