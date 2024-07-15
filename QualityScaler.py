@@ -2729,50 +2729,39 @@ def place_upscale_button():
 
 
 class MyHandler(BaseHTTPRequestHandler):
+    def send_full_response(self, code: int, contentType: str, data):
+        self.send_response(code)
+        self.send_header("Content-type", contentType)
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         filepath = unquote(str(self.path)[1:])
         if len(filepath) == 0:
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            self.wfile.write(bytes(open(find_by_relative_path(f"server.html")).read(), "utf-8"))
+            self.send_full_response(200, "text/html", bytes(open(find_by_relative_path(f"server.html")).read(), "utf-8"))
         elif hasattr(self.server, 'lastfile'):
-            self.send_response(200)
-            self.send_header("Content-type", "image")
-            self.end_headers()
-            self.wfile.write(self.server.lastfile)
+            self.send_full_response(200, "image", self.server.lastfile)
 
     def do_POST(self):
-        form = cgi.FieldStorage(
-                    fp=self.rfile,
-                    headers=self.headers,
-                    environ={'REQUEST_METHOD': 'POST'}
-                )
+        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={'REQUEST_METHOD': 'POST'})
         numpy_buffer = numpy_frombuffer(form.getvalue("file"), uint8)
         sameWindow = form.getvalue("same-window")
         opencv_decoded = opencv_imdecode(numpy_buffer, IMREAD_UNCHANGED)
         newimg = self.server.upscaleHandler(opencv_decoded)
         output = BytesIO()
         if isinstance(newimg, numpy.ndarray):
-            self.send_response(200)
             self.server.lastfile = opencv_imencode(self.server.selected_image_extension, newimg)[1]
             if sameWindow:
-                self.send_header("Content-type", "text/html")
-                self.end_headers()
                 pageContent = open(find_by_relative_path(f"server.html")).read()
                 pageContent = pageContent.replace('id="same-window"', 'id="same-window" checked')
-                pageContent = pageContent.replace('/* background-image: */', f'background-image: url(lastfile.jpeg); width: {newimg.shape[1]}; height: {newimg.shape[0]}')
-                newPageContent = pageContent
-                self.wfile.write(bytes(newPageContent, "utf-8"))
+                pageContent = pageContent.replace(
+                '/* background-image: */',
+                f'background-image: url(lastfile.jpeg); width: {newimg.shape[1]}; height: {newimg.shape[0]}')
+                self.send_full_response(200, "text/html", bytes(pageContent, "utf-8"))
             else:
-                self.send_header("Content-type", "image")
-                self.end_headers()
-                self.wfile.write(self.server.lastfile)
+                self.send_full_response(200, "image", self.server.lastfile)
         else:
-            self.send_response(400)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            self.wfile.write("<html><h1>Error processing file</h1></html>")
+            self.send_full_response(400, "text/html", "<html><h1>Error processing file</h1></html>")
 
 
 # Main functions ---------------------------
