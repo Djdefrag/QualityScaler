@@ -1,3 +1,20 @@
+## Changes in this fork
+
+### Support for long image lists
+- Replaced the slow and memory hungry GUI list for more images than 100 with a button to Explorer, TODO generalize for Linux
+- Added progress percentage, current file name and ETA for images upscaling
+- Implemented skipping of existing output images
+
+### Added a web server
+- The server can be launched with UPSCALE button when no images are selected and listens on port 12345
+
+### Other changes
+- Implemented a maximum output image size of 4096 in any dimension to optimize cases when accidentally a big image is being scaled
+- Randomized the input images order to make visual inspection easier
+- Any downloaded onnx models are now detected and used, but must be in subdirectories IRCNN/SRVGGNetCompact/RRDB
+- Added support for 1-channel (monochromatic) models such as FSRCNN
+- generalized scale factor detection from model name: now they can also start from eg. 4x and any number is accepted
+
 <!DOCTYPE html>
 <html>
 <body>
