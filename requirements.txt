@@ -10,3 +10,4 @@ customtkinter
 numpy==1.26.4
 moviepy
 opencv-python-headless
+natsort
