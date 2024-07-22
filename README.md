@@ -17,7 +17,7 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/Djdefrag/QualityScaler/assets/32263112/57e90bfa-52ac-42e3-bc73-e72690a75697">
+        <img src="https://github.com/user-attachments/assets/6bd155d6-f0e3-44ce-9fa6-45b6af3b1d0b">
     </div>
 </body>
 </html>
@@ -105,7 +105,8 @@ Getting started.
     - [x] FFMPEG 7 (latest release)
     - [x] Video multi-threading AI upscale 
     - [x] Python 3.12
-    - [ ] Video upscaling pause and restart
+    - [x] User options save
+    - [x] Video upscaling pause and restart
 
 ## Some Example.
 
