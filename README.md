@@ -49,8 +49,8 @@ External packages are:
 
 ## Make it work by yourself. 👨‍💻
 Prerequisites.
-- Python installed on your pc, you can download it from here (https://www.python.org/downloads/release/python-3119/)
-- VSCode installed on your pc, you can download it from here (https://code.visualstudio.com/)
+- Python installed on your pc, download from here (https://www.python.org/downloads/release/python-3119/)
+- VSCode installed on your pc, download from here (https://code.visualstudio.com/)
 
 Getting started.
 - First of all, you need to download the project on your PC (Green button Code > Download ZIP)
