@@ -1,5 +1,5 @@
 #AI
-onnx
+onnx==1.16.1
 onnxconverter_common
 onnxruntime-directml==1.17.3
 
