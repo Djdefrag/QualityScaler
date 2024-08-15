@@ -21,7 +21,6 @@
     </div>
 </body>
 </html>
-![SCREEN](https://github.com/user-attachments/assets/16d1d2f6-1ffe-4ac5-863e-29058bdb6b9d)
 
 
 ## What is QualityScaler?
