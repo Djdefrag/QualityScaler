@@ -17,10 +17,11 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/user-attachments/assets/6bd155d6-f0e3-44ce-9fa6-45b6af3b1d0b">
+        <img src="https://github.com/user-attachments/assets/16d1d2f6-1ffe-4ac5-863e-29058bdb6b9d">
     </div>
 </body>
 </html>
+![SCREEN](https://github.com/user-attachments/assets/16d1d2f6-1ffe-4ac5-863e-29058bdb6b9d)
 
 
 ## What is QualityScaler?
@@ -97,16 +98,15 @@ Getting started.
     - [x] Show the remaining time to complete video upscaling
     - [x] Support for SRVGGNetCompact AI architecture
     - [x] Metadata extraction and application from original file to upscaled file (via exiftool)
-    - [x] Support for SAFMN AI architecture
 - [ ] 3.X versions
-    - [x] New AI engine powered by onnxruntime-directml (https://pypi.org/project/onnxruntime-directml/)
-    - [x] Python 3.11 (~10% performance improvements)
+    - [x] New AI engine powered by onnxruntime-directml (https://github.com/microsoft/onnxruntime))
+    - [x] Python 3.11 (performance improvements)
+    - [x] Python 3.12 (performance improvements)
     - [x] Display images/videos upscaled resolution in the GUI
-    - [x] FFMPEG 7 (latest release)
+    - [x] Updated FFMPEG to version 7.x (latest release)
+    - [x] Saving user settings (AI model, GPU, CPU  etc.)
     - [x] Video multi-threading AI upscale 
-    - [x] Python 3.12
-    - [x] User options save
-    - [x] Video upscaling pause and restart
+    - [x] Video upscaling STOP&RESUME
 
 ## Some Example.
 
