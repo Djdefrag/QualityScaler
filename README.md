@@ -26,6 +26,9 @@
 ## What is QualityScaler?
 Qualityscaler is a Windows app powered by AI to enhance, upscale and de-noise photographs and videos.
 
+## How to use QualityScaler?
+[movie_max_vp9.webm](https://github.com/user-attachments/assets/4a1984be-c8c8-464b-a3d1-43445635b165)
+
 ## Other AI projects.🤓
 - https://github.com/Djdefrag/RealScaler / RealScaler - image/video AI upscaler (Real-ESRGAN)
 - https://github.com/Djdefrag/FluidFrames.RIFE / FluidFrames.RIFE - video AI frame generation
