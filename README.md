@@ -73,14 +73,16 @@ Getting started.
 - Any Directx12 compatible GPU with  >=  4GB VRAM
 
 ## Features.
-- [x] Easy to use GUI
-- [x] Images and Videos upscale
-- [x] Multiple AI models
-- [x] Automatic image tiling and merging to avoid gpu VRAM limitation
-- [x] Resize image/video before AI upscaling
-- [x] Interpolation between the original and upscaled image/video
-- [x] Compatible images - png, jpeg, bmp, webp, tif  
-- [x] Compatible video  - mp4, wemb, gif, mkv, flv, avi, mov, qt 
+- [x] Elegant and easy to use GUI
+- [x] Image and Video upscale
+- [x] Multiple GPUs support
+- [x] Compatible images - jpg, png, tif, bmp, webp, heic
+- [x] Compatible video - mp4, wemb, mkv, flv, gif, avi, mov, mpg, qt, 3gp
+- [x] Automatic image tilling to avoid gpu VRAM limitation
+- [x] Resize image/video before upscaling
+- [x] Interpolation beetween original file and upscaled file
+- [x] Video upscaling STOP&RESUME
+- [x] PRIVACY FOCUSED - no internet connection required / everything is on your PC
 
 ## Next steps. 🤫
 - [x] 1.X versions
