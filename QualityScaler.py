@@ -1074,7 +1074,7 @@ def extract_video_frames_and_audio(
     with VideoFileClip(video_path) as video_file_clip:
         try: 
             write_process_status(processing_queue, f"{file_number}. Extracting video audio")
-            audio_path = f"{target_directory}{os_separator}audio.wav"
+            audio_path = f"{target_directory}{os_separator}audio.mp3"
             video_file_clip.audio.write_audiofile(audio_path, verbose = False, logger = None)
         except:
             pass
@@ -1720,7 +1720,7 @@ def upscale_video(
     target_directory       = prepare_output_video_frames_directory_name(video_path, selected_output_path, selected_AI_model, resize_factor, selected_interpolation_factor)
     video_output_path      = prepare_output_video_filename(video_path, selected_output_path, selected_AI_model, resize_factor, selected_video_extension, selected_interpolation_factor)
     video_upscale_continue = check_video_upscaling_resume(target_directory, selected_AI_model)
-    video_audio_path       = f"{target_directory}{os_separator}audio.wav"
+    video_audio_path       = f"{target_directory}{os_separator}audio.mp3"
 
     if video_upscale_continue:
         print(f"Resume upscaling")
