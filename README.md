@@ -45,10 +45,18 @@ Qualityscaler is a Windows app powered by AI to enhance, upscale and de-noise ph
 ## How is made. 🛠
 QualityScaler is completely written in Python, from backend to frontend. 
 External packages are:
-- AI  -> torch / onnxruntime-directml
-- GUI -> customtkinter
-- Image/video -> OpenCV / moviepy
-- Packaging   -> Pyinstaller
+- AI
+   - Pytorch (https://github.com/pytorch/pytorch)
+   - onnx (https://github.com/onnx/onnx)
+   - onnxconverter-common (https://github.com/microsoft/onnxconverter-common)
+   - onnxruntime-directml (https://github.com/microsoft/onnxruntime)
+- GUI
+   - customtkinter (https://github.com/TomSchimansky/CustomTkinter)
+- Image/video
+   - OpenCV (https://github.com/opencv/opencv)
+   - moviepy (https://github.com/Zulko/moviepy)
+- Packaging
+   - PyInstaller (https://github.com/pyinstaller/pyinstaller)
 
 ## Make it work by yourself. 👨‍💻
 Prerequisites.
