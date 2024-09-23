@@ -52,20 +52,21 @@ External packages are:
 
 ## Make it work by yourself. 👨‍💻
 Prerequisites.
-- Python installed on your pc, download from here (https://www.python.org/downloads/release/python-3119/)
-- VSCode installed on your pc, download from here (https://code.visualstudio.com/)
+- Python installed on your pc (https://www.python.org/downloads/release/python-3119/)
+- VSCode installed on your pc (https://code.visualstudio.com/)
+- AI models downloaded (https://gofile.io/d/hIOmMc)
+- FFMPEG.exe downloaded (https://www.gyan.dev/ffmpeg/builds/) RELEASE BUILD > ffmpeg-release-essentials.7z
 
 Getting started.
-- First of all, you need to download the project on your PC (Green button Code > Download ZIP)
-- Extract the project directory from the .zip
-- Now you need to download the AI models (github won't let me upload them directly because they are too big)
-- In "AI-onnx" folder, there is the link to download the AI models, download the .zip and extract the files in AI-onnx directory
-- Open the project with VSCode (just Drag&Drop the project directory on VSCode)
-- Click on QualityScaler.py from left bar (VSCode will ask you to install some plugins, go ahead)
-- Now, you need to install dependencies. In VSCode there is the "Terminal" panel, click there and execute the command "pip install -r requirements"
+- Download the project on your PC (Green button Code > Download ZIP)
+- Extract the project from the .zip
+- Extract the AI models files in /AI-onnx folder
+- Extract FFMPEG.exe in /Assets folder
+- Open the project with VSCode (Drag&Drop the project directory on VSCode)
+- Click on QualityScaler.py from left bar (VSCode will ask to install Python plugins)
+- Install dependencies. In VSCode there is the "Terminal" panel, click there and execute the command "pip install -r requirements"
 - Close VSCode and re-open it (this will refresh all the dependecies installed)
-- Just click on the "Play button" in the upper right corner of VSCode
-- Now the app should work
+- Click on the "Play button" in the upper right corner of VSCode
 
 ## Requirements. 🤓
 - Windows 11 / Windows 10
