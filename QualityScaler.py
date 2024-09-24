@@ -30,6 +30,7 @@ from os import (
     cpu_count  as os_cpu_count,
     makedirs   as os_makedirs,
     listdir    as os_listdir,
+    remove     as os_remove,
 )
 
 from os.path import (
@@ -92,7 +93,7 @@ from numpy import (
 )
 
 # GUI imports
-from tkinter import StringVar
+from tkinter import StringVar, BooleanVar
 from tkinter import DISABLED
 from customtkinter import (
     CTk,
@@ -102,6 +103,7 @@ from customtkinter import (
     CTkImage,
     CTkLabel,
     CTkOptionMenu,
+    CTkCheckBox,
     CTkScrollableFrame,
     CTkToplevel,
     filedialog,
@@ -171,6 +173,7 @@ if os_path_exists(USER_PREFERENCE_PATH):
         default_resize_factor     = json_data["default_resize_factor"]
         default_VRAM_limiter      = json_data["default_VRAM_limiter"]
         default_cpu_number        = json_data["default_cpu_number"]
+        default_delete_frames     = json_data["default_delete_frames"]
 else:
     print(f"[{app_name}] Preference file does not exist, using default coded value")
     default_AI_model          = AI_models_list[0]
@@ -183,6 +186,7 @@ else:
     default_resize_factor     = str(50)
     default_VRAM_limiter      = str(4)
     default_cpu_number        = str(int(os_cpu_count()/2))
+    default_delete_frames     = False
 
 COMPLETED_STATUS = "Completed"
 ERROR_STATUS     = "Error"
@@ -1028,6 +1032,11 @@ def create_dir(name_dir: str) -> None:
 def stop_thread() -> None: 
     stop = 1 + "x"
 
+def delete_temporary_files(directory: str):
+    if os_path_exists(directory):
+        remove_directory(directory)
+        print(f"Folder of original frames and upscaled has been deleted: {directory}")
+
 def image_read(
         file_path: str, 
         flags: int = IMREAD_UNCHANGED
@@ -1396,6 +1405,7 @@ def upscale_button_command() -> None:
     global selected_interpolation_factor
     global selected_image_extension
     global selected_video_extension
+    global selected_delete_temp
     global tiles_resolution
     global resize_factor
     global cpu_number
@@ -1409,6 +1419,7 @@ def upscale_button_command() -> None:
         print("> Starting upscale:")
         print(f"  Files to upscale: {len(selected_file_list)}")
         print(f"  Output path: {(selected_output_path.get())}")
+        print(f"  Delete temporary files: {selected_delete_temp.get()}")
         print(f"  Selected AI model: {selected_AI_model}")
         print(f"  Selected GPU: {selected_gpu}")
         print(f"  AI multithreading: {selected_AI_multithreading}")
@@ -1436,7 +1447,8 @@ def upscale_button_command() -> None:
                 cpu_number, 
                 selected_video_extension,
                 selected_interpolation_factor,
-                selected_AI_multithreading
+                selected_AI_multithreading,
+                selected_delete_temp.get(),
             )
         )
         process_upscale_orchestrator.start()
@@ -1608,7 +1620,8 @@ def upscale_orchestrator(
         cpu_number: int,
         selected_video_extension: str,
         selected_interpolation_factor: float,
-        selected_AI_multithreading: int
+        selected_AI_multithreading: int,
+        selected_delete_temp_frames: bool,
         ) -> None:
 
     write_process_status(processing_queue, f"Loading AI model")
@@ -1639,7 +1652,8 @@ def upscale_orchestrator(
                     cpu_number, 
                     selected_video_extension, 
                     selected_interpolation_factor,
-                    selected_AI_multithreading
+                    selected_AI_multithreading,
+                    selected_delete_temp_frames
                 )
             else:
                 upscale_image(
@@ -1709,7 +1723,8 @@ def upscale_video(
         cpu_number: int, 
         selected_video_extension: str,
         selected_interpolation_factor: float,
-        selected_AI_multithreading: int
+        selected_AI_multithreading: int,
+        delete_temp_frames: bool,
         ) -> None:
 
     global processed_frames_async
@@ -1760,6 +1775,8 @@ def upscale_video(
     write_process_status(processing_queue, f"{file_number}. Processing upscaled video")
     video_reconstruction_by_frames(video_path, video_audio_path, video_output_path, upscaled_frame_list_paths, cpu_number, selected_video_extension)
     copy_file_metadata(video_path, video_output_path)
+    if delete_temp_frames:
+        delete_temporary_files(target_directory)
 
 def upscale_video_frames(
         processing_queue: multiprocessing_Queue,
@@ -2401,6 +2418,8 @@ def place_app_name():
     app_name_label.place(relx = column0_x, rely = row0_y - 0.0175, anchor = "center")
 
 def place_output_path_textbox():
+    global selected_delete_temp
+
     output_path_button  = create_info_button(open_info_output_path, "Output path", width = 300)
     output_path_textbox = create_text_box_output_path(selected_output_path) 
     select_output_path_button = create_active_button(
@@ -2409,10 +2428,19 @@ def place_output_path_textbox():
         width   = 85,
         height  = 25
     )
+
+    delete_temp_files_checkbox = CTkCheckBox(
+        master=window,
+        text="Delete frames when done",
+        variable=selected_delete_temp,
+        onvalue=True,
+        offvalue=False,
+    )
   
     output_path_button.place(relx = column1_5_x, rely = row0_y - 0.05, anchor = "center")
     output_path_textbox.place(relx = column1_5_x, rely  = row0_y, anchor = "center")
     select_output_path_button.place(relx = column2_x, rely  = row0_y - 0.05, anchor = "center")
+    delete_temp_files_checkbox.place(relx=column0_x, rely=row4_y, anchor="center")
 
 def place_AI_menu():
     AI_menu_button = create_info_button(open_info_AI_model, "AI model")
@@ -2526,6 +2554,7 @@ def on_app_close() -> None:
     global selected_interpolation_factor
     global selected_image_extension
     global selected_video_extension
+    global selected_delete_temp
     global tiles_resolution
     global resize_factor
     global cpu_number
@@ -2553,6 +2582,7 @@ def on_app_close() -> None:
         "default_resize_factor":     str(selected_resize_factor.get()),
         "default_VRAM_limiter":      str(selected_VRAM_limiter.get()),
         "default_cpu_number":        str(selected_cpu_number.get()),
+        "default_delete_temp": bool(selected_delete_temp.get()),
     }
     user_preference_json = json_dumps(user_preference)
     with open(USER_PREFERENCE_PATH, "w") as preference_file:
@@ -2605,6 +2635,7 @@ if __name__ == "__main__":
     selected_resize_factor  = StringVar()
     selected_VRAM_limiter   = StringVar()
     selected_cpu_number     = StringVar()
+    selected_delete_temp    = BooleanVar()
 
     global selected_file_list
     global selected_AI_model
