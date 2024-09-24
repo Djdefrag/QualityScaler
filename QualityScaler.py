@@ -1,6 +1,7 @@
 
 # Standard library imports
 import sys
+import wave
 from functools  import cache
 from time       import sleep
 from webbrowser import open as open_browser
@@ -1074,7 +1075,7 @@ def extract_video_frames_and_audio(
     with VideoFileClip(video_path) as video_file_clip:
         try: 
             write_process_status(processing_queue, f"{file_number}. Extracting video audio")
-            audio_path = f"{target_directory}{os_separator}audio.mp3"
+            audio_path = f"{target_directory}{os_separator}audio.wav"
             video_file_clip.audio.write_audiofile(audio_path, verbose = False, logger = None)
         except:
             pass
@@ -1139,6 +1140,13 @@ def video_reconstruction_by_frames(
             selected_video_extension = '.avi'
             codec = 'png'
 
+    audio_codec = None
+    if os_path_exists(audio_path):
+        with wave.open(audio_path, 'rb') as wav:
+            bit_depth = wav.getsampwidth() * 8
+
+        audio_codec = 'pcm_' + str(bit_depth) + 'le'
+
     frame_rate = get_video_fps(video_path)
 
     clip = ImageSequenceClip.ImageSequenceClip(
@@ -1150,6 +1158,7 @@ def video_reconstruction_by_frames(
         fps     = frame_rate,
         audio   = audio_path if os_path_exists(audio_path) else None,
         codec   = codec,
+        audio_codec = audio_codec,
         bitrate = '12M',
         verbose = False,
         logger  = None,
