@@ -67,7 +67,7 @@ Getting started.
 - Extract FFMPEG.exe in /Assets folder
 - Open the project with VSCode (Drag&Drop the project directory on VSCode)
 - Click on QualityScaler.py from left bar (VSCode will ask to install Python plugins)
-- Install dependencies. In VSCode there is the "Terminal" panel, click there and execute the command "pip install -r requirements"
+- Install dependencies. In VSCode there is the "Terminal" panel, click there and execute the command "pip install -r requirements.txt"
 - Close VSCode and re-open it (this will refresh all the dependecies installed)
 - Click on the "Play button" in the upper right corner of VSCode
 
