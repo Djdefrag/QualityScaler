@@ -1295,7 +1295,7 @@ def video_encoding(
         fps      = video_fps,
         codec    = codec,
         threads  = cpu_number,
-        verbose  = False,
+        #verbose  = False,
         logger   = None,
         audio    = None,
         bitrate  = "12M",
