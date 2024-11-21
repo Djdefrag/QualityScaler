@@ -62,8 +62,6 @@ from cv2 import (
     COLOR_BGR2RGBA,
     COLOR_RGB2GRAY,
     IMREAD_UNCHANGED,
-    INTER_LANCZOS4,
-    INTER_LINEAR,
     INTER_AREA,
     VideoCapture as opencv_VideoCapture,
     cvtColor     as opencv_cvtColor,
@@ -88,6 +86,7 @@ from numpy import (
     repeat      as numpy_repeat,
     max         as numpy_max, 
     float32,
+    float16,
     uint8
 )
 
@@ -110,7 +109,6 @@ from customtkinter import (
 )
 
 
-
 if sys.stdout is None: sys.stdout = open(os_devnull, "w")
 if sys.stderr is None: sys.stderr = open(os_devnull, "w")
 
@@ -120,7 +118,7 @@ def find_by_relative_path(relative_path: str) -> str:
 
 
 app_name   = "QualityScaler"
-version    = "3.11"
+version    = "3.12"
 githubme   = "https://github.com/Djdefrag/QualityScaler"
 telegramme = "https://linktr.ee/j3ngystudio"
 
@@ -133,17 +131,19 @@ medium_VRAM    = 2.2
 very_high_VRAM = 0.6
 
 AI_LIST_SEPARATOR           = [ "----" ]
-IRCNN_models_list           = [ "IRCNN_Mx1", "IRCNN_Lx1" ]
 SRVGGNetCompact_models_list = [ "RealESR_Gx4", "RealSRx4_Anime" ]
-RRDB_models_list            = [ "BSRGANx4", "BSRGANx2", "RealESRGANx4" ]
+BSRGAN_models_list          = [ "BSRGANx4", "BSRGANx2", "RealESRGANx4" ]
+IRCNN_models_list           = [ "IRCNN_Mx1", "IRCNN_Lx1" ]
 
 
-AI_models_list         = ( SRVGGNetCompact_models_list + AI_LIST_SEPARATOR + RRDB_models_list + AI_LIST_SEPARATOR + IRCNN_models_list )
+
+AI_models_list         = ( SRVGGNetCompact_models_list + AI_LIST_SEPARATOR + BSRGAN_models_list + AI_LIST_SEPARATOR + IRCNN_models_list )
+AI_multithreading_list = [ "1 threads", "2 threads", "3 threads", "4 threads", "5 threads", "6 threads"]
+interpolation_list     = [ "Disabled", "Low", "Medium", "High" ]
 gpus_list              = [ "Auto", "GPU 1", "GPU 2", "GPU 3", "GPU 4" ]
+keep_frames_list       = [ "Disabled", "Enabled" ]
 image_extension_list   = [ ".png", ".jpg", ".bmp", ".tiff" ]
 video_extension_list   = [ ".mp4 (x264)", ".mp4 (x265)", ".avi" ]
-interpolation_list     = [ "Disabled", "Low", "Medium", "High" ]
-AI_multithreading_list = [ "1 threads", "2 threads", "3 threads", "4 threads", "5 threads", "6 threads"]
 
 OUTPUT_PATH_CODED    = "Same path as input files"
 DOCUMENT_PATH        = os_path_join(os_path_expanduser('~'), 'Documents')
@@ -167,21 +167,23 @@ if os_path_exists(USER_PREFERENCE_PATH):
     print(f"[{app_name}] Preference file exist")
     with open(USER_PREFERENCE_PATH, "r") as json_file:
         json_data = json_load(json_file)
-        default_AI_model          = json_data["default_AI_model"]
-        default_AI_multithreading = json_data["default_AI_multithreading"]
-        default_gpu               = json_data["default_gpu"]
-        default_image_extension   = json_data["default_image_extension"]
-        default_video_extension   = json_data["default_video_extension"]
-        default_interpolation     = json_data["default_interpolation"]
-        default_output_path       = json_data["default_output_path"]
-        default_resize_factor     = json_data["default_resize_factor"]
-        default_VRAM_limiter      = json_data["default_VRAM_limiter"]
-        default_cpu_number        = json_data["default_cpu_number"]
+        default_AI_model          = json_data.get("default_AI_model",           AI_models_list[0])
+        default_AI_multithreading = json_data.get("default_AI_multithreading",  AI_multithreading_list[0])
+        default_gpu               = json_data.get("default_gpu",                gpus_list[0])
+        default_keep_frames       = json_data.get("default_keep_frames",        keep_frames_list[0])
+        default_image_extension   = json_data.get("default_image_extension",    image_extension_list[0])
+        default_video_extension   = json_data.get("default_video_extension",    video_extension_list[0])
+        default_interpolation     = json_data.get("default_interpolation",      interpolation_list[1])
+        default_output_path       = json_data.get("default_output_path",        OUTPUT_PATH_CODED)
+        default_resize_factor     = json_data.get("default_resize_factor",      str(50))
+        default_VRAM_limiter      = json_data.get("default_VRAM_limiter",       str(4))
+        default_cpu_number        = json_data.get("default_cpu_number",         str(4))
 else:
     print(f"[{app_name}] Preference file does not exist, using default coded value")
     default_AI_model          = AI_models_list[0]
     default_AI_multithreading = AI_multithreading_list[0]
     default_gpu               = gpus_list[0]
+    default_keep_frames       = keep_frames_list[0]
     default_image_extension   = image_extension_list[0]
     default_video_extension   = video_extension_list[0]
     default_interpolation     = interpolation_list[1]
@@ -258,8 +260,6 @@ class AI:
 
         match self.directml_gpu:
             case 'Auto':        provider_options = [{"performance_preference": "high_performance"}]
-            case 'Performance': provider_options = [{"performance_preference": "high_performance"}]
-            case 'Power save':  provider_options = [{"performance_preference": "minimum_power"}]
             case 'GPU 1':       provider_options = [{"device_id": "0"}]
             case 'GPU 2':       provider_options = [{"device_id": "1"}]
             case 'GPU 3':       provider_options = [{"device_id": "2"}]
@@ -308,7 +308,7 @@ class AI:
 
         match self.resize_factor:
             case factor if factor > 1:
-                return opencv_resize(image, (new_width, new_height), interpolation = INTER_LANCZOS4)
+                return opencv_resize(image, (new_width, new_height))
             case factor if factor < 1:
                 return opencv_resize(image, (new_width, new_height), interpolation = INTER_AREA)
             case _:
@@ -326,7 +326,7 @@ class AI:
         new_resolution = t_height + t_width
 
         if new_resolution > old_resolution:
-            return opencv_resize(image, (t_width, t_height), interpolation = INTER_LANCZOS4)
+            return opencv_resize(image, (t_width, t_height))
         else:
             return opencv_resize(image, (t_width, t_height), interpolation = INTER_AREA) 
 
@@ -466,15 +466,14 @@ class AI:
     def onnxruntime_inference(self, image: numpy_ndarray) -> numpy_ndarray:
 
         # IO BINDING
-        
-        #io_binding = self.inferenceSession.io_binding()
-        #io_binding.bind_cpu_input(self.inferenceSession.get_inputs()[0].name, image)
-        #io_binding.bind_output(self.inferenceSession.get_outputs()[0].name, element_type = float32)
-        #self.inferenceSession.run_with_iobinding(io_binding)
-        #onnx_output = io_binding.copy_outputs_to_cpu()[0]
+        io_binding = self.inferenceSession.io_binding()
+        io_binding.bind_cpu_input(self.inferenceSession.get_inputs()[0].name, image.astype(float16))
+        io_binding.bind_output(self.inferenceSession.get_outputs()[0].name) #1 element_type = float32)
+        self.inferenceSession.run_with_iobinding(io_binding)
+        onnx_output = io_binding.copy_outputs_to_cpu()[0]
 
-        onnx_input  = {self.inferenceSession.get_inputs()[0].name: image}
-        onnx_output = self.inferenceSession.run(None, onnx_input)[0]
+        #onnx_input  = {self.inferenceSession.get_inputs()[0].name: image}
+        #onnx_output = self.inferenceSession.run(None, onnx_input)[0]
 
         return onnx_output
 
@@ -1295,7 +1294,6 @@ def video_encoding(
         fps      = video_fps,
         codec    = codec,
         threads  = cpu_number,
-        #verbose  = False,
         logger   = None,
         audio    = None,
         bitrate  = "12M",
@@ -1410,7 +1408,7 @@ def interpolate_images_and_save(
     if starting_resolution > target_resolution:
         starting_image = opencv_resize(starting_image,(target_width, target_height), INTER_AREA)
     else:
-        starting_image = opencv_resize(starting_image,(target_width, target_height), INTER_LANCZOS4)
+        starting_image = opencv_resize(starting_image,(target_width, target_height))
 
     try: 
         if get_image_mode(starting_image) == "RGBA":
@@ -1517,8 +1515,8 @@ def upscale_button_command() -> None:
     global selected_file_list
     global selected_AI_model
     global selected_gpu
+    global selected_keep_frames
     global selected_AI_multithreading
-    
     global selected_interpolation_factor
     global selected_image_extension
     global selected_video_extension
@@ -1544,6 +1542,7 @@ def upscale_button_command() -> None:
         print(f"  Tiles resolution for selected GPU VRAM: {tiles_resolution}x{tiles_resolution}px")
         print(f"  Resize factor: {int(resize_factor * 100)}%")
         print(f"  Cpu number: {cpu_number}")
+        print(f"  Save frames: {selected_keep_frames}")
         print("=" * 50)
 
         place_stop_button()
@@ -1562,7 +1561,8 @@ def upscale_button_command() -> None:
                 cpu_number, 
                 selected_video_extension,
                 selected_interpolation_factor,
-                selected_AI_multithreading
+                selected_AI_multithreading,
+                selected_keep_frames
             )
         )
         process_upscale_orchestrator.start()
@@ -1585,7 +1585,8 @@ def upscale_orchestrator(
         cpu_number: int,
         selected_video_extension: str,
         selected_interpolation_factor: float,
-        selected_AI_multithreading: int
+        selected_AI_multithreading: int,
+        selected_keep_frames: bool
         ) -> None:
 
     write_process_status(processing_queue, f"Loading AI model")
@@ -1616,7 +1617,8 @@ def upscale_orchestrator(
                     cpu_number, 
                     selected_video_extension, 
                     selected_interpolation_factor,
-                    selected_AI_multithreading
+                    selected_AI_multithreading,
+                    selected_keep_frames
                 )
             else:
                 upscale_image(
@@ -1677,7 +1679,8 @@ def upscale_video(
         cpu_number: int, 
         selected_video_extension: str,
         selected_interpolation_factor: float,
-        selected_AI_multithreading: int
+        selected_AI_multithreading: int,
+        selected_keep_frames: bool
         ) -> None:
 
     global processed_frames_index_async
@@ -1689,7 +1692,7 @@ def upscale_video(
     target_directory  = prepare_output_video_directory_name(video_path, selected_output_path, selected_AI_model, resize_factor, selected_interpolation_factor)
     video_output_path = prepare_output_video_filename(video_path, selected_output_path, selected_AI_model, resize_factor, selected_video_extension, selected_interpolation_factor)
     
-    # 2. Resume upscaling OR Extract video frames
+    # 2. Resume upscaling OR Video frames extraction
     video_upscale_continue = check_video_upscaling_resume(target_directory, selected_AI_model)
     if video_upscale_continue:
         write_process_status(processing_queue, f"{file_number}. Resume video upscaling")
@@ -1738,7 +1741,8 @@ def upscale_video(
     copy_file_metadata(video_path, video_output_path)
 
     # 6. Delete frames folder
-    if os_path_exists(target_directory): remove_directory(target_directory)
+    if selected_keep_frames == False: 
+        if os_path_exists(target_directory): remove_directory(target_directory)
 
 def upscale_video_frames(
         processing_queue: multiprocessing_Queue,
@@ -2023,7 +2027,7 @@ def user_input_checks() -> bool:
         return False
 
     if tiles_resolution > 0: 
-        if selected_AI_model in RRDB_models_list:          
+        if selected_AI_model in BSRGAN_models_list:          
             vram_multiplier = very_high_VRAM
         elif selected_AI_model in SRVGGNetCompact_models_list: 
             vram_multiplier = medium_VRAM
@@ -2134,21 +2138,9 @@ def select_AI_from_menu(selected_option: str) -> None:
     selected_AI_model = selected_option
     update_file_widget(1, 2, 3)
 
-def select_gpu_from_menu(selected_option: str) -> None:
-    global selected_gpu    
-    selected_gpu = selected_option
-
 def select_AI_multithreading_from_menu(selected_option: str) -> None:
     global selected_AI_multithreading
     selected_AI_multithreading = int(selected_option.split()[0])
-
-def select_image_extension_from_menu(selected_option: str) -> None:
-    global selected_image_extension   
-    selected_image_extension = selected_option
-
-def select_video_extension_from_menu(selected_option: str) -> None:
-    global selected_video_extension   
-    selected_video_extension = selected_option
 
 def select_interpolation_from_menu(selected_option: str) -> None:
     global selected_interpolation_factor
@@ -2158,6 +2150,23 @@ def select_interpolation_from_menu(selected_option: str) -> None:
         case "Low":      selected_interpolation_factor = 0.3
         case "Medium":   selected_interpolation_factor = 0.5
         case "High":     selected_interpolation_factor = 0.7
+
+def select_gpu_from_menu(selected_option: str) -> None:
+    global selected_gpu    
+    selected_gpu = selected_option
+
+def select_save_frame_from_menu(selected_option: str):
+    global selected_keep_frames
+    if   selected_option == 'Enabled':  selected_keep_frames = True
+    elif selected_option == 'Disabled': selected_keep_frames = False
+
+def select_image_extension_from_menu(selected_option: str) -> None:
+    global selected_image_extension   
+    selected_image_extension = selected_option
+
+def select_video_extension_from_menu(selected_option: str) -> None:
+    global selected_video_extension   
+    selected_video_extension = selected_option
 
 
 
@@ -2212,26 +2221,50 @@ def open_info_AI_model():
         option_list   = option_list
     )
 
-def open_info_gpu():
+def open_info_AI_multithreading():
     option_list = [
-        "\n It is possible to select up to 4 GPUs, via the index (visible in the Task Manager):\n" +
-        "  • Auto (the app will select the most powerful GPU)\n" + 
-        "  • GPU 1 (GPU 0 in Task manager)\n" + 
-        "  • GPU 2 (GPU 1 in Task manager)\n" + 
-        "  • GPU 3 (GPU 2 in Task manager)\n" + 
-        "  • GPU 4 (GPU 3 in Task manager)\n",
+        " This option can improve video upscaling performance, especially with powerful GPUs",
 
-        "\n NOTES\n" +
-        "  • Keep in mind that the more powerful the chosen gpu is, the faster the upscaling will be\n" +
-        "  • For optimal performance, it is essential to regularly update your GPUs drivers\n" +
-        "  • Selecting a GPU not present in the PC will cause the app to use the CPU for AI operations\n"+
-        "  • In the case of a single GPU, select 'GPU 1' or 'Auto'\n"
+        " \n AI MULTITHREADING OPTIONS\n"
+        + "  • 1 threads - upscaling 1 frame\n" 
+        + "  • 2 threads - upscaling 2 frame simultaneously\n" 
+        + "  • 3 threads - upscaling 3 frame simultaneously\n" 
+        + "  • 4 threads - upscaling 4 frame simultaneously\n" 
+        + "  • 5 threads - upscaling 5 frame simultaneously\n" 
+        + "  • 6 threads - upscaling 6 frame simultaneously\n" ,
+
+        " \n NOTES \n"
+        + "  • As the number of threads increases, the use of CPU, GPU and RAM memory also increases\n" 
+        + "  • In particular, the GPU is put under a lot of stress, and may reach high temperatures\n" 
+        + "  • Keep an eye on the temperature of your PC so that it doesn't overheat \n" 
+        + "  • The app selects the most appropriate number of threads if the chosen number exceeds GPU capacity\n" ,
+
     ]
 
     MessageBox(
         messageType   = "info",
-        title         = "GPU",
-        subtitle      = "This widget allows to select the GPU for AI upscale",
+        title         = "AI multithreading (EXPERIMENTAL)", 
+        subtitle      = "This widget allows to choose how many video frames are upscaled simultaneously",
+        default_value = None,
+        option_list   = option_list
+    )
+
+def open_info_input_resolution():
+    option_list = [
+        " A high value (>70%) will create high quality photos/videos but will be slower",
+        " While a low value (<40%) will create good quality photos/videos but will much faster",
+
+        " \n For example, for a 1080p (1920x1080) image/video\n" + 
+        " • Input resolution 25% => input to AI 270p (480x270)\n" +
+        " • Input resolution 50% => input to AI 540p (960x540)\n" + 
+        " • Input resolution 75% => input to AI 810p (1440x810)\n" + 
+        " • Input resolution 100% => input to AI 1080p (1920x1080) \n",
+    ]
+
+    MessageBox(
+        messageType   = "info",
+        title         = "Input resolution %",
+        subtitle      = "This widget allows to choose the resolution input to the AI",
         default_value = None,
         option_list   = option_list
     )
@@ -2261,30 +2294,75 @@ def open_info_AI_interpolation():
         option_list   = option_list
     )
 
-def open_info_AI_multithreading():
+def open_info_gpu():
     option_list = [
-        " This option can improve video upscaling performance, especially with powerful GPUs",
+        "\n It is possible to select up to 4 GPUs, via the index (visible in the Task Manager):\n" +
+        "  • Auto (the app will select the most powerful GPU)\n" + 
+        "  • GPU 1 (GPU 0 in Task manager)\n" + 
+        "  • GPU 2 (GPU 1 in Task manager)\n" + 
+        "  • GPU 3 (GPU 2 in Task manager)\n" + 
+        "  • GPU 4 (GPU 3 in Task manager)\n",
 
-        " \n AI MULTITHREADING OPTIONS\n"
-        + "  • 1 threads - upscaling 1 frame\n" 
-        + "  • 2 threads - upscaling 2 frame simultaneously\n" 
-        + "  • 3 threads - upscaling 3 frame simultaneously\n" 
-        + "  • 4 threads - upscaling 4 frame simultaneously\n" 
-        + "  • 5 threads - upscaling 5 frame simultaneously\n" 
-        + "  • 6 threads - upscaling 6 frame simultaneously\n" ,
-
-        " \n NOTES \n"
-        + "  • As the number of threads increases, the use of CPU, GPU and RAM memory also increases\n" 
-        + "  • In particular, the GPU is put under a lot of stress, and may reach high temperatures\n" 
-        + "  • Keep an eye on the temperature of your PC so that it doesn't overheat \n" 
-        + "  • The app selects the most appropriate number of threads if the chosen number exceeds GPU capacity\n" ,
-
+        "\n NOTES\n" +
+        "  • Keep in mind that the more powerful the chosen gpu is, the faster the upscaling will be\n" +
+        "  • For optimal performance, it is essential to regularly update your GPUs drivers\n" +
+        "  • Selecting a GPU not present in the PC will cause the app to use the CPU for AI operations\n"+
+        "  • In the case of a single GPU, select 'GPU 1' or 'Auto'\n"
     ]
 
     MessageBox(
         messageType   = "info",
-        title         = "AI multithreading (EXPERIMENTAL)", 
-        subtitle      = "This widget allows to choose how many video frames are upscaled simultaneously",
+        title         = "GPU",
+        subtitle      = "This widget allows to select the GPU for AI upscale",
+        default_value = None,
+        option_list   = option_list
+    )
+
+def open_info_vram_limiter():
+    option_list = [
+        " It is important to enter the correct value according to the VRAM of selected GPU ",
+        " Selecting a value greater than the actual amount of GPU VRAM may result in upscale failure",
+        " For integrated GPUs (Intel-HD series • Vega 3,5,7) - select 2 GB",
+    ]
+
+    MessageBox(
+        messageType   = "info",
+        title         = "GPU Vram (GB)",
+        subtitle      = "This widget allows to set a limit on the GPU VRAM memory usage",
+        default_value = None,
+        option_list   = option_list
+    )
+
+def open_info_cpu():
+    option_list = [
+        " When possible the app will use the number of cpus selected",
+
+        "\n Currently this value is used for: \n" +
+        "  • video frames extraction \n" +
+        "  • video encoding \n",
+    ]
+
+    MessageBox(
+        messageType   = "info",
+        title         = "Cpu number",
+        subtitle      = "This widget allows to choose how many cpus to devote to the app",
+        default_value = None,
+        option_list   = option_list
+    )
+
+def open_info_keep_frames():
+    option_list = [
+        "\n ENABLED \n" + 
+        " The app does not delete the video frames after creating the upscaled video \n",
+
+        "\n DISABLED \n" + 
+        " The app deletes the video frames after creating the upscaled video \n"
+    ]
+
+    MessageBox(
+        messageType   = "info",
+        title         = "Keep frames",
+        subtitle      = "This widget allows to choose to keep video frames",
         default_value = None,
         option_list   = option_list
     )
@@ -2322,58 +2400,6 @@ def open_info_video_extension():
         messageType   = "info",
         title         = "Video output",
         subtitle      = "This widget allows to choose the extension of the upscaled video",
-        default_value = None,
-        option_list   = option_list
-    )
-
-def open_info_vram_limiter():
-    option_list = [
-        " It is important to enter the correct value according to the VRAM of selected GPU ",
-        " Selecting a value greater than the actual amount of GPU VRAM may result in upscale failure",
-        " For integrated GPUs (Intel-HD series • Vega 3,5,7) - select 2 GB",
-    ]
-
-    MessageBox(
-        messageType   = "info",
-        title         = "GPU Vram (GB)",
-        subtitle      = "This widget allows to set a limit on the GPU VRAM memory usage",
-        default_value = None,
-        option_list   = option_list
-    )
-
-def open_info_input_resolution():
-    option_list = [
-        " A high value (>70%) will create high quality photos/videos but will be slower",
-        " While a low value (<40%) will create good quality photos/videos but will much faster",
-
-        " \n For example, for a 1080p (1920x1080) image/video\n" + 
-        " • Input resolution 25% => input to AI 270p (480x270)\n" +
-        " • Input resolution 50% => input to AI 540p (960x540)\n" + 
-        " • Input resolution 75% => input to AI 810p (1440x810)\n" + 
-        " • Input resolution 100% => input to AI 1080p (1920x1080) \n",
-    ]
-
-    MessageBox(
-        messageType   = "info",
-        title         = "Input resolution %",
-        subtitle      = "This widget allows to choose the resolution input to the AI",
-        default_value = None,
-        option_list   = option_list
-    )
-
-def open_info_cpu():
-    option_list = [
-        " When possible the app will use the number of cpus selected",
-
-        "\n Currently this value is used for: \n" +
-        "  • video frames extraction \n" +
-        "  • video encoding \n",
-    ]
-
-    MessageBox(
-        messageType   = "info",
-        title         = "Cpu number",
-        subtitle      = "This widget allows to choose how many cpus to devote to the app",
         default_value = None,
         option_list   = option_list
     )
@@ -2526,6 +2552,13 @@ def place_cpu_textbox():
     cpu_button.place(relx = column1_x, rely = row3_y - 0.05, anchor = "center")
     cpu_textbox.place(relx = column1_x, rely  = row3_y, anchor = "center")
 
+def place_keep_frames_menu():
+    keep_frames_button = create_info_button(open_info_keep_frames, "Keep frames")
+    keep_frames_menu   = create_option_menu(select_save_frame_from_menu, keep_frames_list, default_keep_frames)
+    
+    keep_frames_button.place(relx = column1_x, rely = row4_y - 0.053, anchor = "center")
+    keep_frames_menu.place(relx = column1_x, rely = row4_y, anchor = "center")
+
 def place_image_output_menu():
     file_extension_button = create_info_button(open_info_image_output, "Image output")
     file_extension_menu   = create_option_menu(select_image_extension_from_menu, image_extension_list, default_image_extension)
@@ -2596,6 +2629,7 @@ def on_app_close() -> None:
     AI_model_to_save          = f"{selected_AI_model}"
     AI_multithreading_to_save = f"{selected_AI_multithreading} threads"
     gpu_to_save               = selected_gpu
+    keep_frames_to_save       = "Enabled" if selected_keep_frames == True else "Disabled"
     image_extension_to_save   = selected_image_extension
     video_extension_to_save   = selected_video_extension
     interpolation_to_save = {
@@ -2609,6 +2643,7 @@ def on_app_close() -> None:
         "default_AI_model":          AI_model_to_save,
         "default_AI_multithreading": AI_multithreading_to_save,
         "default_gpu":               gpu_to_save,
+        "default_keep_frames":       keep_frames_to_save,
         "default_image_extension":   image_extension_to_save,
         "default_video_extension":   video_extension_to_save,
         "default_interpolation":     interpolation_to_save,
@@ -2643,11 +2678,12 @@ class App():
         place_AI_menu()
         place_AI_multithreading_menu()
         place_AI_interpolation_menu()
+        place_input_resolution_textbox()
 
         place_gpu_menu()
         place_vram_textbox()
         place_cpu_textbox()
-        place_input_resolution_textbox()
+        place_keep_frames_menu()
 
         place_image_output_menu()
         place_video_extension_menu()
@@ -2672,6 +2708,7 @@ if __name__ == "__main__":
     global selected_file_list
     global selected_AI_model
     global selected_gpu
+    global selected_keep_frames
     global selected_AI_multithreading
     global selected_image_extension
     global selected_video_extension
@@ -2687,6 +2724,8 @@ if __name__ == "__main__":
     selected_image_extension   = default_image_extension
     selected_video_extension   = default_video_extension
     selected_AI_multithreading = int(default_AI_multithreading.split()[0])
+    
+    selected_keep_frames = True if default_keep_frames == "Enabled" else False
 
     selected_interpolation_factor = {
         "Disabled": 0,
