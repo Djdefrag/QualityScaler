@@ -234,7 +234,7 @@ class AI:
             self, 
             AI_model_name: str, 
             directml_gpu: str, 
-            resize_factor: int,
+            resize_factor: float,
             max_resolution: int
             ):
         
@@ -1063,7 +1063,7 @@ def prepare_output_image_filename(
         image_path: str, 
         selected_output_path: str,
         selected_AI_model: str, 
-        resize_factor: int, 
+        resize_factor: float,
         selected_image_extension: str,
         selected_interpolation_factor: float
         ) -> str:
@@ -1100,7 +1100,7 @@ def prepare_output_image_filename(
 def prepare_output_video_frame_filename(
         frame_path: str, 
         selected_AI_model: str, 
-        resize_factor: int, 
+        resize_factor: float,
         selected_interpolation_factor: float
         ) -> str:
             
@@ -1133,7 +1133,7 @@ def prepare_output_video_filename(
         video_path: str, 
         selected_output_path: str,
         selected_AI_model: str, 
-        resize_factor: int, 
+        resize_factor: float,
         selected_video_extension: str,
         selected_interpolation_factor: float
         ) -> str:
@@ -1176,7 +1176,7 @@ def prepare_output_video_directory_name(
         video_path: str, 
         selected_output_path: str,
         selected_AI_model: str, 
-        resize_factor: int, 
+        resize_factor: float,
         selected_interpolation_factor: float
         ) -> str:
     
@@ -1581,7 +1581,7 @@ def upscale_orchestrator(
         selected_gpu: str,
         selected_image_extension: str,
         tiles_resolution: int,
-        resize_factor: int,
+        resize_factor: float,
         cpu_number: int,
         selected_video_extension: str,
         selected_interpolation_factor: float,
@@ -1648,7 +1648,7 @@ def upscale_image(
         AI_instance: AI,
         selected_AI_model: str,
         selected_image_extension: str,
-        resize_factor: int, 
+        resize_factor: float,
         selected_interpolation_factor: float
         ) -> None:
     
@@ -1675,7 +1675,7 @@ def upscale_video(
         AI_instance: AI,
         AI_instance_list: list[AI],
         selected_AI_model: str,
-        resize_factor: int, 
+        resize_factor: float,
         cpu_number: int, 
         selected_video_extension: str,
         selected_interpolation_factor: float,
