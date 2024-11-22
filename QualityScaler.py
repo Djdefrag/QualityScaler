@@ -246,8 +246,8 @@ class AI:
 
         # Calculated variables
         self.AI_model_path    = find_by_relative_path(f"AI-onnx{os_separator}{self.AI_model_name}_fp16.onnx")
-        self.inferenceSession = self._load_inferenceSession()
         self.upscale_factor   = self._get_upscale_factor()
+        self.inferenceSession = self._load_inferenceSession()
 
     def _get_upscale_factor(self) -> int:
         if   "x1" in self.AI_model_name: return 1
@@ -466,14 +466,14 @@ class AI:
     def onnxruntime_inference(self, image: numpy_ndarray) -> numpy_ndarray:
 
         # IO BINDING
-        io_binding = self.inferenceSession.io_binding()
-        io_binding.bind_cpu_input(self.inferenceSession.get_inputs()[0].name, image.astype(float16))
-        io_binding.bind_output(self.inferenceSession.get_outputs()[0].name) #1 element_type = float32)
-        self.inferenceSession.run_with_iobinding(io_binding)
-        onnx_output = io_binding.copy_outputs_to_cpu()[0]
+        #io_binding = self.inferenceSession.io_binding()
+        #io_binding.bind_cpu_input(self.inferenceSession.get_inputs()[0].name, image.astype(float16))
+        #io_binding.bind_output(self.inferenceSession.get_outputs()[0].name)
+        #self.inferenceSession.run_with_iobinding(io_binding)
+        #onnx_output = io_binding.copy_outputs_to_cpu()[0]
 
-        #onnx_input  = {self.inferenceSession.get_inputs()[0].name: image}
-        #onnx_output = self.inferenceSession.run(None, onnx_input)[0]
+        onnx_input  = {self.inferenceSession.get_inputs()[0].name: image}
+        onnx_output = self.inferenceSession.run(None, onnx_input)[0]
 
         return onnx_output
 
@@ -492,9 +492,9 @@ class AI:
 
 
     def AI_upscale(self, image: numpy_ndarray) -> numpy_ndarray:
+        image        = image.astype(float32)
         image_mode   = self.get_image_mode(image)
         image, range = self.normalize_image(image)
-        image        = image.astype(float32)
 
         match image_mode:
             case "RGB":
