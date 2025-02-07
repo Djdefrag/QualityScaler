@@ -6,7 +6,7 @@ numpy==1.26.4
 customtkinter
 
 #UTILS
-moviepy
 opencv-python-headless
+Pillow
 natsort
-pyinstaller==6.11.0
+pyinstaller
