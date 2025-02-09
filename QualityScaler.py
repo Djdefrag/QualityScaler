@@ -342,6 +342,9 @@ class AI_upscale:
         new_width  = int(old_width * self.input_resize_factor)
         new_height = int(old_height * self.input_resize_factor)
 
+        new_width  = new_width if new_width % 2 == 0 else new_width + 1
+        new_height = new_height if new_height % 2 == 0 else new_height + 1
+
         if self.input_resize_factor > 1:
             return opencv_resize(image, (new_width, new_height), interpolation = INTER_CUBIC)
         elif self.input_resize_factor < 1:
@@ -355,6 +358,9 @@ class AI_upscale:
 
         new_width  = int(old_width * self.output_resize_factor)
         new_height = int(old_height * self.output_resize_factor)
+
+        new_width  = new_width if new_width % 2 == 0 else new_width + 1
+        new_height = new_height if new_height % 2 == 0 else new_height + 1
 
         if self.output_resize_factor > 1:
             return opencv_resize(image, (new_width, new_height), interpolation = INTER_CUBIC)
@@ -897,8 +903,8 @@ class FileWidget(CTkScrollableFrame):
                 upscaled_height = int(input_resized_height * self.upscale_factor)
                 upscaled_width  = int(input_resized_width * self.upscale_factor)
 
-                output_resized_height  = int(upscaled_height * (self.output_resize_factor/100))
-                output_resized_width   = int(upscaled_width * (self.output_resize_factor/100))
+                output_resized_height = int(upscaled_height * (self.output_resize_factor/100))
+                output_resized_width  = int(upscaled_width * (self.output_resize_factor/100))
 
                 file_infos += (
                     f"AI input ({self.input_resize_factor}%) ➜ {input_resized_width}x{input_resized_height} \n"
@@ -919,8 +925,8 @@ class FileWidget(CTkScrollableFrame):
                 upscaled_height = int(input_resized_height * self.upscale_factor)
                 upscaled_width  = int(input_resized_width * self.upscale_factor)
 
-                output_resized_height  = int(upscaled_height * (self.output_resize_factor/100))
-                output_resized_width   = int(upscaled_width * (self.output_resize_factor/100))
+                output_resized_height = int(upscaled_height * (self.output_resize_factor/100))
+                output_resized_width  = int(upscaled_width * (self.output_resize_factor/100))
 
                 file_infos += (
                     f"AI input ({self.input_resize_factor}%) ➜ {input_resized_width}x{input_resized_height} \n"
