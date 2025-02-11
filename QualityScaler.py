@@ -1776,7 +1776,12 @@ def upscale_orchestrator(
         write_process_status(process_status_q, f"{COMPLETED_STATUS}")
 
     except Exception as exception:
-        write_process_status(process_status_q, f"{ERROR_STATUS} {str(exception)}")
+        error_message = str(exception)
+        
+        if "cannot convert float NaN to integer" in error_message:
+            print("OH NO, anyway")
+        else:
+            write_process_status(process_status_q, f"{ERROR_STATUS} {error_message}")
 
 # IMAGES
 
@@ -1847,8 +1852,10 @@ def upscale_video(
         frames_already_upscaled_counter = len([path for path in global_upscaled_frames_paths if os_path_exists(path)])
         frames_to_upscale_counter       = len([path for path in global_upscaled_frames_paths if not os_path_exists(path)])
 
-        # Average processing time
-        average_processing_time = numpy_mean(global_processing_times_list)
+        try:
+            average_processing_time = numpy_mean(global_processing_times_list)
+        except:
+            average_processing_time = 0.0
 
         remaining_frames = frames_to_upscale_counter
         remaining_time   = calculate_time_to_complete_video(average_processing_time, remaining_frames)
