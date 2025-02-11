@@ -1610,7 +1610,8 @@ def check_upscale_steps() -> None:
 
             elif ERROR_STATUS in actual_step:
                 info_message.set(f"Error while upscaling :(")
-                show_error_message(actual_step.replace(ERROR_STATUS, ""))
+                error_to_show = actual_step.replace(ERROR_STATUS, "")
+                show_error_message(error_to_show.strip())
                 stop_thread()
 
             else:
@@ -1779,7 +1780,11 @@ def upscale_orchestrator(
         error_message = str(exception)
         
         if "cannot convert float NaN to integer" in error_message:
-            print("OH NO, anyway")
+            write_process_status(
+                process_status_q, 
+                f"{ERROR_STATUS}An error occurred during video upscaling, likely due to a GPU driver timeout.\n"
+                "Restart the process without deleting the upscaled frames to resume and complete the upscaling."
+            )
         else:
             write_process_status(process_status_q, f"{ERROR_STATUS} {error_message}")
 
