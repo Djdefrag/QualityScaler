@@ -116,8 +116,8 @@ Getting started.
     - [x] Video AI multi-threading upscale 
     - [x] Video upscaling STOP&RESUME
 - [ ] 4.X version
-    - [x] Hardware accellerated video encoding
-    - [x] More video extensions
+    - [x] Hardware accelerated video encoding (nvenc / amf / qsv)
+    - [x] More video extensions (.mp4 / .mkv / .avi / .mov)
     - [x] Output resolution scaling
     - [x] Video AI multi-threading improvements
 
