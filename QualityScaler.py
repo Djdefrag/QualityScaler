@@ -122,7 +122,7 @@ def find_by_relative_path(relative_path: str) -> str:
 
 
 app_name   = "QualityScaler"
-version    = "4.0"
+version    = "4.1"
 githubme   = "https://github.com/Djdefrag/QualityScaler/releases"
 telegramme = "https://linktr.ee/j3ngystudio"
 
@@ -153,7 +153,6 @@ gpus_list              = [ "Auto", "GPU 1", "GPU 2", "GPU 3", "GPU 4" ]
 keep_frames_list       = [ "OFF", "ON" ]
 image_extension_list   = [ ".png", ".jpg", ".bmp", ".tiff" ]
 video_extension_list   = [ ".mp4", ".mkv", ".avi", ".mov" ]
-
 video_codec_list   = [ 
     "x264",       "x265",       MENU_LIST_SEPARATOR[0],
     "h264_nvenc", "hevc_nvenc", MENU_LIST_SEPARATOR[0],
@@ -772,7 +771,7 @@ class FileWidget(CTkScrollableFrame):
         self.input_resize_factor  = input_resize_factor
         self.output_resize_factor = output_resize_factor
 
-        self.index_row  = 1
+        self.index_row = 1
         self.ui_components = []
         self._create_widgets()
 
@@ -787,8 +786,6 @@ class FileWidget(CTkScrollableFrame):
             file_name_label, file_info_label = self.add_file_information(file_path)
             self.ui_components.append(file_name_label)
             self.ui_components.append(file_info_label)
-
-
 
     def add_file_information(self, file_path) -> tuple:
         infos, icon = self.extract_file_info(file_path)
@@ -1437,7 +1434,7 @@ def video_encoding(
     if os_path_exists(txt_path):      os_remove(txt_path)
 
     # Create a file .txt with all upscaled video frames paths || this file is essential
-    with os_fdopen(os_open(txt_path, O_WRONLY | O_CREAT, 0o777), 'w') as txt:
+    with os_fdopen(os_open(txt_path, O_WRONLY | O_CREAT, 0o777), 'w', encoding="utf-8") as txt:
         for frame_path in upscaled_frame_paths:
             txt.write(f"file '{frame_path}' \n")
 
