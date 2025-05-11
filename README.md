@@ -57,8 +57,8 @@ QualityScaler is completely written in Python, from backend to frontend.
 Prerequisites.
 - Python installed on your pc (https://www.python.org/downloads/release/python-3119/)
 - VSCode installed on your pc (https://code.visualstudio.com/)
-- AI models downloaded (https://gofile.io/d/jQmbgY)
-- FFMPEG.exe downloaded (https://www.gyan.dev/ffmpeg/builds/) RELEASE BUILD > ffmpeg-release-essentials.7z
+- AI models downloaded (https://gofile.io/d/SXnpFg)
+- ffmpeg.exe file downloaded (https://www.gyan.dev/ffmpeg/builds/) RELEASE BUILD > ffmpeg-release-essentials.7z
 
 Getting started.
 - Download the project on your PC (Green button Code > Download ZIP)
