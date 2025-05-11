@@ -9,4 +9,4 @@ customtkinter
 opencv-python-headless
 Pillow
 natsort
-pyinstaller
+pyinstaller==6.13.0
