@@ -10,7 +10,9 @@ from timeit     import default_timer as timer
 
 from typing    import Callable
 from threading import Thread
+from queue     import Empty
 from itertools import repeat
+from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import ( 
     Process, 
     Event          as multiprocessing_Event,
@@ -47,12 +49,16 @@ from os.path import (
     expanduser as os_path_expanduser
 )
 
+from subprocess import (
+    Popen as subprocess_Popen,
+    STARTUPINFO,
+    STARTF_USESHOWWINDOW
+)
+
 # Third-party library imports
 from natsort import natsorted
 from psutil  import virtual_memory as psutil_virtual_memory
 from onnxruntime import InferenceSession as onnxruntime_InferenceSession
-from onnxruntime import set_default_logger_severity as onnxruntime_set_default_logger_severity
-onnxruntime_set_default_logger_severity(0)
 
 from PIL.Image import (
     open      as pillow_image_open,
@@ -127,7 +133,7 @@ def find_by_relative_path(relative_path: str) -> str:
 
 
 app_name   = "QualityScaler"
-version    = "4.4"
+version    = "4.5"
 githubme   = "https://github.com/Djdefrag/QualityScaler/releases"
 telegramme = "https://linktr.ee/j3ngystudio"
 
@@ -171,7 +177,7 @@ USER_PREFERENCE_PATH = find_by_relative_path(f"{DOCUMENT_PATH}{os_separator}{app
 FFMPEG_EXE_PATH      = find_by_relative_path(f"Assets{os_separator}ffmpeg.exe")
 EXIFTOOL_EXE_PATH    = find_by_relative_path(f"Assets{os_separator}exiftool.exe")
 
-FRAMES_TO_SAVE_BATCH = 16
+FRAMES_TO_SAVE_BATCH = 32
 
 COMPLETED_STATUS = "Completed"
 ERROR_STATUS     = "Error"
@@ -1126,8 +1132,22 @@ def create_active_button(
 # File Utils functions ------------------------
 
 def create_dir(name_dir: str) -> None:
-    if os_path_exists(name_dir): remove_directory(name_dir)
-    if not os_path_exists(name_dir): os_makedirs(name_dir, mode=0o777)
+    if os_path_exists(name_dir): 
+        remove_directory(name_dir)
+    if not os_path_exists(name_dir): 
+        os_makedirs(name_dir, mode=0o777)
+
+    if sys.platform == "win32":
+        try:
+            # Exclude from Windows indexing
+            subprocess_run(
+                ["attrib", "+I", "/S", "/D", name_dir], 
+                check = False, 
+                shell = True
+            )
+
+        except Exception as e:
+            print(f"[create_dir] Warning: unable to disable indexing for {name_dir}: {e}")
 
 def image_read(file_path: str) -> numpy_ndarray: 
     with open(file_path, 'rb') as file:
@@ -1730,7 +1750,7 @@ def upscale_image(
             upscaled_image, 
             selected_blending_factor, 
             selected_image_extension
-            )
+        )
     else:
         image_write(upscaled_image_path, upscaled_image, selected_image_extension)
 
@@ -1739,36 +1759,6 @@ def upscale_image(
 # VIDEOS
 
 # Function executed as process
-
-def manage_extracted_frames_save_on_disk(
-        video_frames_and_info_q:          multiprocessing_Queue,
-        event_stop_upscale_process:       multiprocessing_Event,
-        event_stop_extracted_save_thread: multiprocessing_Event,
-        ):
-
-    while True:
-        if event_stop_upscale_process.is_set():
-            print(f"[Extracted save thread] terminating by upscale stop event")
-            break
-
-        if event_stop_extracted_save_thread.is_set() and video_frames_and_info_q.empty():
-            print(f"[Extracted save thread] terminating correctly")
-            break
-        
-        while not video_frames_and_info_q.empty():
-            sleep(0.01)
-            
-            # Get extracted frame and path from queue
-            queue_item           = video_frames_and_info_q.get_nowait()
-            extracted_frame_path = queue_item["extracted_frame_path"]
-            extracted_frame      = queue_item["extracted_frame"]
-
-            # Save extracted frame on disk
-            image_write(
-                file_path = extracted_frame_path, 
-                file_data = extracted_frame, 
-                file_extension = ".jpg"
-            )
 
 def upscale_video_frames_async(
         video_frames_and_info_q:    multiprocessing_Queue,
@@ -1786,11 +1776,11 @@ def upscale_video_frames_async(
 
     for input_path, output_path in frame_chunk:
 
-        start_timer = timer()
-
         if event_stop_upscale_process.is_set():
             print("[Upscale process] Terminating early due to stop event")
             break
+
+        start_timer = timer()
         
         # Upscale frame
         starting_frame  = image_read(input_path)
@@ -1839,100 +1829,13 @@ def upscale_video(
 
     # Internal functions
 
-    def update_video_extraction_process_status(
-            process_status_q:                 multiprocessing_Queue, 
-            file_number:                      int,
-            total_frames_counter:             int,
-            already_extracted_frames_counter: int,
-            average_extraction_time:          float
-        ) -> None:
-
-        remaining_frames = total_frames_counter - already_extracted_frames_counter 
-        remaining_time   = calculate_time_to_complete_video(average_extraction_time, remaining_frames)
-        if remaining_time != "":
-            percent_complete = (already_extracted_frames_counter / total_frames_counter) * 100 
-            write_process_status(process_status_q, f"{file_number}. Extracting frames {percent_complete:.2f}% ({remaining_time})")
-
-    def extract_video_frames(
-            process_status_q:           multiprocessing_Queue,
-            video_frames_and_info_q:    multiprocessing_Queue,
-            event_stop_upscale_process: multiprocessing_Event,
-            file_number:                int,
-            target_directory:           str,
-            video_path:                 str, 
-        ) -> list[str]:
-
-        event_stop_extracted_save_thread = multiprocessing_Event()
-        save_extracted_frames_process = Process(
-            target = manage_extracted_frames_save_on_disk,
-            args = (
-                video_frames_and_info_q, 
-                event_stop_upscale_process,
-                event_stop_extracted_save_thread,
-                ),
-        )
-        save_extracted_frames_process.start()
-
-        create_dir(target_directory)
-
-        # Video frame extraction
-        video_capture           = opencv_VideoCapture(video_path)
-        total_frames_counter    = int(video_capture.get(CAP_PROP_FRAME_COUNT))
-        video_frames_paths_list = []
-        extraction_times_list   = []
-
-        for frame_number in range(total_frames_counter):
-            start_timer = timer()
-
-            # Extract frame
-            success, extracted_frame = video_capture.read()
-            if not success: break
-
-            # Calculate frame path
-            extracted_frame_path = f"{target_directory}{os_separator}frame_{frame_number:03d}.jpg"            
-
-            # Put extracted frame and path in queue
-            video_frames_and_info_q.put(
-                {
-                    "extracted_frame_path": extracted_frame_path,
-                    "extracted_frame":      extracted_frame,
-                }
-            )
-
-            # Add frame path in list to return
-            video_frames_paths_list.append(extracted_frame_path)
-
-            # Calculate processing time
-            end_timer       = timer()
-            extraction_time = end_timer - start_timer
-            extraction_times_list.append(extraction_time)
-
-            # Update process status if necessary
-            if frame_number % FRAMES_TO_SAVE_BATCH == 0:
-                average_extraction_time = numpy_mean(extraction_times_list)
-                if len(extraction_times_list) >= 100: extraction_times_list = []
-                update_video_extraction_process_status(
-                    process_status_q                 = process_status_q, 
-                    file_number                      = file_number,
-                    total_frames_counter             = total_frames_counter,
-                    already_extracted_frames_counter = frame_number,
-                    average_extraction_time          = average_extraction_time
-                )
-
-        video_capture.release()
-
-        event_stop_extracted_save_thread.set()
-        save_extracted_frames_process.join()
-
-        return video_frames_paths_list
-
     def update_video_upscale_process_status(
-        process_status_q:        multiprocessing_Queue, 
-        file_number:             int,
-        upscaled_frame_paths:    list[str],
-        average_processing_time: float
+            process_status_q:        multiprocessing_Queue, 
+            file_number:             int,
+            upscaled_frame_paths:    list[str],
+            average_processing_time: float
         ) -> None:
-    
+
         # Remaining frames
         total_frames_counter            = len(upscaled_frame_paths)
         frames_already_upscaled_counter = len([path for path in upscaled_frame_paths if os_path_exists(path)])
@@ -1952,44 +1855,165 @@ def upscale_video(
             file_number:                     int,
             upscaled_frame_paths:            list[str],
             selected_blending_factor:        float,
-            ) -> None:
+        ) -> None:
 
         saved_frames_count    = 0
         processing_times_list = []
-        
-        while True:
-            if event_stop_upscale_process.is_set():
-                print(f"[Upscaled save thread] terminating by upscale stop event")
-                break
 
-            if event_stop_upscaled_save_thread.is_set() and video_frames_and_info_q.empty():
-                print(f"[Upscaled save thread] terminating correctly")
-                break
+        def _internal_save_frame(starting_frame, upscaled_frame, upscaled_frame_path, selected_blending_factor):
+            if selected_blending_factor > 0:
+                blend_images_and_save(upscaled_frame_path, starting_frame, upscaled_frame, selected_blending_factor)
+            else:
+                image_write(upscaled_frame_path, upscaled_frame)
 
-            while not video_frames_and_info_q.empty():
-                sleep(0.01)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            threads_list = []
 
-                # Get upscale infos from queue
-                item = video_frames_and_info_q.get_nowait()
+            while True:
+                if event_stop_upscale_process.is_set():
+                    print(f"[Upscaled save thread] terminating by upscale stop event")
+                    break
+
+                if event_stop_upscaled_save_thread.is_set() and video_frames_and_info_q.empty():
+                    print(f"[Upscaled save thread] terminating correctly")
+                    break
+
+                try:
+                    item = video_frames_and_info_q.get(timeout=0.25)
+                except Empty:
+                    continue
+
                 starting_frame      = item["starting_frame"]
                 upscaled_frame      = item["upscaled_frame"]
                 upscaled_frame_path = item["upscaled_frame_path"]
                 processing_time     = item["processing_time"]
 
-                # Save image on disk
-                if selected_blending_factor > 0:
-                    blend_images_and_save(upscaled_frame_path, starting_frame, upscaled_frame, selected_blending_factor)
-                else:
-                    image_write(upscaled_frame_path, upscaled_frame)
+                threads_list.append(
+                    executor.submit(
+                        _internal_save_frame, 
+                        starting_frame, 
+                        upscaled_frame, 
+                        upscaled_frame_path,
+                        selected_blending_factor
+                    )
+                )
 
-                # Update process status if necessary
                 saved_frames_count += 1
                 processing_times_list.append(processing_time)
+
                 if saved_frames_count % FRAMES_TO_SAVE_BATCH == 0: 
                     if processing_times_list:
                         average_processing_time = numpy_mean(processing_times_list)
-                        if len(processing_times_list) >= 100: processing_times_list = []
+                        if len(processing_times_list) >= 100: 
+                            processing_times_list = []
                         update_video_upscale_process_status(process_status_q, file_number, upscaled_frame_paths, average_processing_time)
+
+            for t in threads_list: t.result()
+
+    def monitor_extraction_progress(
+            process_status_q:      multiprocessing_Queue,
+            stop_extraction_event: multiprocessing_Event,
+            file_number:           int,
+            target_directory:      str,
+            total_video_frames:    int,
+        ):
+
+        while not stop_extraction_event.is_set():
+            sleep(1)
+            extracted_frames_number = len(
+                [
+                    f for f in os_listdir(target_directory)
+                    if f.endswith(".jpg") and f.startswith("frame_")
+                ]
+            )
+            percent_complete = (extracted_frames_number / total_video_frames) * 100 if total_video_frames > 0 else 0
+            write_process_status(process_status_q, f"{file_number}. Extracting video frames {percent_complete:.2f}%")
+
+    def extract_video_frames(
+            process_status_q:           multiprocessing_Queue,
+            event_stop_upscale_process: multiprocessing_Event,
+            file_number:                int,
+            target_directory:           str,
+            video_path:                 str,
+        ) -> list[str]:
+
+        # 1. Get total number of frames
+        cap = opencv_VideoCapture(video_path)
+        total_video_frames = int(cap.get(CAP_PROP_FRAME_COUNT))
+        cap.release()
+
+        # 2. Create directory to extract frames
+        create_dir(target_directory)
+
+        # 3. Start monitoring thread
+        stop_extraction_event = multiprocessing_Event()
+        monitor_thread = Thread(
+            target = monitor_extraction_progress,
+            args = (
+                process_status_q,
+                stop_extraction_event,
+                file_number,
+                target_directory,
+                total_video_frames
+            ),
+            daemon = True
+        )
+        monitor_thread.start()
+
+        # 4. Create FFMPEG command to extract video frames
+        output_pattern = os_path_join(target_directory, "frame_%03d.jpg")
+        extraction_command = [
+            FFMPEG_EXE_PATH,
+            "-y",
+            "-loglevel", "error",
+            "-err_detect", "ignore_err",
+            "-i", video_path,
+            "-qscale:v", "2",
+            output_pattern
+        ]
+        
+        # 5. Execute FFMPEG command
+        startupinfo = None
+        if sys.platform == "win32":
+            startupinfo = STARTUPINFO()
+            startupinfo.dwFlags |= STARTF_USESHOWWINDOW
+
+        ffmpeg_process = None
+        try:
+            ffmpeg_process = subprocess_Popen(
+                extraction_command,
+                startupinfo = startupinfo
+            )
+
+            while ffmpeg_process.poll() is None:
+                if event_stop_upscale_process.is_set():
+                    print("[FFMPEG] Stop richiesto, terminazione in corso")
+                    ffmpeg_process.terminate()
+                    ffmpeg_process.wait()
+                    stop_extraction_event.set()
+                    monitor_thread.join()
+                    return []
+                sleep(0.25)
+
+        except Exception as e:
+            write_process_status(process_status_q, f"{ERROR_STATUS} Frame extraction failed: {e}")
+            if ffmpeg_process: ffmpeg_process.kill()
+            stop_extraction_event.set()
+            monitor_thread.join()
+            return []
+
+        # 6. Stop monitoring thread
+        stop_extraction_event.set()
+        monitor_thread.join()
+
+        # 7. Get extracted frames paths and return
+        extracted_files = [
+            os_path_join(target_directory, f)
+            for f in natsorted(os_listdir(target_directory))
+            if f.endswith(".jpg") and f.startswith("frame_")
+        ]
+
+        return extracted_files
 
     def upscale_video_frames(
             process_status_q:           multiprocessing_Queue,
@@ -2031,7 +2055,7 @@ def upscale_video(
         ]
 
         if not frame_pairs_to_process:
-            print("[Upscale] Nessun frame da elaborare, tutti già upscalati.")
+            print("All frames already upscaled")
             event_stop_upscaled_save_thread.set()
             return
 
@@ -2074,10 +2098,9 @@ def upscale_video(
         write_process_status(process_status_q, f"{file_number}. Resume video upscaling")
         extracted_frames_paths = get_video_frames_for_upscaling_resume(target_directory, selected_AI_model)
     else:
-        write_process_status(process_status_q, f"{file_number}. Extracting frames")
+        write_process_status(process_status_q, f"{file_number}. Extracting video frames")
         extracted_frames_paths = extract_video_frames(
             process_status_q           = process_status_q,
-            video_frames_and_info_q    = video_frames_and_info_q,
             event_stop_upscale_process = event_stop_upscale_process,
             file_number                = file_number, 
             target_directory           = target_directory, 
@@ -2948,6 +2971,7 @@ class App():
         place_upscale_button()
 
 if __name__ == "__main__":
+    
     if os_path_exists(FFMPEG_EXE_PATH): 
         print(f"[{app_name}] ffmpeg.exe found")
     else:
@@ -2969,7 +2993,6 @@ if __name__ == "__main__":
             default_input_resize_factor  = json_data.get("default_input_resize_factor",  str(50))
             default_output_resize_factor = json_data.get("default_output_resize_factor", str(100))
             default_VRAM_limiter         = json_data.get("default_VRAM_limiter",         str(4))
-
     else:
         print(f"[{app_name}] Preference file does not exist, using default coded value")
         default_AI_model             = AI_models_list[0]
@@ -2992,10 +3015,14 @@ if __name__ == "__main__":
     # Leggi la RAM totale in GB
     ram_gb = round(psutil_virtual_memory().total / (1024**3))
 
-    if ram_gb <= 8:    queue_maxsize = 100
-    elif ram_gb <= 16: queue_maxsize = 200
-    elif ram_gb <= 32: queue_maxsize = 400
-    else:              queue_maxsize = 800
+    if ram_gb <= 8:    
+        queue_maxsize = 100
+    elif ram_gb <= 16: 
+        queue_maxsize = 250
+    elif ram_gb <= 32: 
+        queue_maxsize = 500
+    else:              
+        queue_maxsize = 1000
     
     # Multiprocessing utilities
     multiprocessing_manager    = multiprocessing_Manager()
