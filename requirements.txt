@@ -1,5 +1,5 @@
 #AI
-onnxruntime-directml
+onnxruntime-directml==1.22.0
 numpy
 
 #GUI
