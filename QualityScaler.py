@@ -150,10 +150,11 @@ VRAM_model_usage = {
     'BSRGANx2':        0.8,
     'IRCNN_Mx1':       4,
     'IRCNN_Lx1':       4,
+    'UltraSharpx4':    4,
 }
 
 MENU_LIST_SEPARATOR         = [ "----" ]
-SRVGGNetCompact_models_list = [ "RealESR_Gx4", "RealESR_Animex4" ]
+SRVGGNetCompact_models_list = [ "RealESR_Gx4", "RealESR_Animex4", "UltraSharpx4" ]
 BSRGAN_models_list          = [ "BSRGANx4", "BSRGANx2", "RealESRGANx4" ]
 IRCNN_models_list           = [ "IRCNN_Mx1", "IRCNN_Lx1" ]
 
@@ -2436,7 +2437,7 @@ def place_AI_menu():
             " • Year: 2017\n"
             " • Function: Denoising\n",
 
-            "\n RealESR_Gx4 | RealESR_Animex4 \n"
+            "\n RealESR_Gx4 | RealESR_Animex4 | UltraSharpx4\n"
             "\n • Fast and lightweight AI models\n"
             " • Year: 2022\n"
             " • Function: Upscaling\n",
