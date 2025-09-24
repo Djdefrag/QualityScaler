@@ -10,12 +10,15 @@ from timeit     import default_timer as timer
 
 from typing    import Callable
 from threading import Thread
+from queue     import Empty
 from itertools import repeat
-from multiprocessing.pool import ThreadPool
+from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import ( 
     Process, 
     Event          as multiprocessing_Event,
+    Pool           as multiprocessing_Pool,
     Queue          as multiprocessing_Queue,
+    Manager        as multiprocessing_Manager,
     freeze_support as multiprocessing_freeze_support
 )
 
@@ -30,7 +33,6 @@ from os import (
     makedirs   as os_makedirs,
     listdir    as os_listdir,
     remove     as os_remove,
-    cpu_count  as os_cpu_count,
     fdopen     as os_fdopen,
     open       as os_open,
     O_WRONLY,
@@ -47,9 +49,16 @@ from os.path import (
     expanduser as os_path_expanduser
 )
 
+from subprocess import (
+    Popen as subprocess_Popen,
+    STARTUPINFO,
+    STARTF_USESHOWWINDOW
+)
+
 # Third-party library imports
-from natsort     import natsorted
-from onnxruntime import InferenceSession
+from natsort import natsorted
+from psutil  import virtual_memory as psutil_virtual_memory
+from onnxruntime import InferenceSession as onnxruntime_InferenceSession
 
 from PIL.Image import (
     open      as pillow_image_open,
@@ -78,20 +87,20 @@ from cv2 import (
 )
 
 from numpy import (
-    ndarray           as numpy_ndarray,
     ascontiguousarray as numpy_ascontiguousarray,
     frombuffer        as numpy_frombuffer,
     concatenate       as numpy_concatenate, 
     transpose         as numpy_transpose,
     full              as numpy_full, 
-    zeros             as numpy_zeros, 
     expand_dims       as numpy_expand_dims,
     squeeze           as numpy_squeeze,
     clip              as numpy_clip,
     mean              as numpy_mean,
     repeat            as numpy_repeat,
     array_split       as numpy_array_split,
+    zeros             as numpy_zeros, 
     max               as numpy_max, 
+    ndarray           as numpy_ndarray,
     float32,
     uint8
 )
@@ -124,7 +133,7 @@ def find_by_relative_path(relative_path: str) -> str:
 
 
 app_name   = "QualityScaler"
-version    = "4.2"
+version    = "4.5"
 githubme   = "https://github.com/Djdefrag/QualityScaler/releases"
 telegramme = "https://linktr.ee/j3ngystudio"
 
@@ -176,49 +185,12 @@ USER_PREFERENCE_PATH = find_by_relative_path(f"{DOCUMENT_PATH}{os_separator}{app
 FFMPEG_EXE_PATH      = find_by_relative_path(f"Assets{os_separator}ffmpeg.exe")
 EXIFTOOL_EXE_PATH    = find_by_relative_path(f"Assets{os_separator}exiftool.exe")
 
-ECTRACTION_FRAMES_FOR_CPU = 30
-MULTIPLE_FRAMES_TO_SAVE   = 8
+FRAMES_TO_SAVE_BATCH = 32
 
 COMPLETED_STATUS = "Completed"
 ERROR_STATUS     = "Error"
 STOP_STATUS      = "Stop"
 
-if os_path_exists(FFMPEG_EXE_PATH): 
-    print(f"[{app_name}] ffmpeg.exe found")
-else:
-    print(f"[{app_name}] ffmpeg.exe not found, please install ffmpeg.exe following the guide")
-
-if os_path_exists(USER_PREFERENCE_PATH):
-    print(f"[{app_name}] Preference file exist")
-    with open(USER_PREFERENCE_PATH, "r") as json_file:
-        json_data = json_load(json_file)
-        default_AI_model             = json_data.get("default_AI_model",             AI_models_list[0])
-        default_AI_multithreading    = json_data.get("default_AI_multithreading",    AI_multithreading_list[0])
-        default_gpu                  = json_data.get("default_gpu",                  gpus_list[0])
-        default_keep_frames          = json_data.get("default_keep_frames",          keep_frames_list[1])
-        default_image_extension      = json_data.get("default_image_extension",      image_extension_list[0])
-        default_video_extension      = json_data.get("default_video_extension",      video_extension_list[0])
-        default_video_codec          = json_data.get("default_video_codec",          video_codec_list[0])
-        default_blending             = json_data.get("default_blending",             blending_list[1])
-        default_output_path          = json_data.get("default_output_path",          OUTPUT_PATH_CODED)
-        default_input_resize_factor  = json_data.get("default_input_resize_factor",  str(50))
-        default_output_resize_factor = json_data.get("default_output_resize_factor", str(100))
-        default_VRAM_limiter         = json_data.get("default_VRAM_limiter",         str(4))
-
-else:
-    print(f"[{app_name}] Preference file does not exist, using default coded value")
-    default_AI_model             = AI_models_list[0]
-    default_AI_multithreading    = AI_multithreading_list[0]
-    default_gpu                  = gpus_list[0]
-    default_keep_frames          = keep_frames_list[1]
-    default_image_extension      = image_extension_list[0]
-    default_video_extension      = video_extension_list[0]
-    default_video_codec          = video_codec_list[0]
-    default_blending             = blending_list[1]
-    default_output_path          = OUTPUT_PATH_CODED
-    default_input_resize_factor  = str(50)
-    default_output_resize_factor = str(100)
-    default_VRAM_limiter         = str(4)
 
 offset_y_options = 0.0825
 row1  = 0.125
@@ -315,7 +287,7 @@ class AI_upscale:
             case 'GPU 3': provider_options = [{"device_id": "2"}]
             case 'GPU 4': provider_options = [{"device_id": "3"}]
 
-        inference_session = InferenceSession(
+        inference_session = onnxruntime_InferenceSession(
             path_or_bytes    = self.AI_model_path, 
             providers        = providers,
             provider_options = provider_options,
@@ -387,17 +359,19 @@ class AI_upscale:
 
     # VIDEO CLASS FUNCTIONS
 
-    def calculate_multiframes_supported_by_gpu(self, video_frame_path: str) -> int:
-        resized_video_frame  = self.resize_with_input_factor(image_read(video_frame_path))
-        height, width        = self.get_image_resolution(resized_video_frame)
-        image_pixels         = height * width
-        max_supported_pixels = self.max_resolution * self.max_resolution
-
+    def calculate_optimal_multithreads_number(self, video_frame_path: str, selected_AI_multithreading: int) -> int:
+        resized_video_frame   = self.resize_with_input_factor(image_read(video_frame_path))
+        height, width         = self.get_image_resolution(resized_video_frame)
+        image_pixels          = height * width
+        max_supported_pixels  = self.max_resolution * self.max_resolution
         frames_simultaneously = max_supported_pixels // image_pixels 
+        print(f"Frames supported simultaneously by GPU: {frames_simultaneously}")
 
-        print(f" Frames supported simultaneously by GPU: {frames_simultaneously}")
+        threads_number = min(frames_simultaneously, selected_AI_multithreading)
+        if threads_number <= 0: threads_number = 1
+        print(f"Selected threads number: {threads_number}")
 
-        return frames_simultaneously
+        return threads_number
 
     # TILLING FUNCTIONS
 
@@ -580,7 +554,7 @@ class AI_upscale:
         return self.combine_tiles_into_image(image, tiles_list, t_height, t_width, tiles_x)
 
 
-    # EXTERNAL FUNCTION
+    # PUBLIC FUNCTION
 
     def AI_orchestration(self, image: numpy_ndarray) -> numpy_ndarray:
         resized_image = self.resize_with_input_factor(image)
@@ -597,7 +571,7 @@ class AI_upscale:
             
             except Exception as e:
                 print(f"error upscaling : {e}")
-                sleep(0.5)
+                sleep(0.25)
         
         return self.resize_with_output_factor(upscaled_image)
 
@@ -1017,7 +991,11 @@ def create_option_background():
         corner_radius = 10
     )
 
-def create_info_button(command: Callable, text: str, width: int = 200) -> CTkFrame:
+def create_info_button(
+        command: Callable, 
+        text:    str, 
+        width:   int = 200
+        ) -> CTkFrame:
     
     frame = CTkFrame(master = window, fg_color = widget_background_color, height = 25)
 
@@ -1055,16 +1033,14 @@ def create_info_button(command: Callable, text: str, width: int = 200) -> CTkFra
     return frame
 
 def create_option_menu(
-        command: Callable, 
-        values: list,
+        command:       Callable, 
+        values:        list,
         default_value: str,
-        border_color: str = "#404040", 
-        border_width: int = 1,
-        width: int = 159   
+        border_color:  str = "#404040", 
+        border_width:  int = 1,
+        width:         int = 159,
+        height:        int = 26
     ) -> CTkFrame:
-
-    width  = width
-    height = 28
 
     total_width  = (width + 2 * border_width)
     total_height = (height + 2 * border_width)
@@ -1095,20 +1071,22 @@ def create_option_menu(
         dropdown_fg_color  = background_color
     )
     
-    option_menu.place(
-        x = (total_width - width) / 2,
-        y = (total_height - height) / 2
-    )
+    option_menu.place(x = (total_width - width) / 2, y = (total_height - height) / 2)
     option_menu.set(default_value)
     return frame
 
-def create_text_box(textvariable: StringVar, width: int) -> CTkEntry:
+def create_text_box(
+        textvariable: StringVar, 
+        width:        int,
+        height:       int = 26
+    ) -> CTkEntry:
+    
     return CTkEntry(
         master        = window, 
         textvariable  = textvariable,
         corner_radius = 1,
         width         = width,
-        height        = 28,
+        height        = height,
         font          = bold11,
         justify       = "center",
         text_color    = text_color,
@@ -1117,13 +1095,17 @@ def create_text_box(textvariable: StringVar, width: int) -> CTkEntry:
         border_color  = "#404040",
     )
 
-def create_text_box_output_path(textvariable: StringVar) -> CTkEntry:
+def create_text_box_output_path(
+        textvariable: StringVar,
+        height:       int = 26
+    ) -> CTkEntry:
+    
     return CTkEntry(
         master        = window, 
         textvariable  = textvariable,
         corner_radius = 1,
         width         = 250,
-        height        = 28,
+        height        = height,
         font          = bold11,
         justify       = "center",
         text_color    = text_color,
@@ -1163,10 +1145,22 @@ def create_active_button(
 # File Utils functions ------------------------
 
 def create_dir(name_dir: str) -> None:
-    if os_path_exists(name_dir): remove_directory(name_dir)
-    if not os_path_exists(name_dir): os_makedirs(name_dir, mode=0o777)
+    if os_path_exists(name_dir): 
+        remove_directory(name_dir)
+    if not os_path_exists(name_dir): 
+        os_makedirs(name_dir, mode=0o777)
 
-def stop_thread() -> None: stop = 1 + "x"
+    if sys.platform == "win32":
+        try:
+            # Exclude from Windows indexing
+            subprocess_run(
+                ["attrib", "+I", "/S", "/D", name_dir], 
+                check = False, 
+                shell = True
+            )
+
+        except Exception as e:
+            print(f"[create_dir] Warning: unable to disable indexing for {name_dir}: {e}")
 
 def image_read(file_path: str) -> numpy_ndarray: 
     with open(file_path, 'rb') as file:
@@ -1176,7 +1170,7 @@ def image_write(file_path: str, file_data: numpy_ndarray, file_extension: str = 
     opencv_imencode(file_extension, file_data)[1].tofile(file_path)
 
 def copy_file_metadata(original_file_path: str, upscaled_file_path: str) -> None:
-    
+    print(f"[EXIFTOOL] exporting original file tags")
     exiftool_cmd = [
         EXIFTOOL_EXE_PATH, 
         '-fast', 
@@ -1372,61 +1366,6 @@ def get_image_resolution(image: numpy_ndarray) -> tuple:
 
     return height, width 
 
-def save_extracted_frames(
-        extracted_frames_paths: list[str], 
-        extracted_frames: list[numpy_ndarray], 
-        cpu_number: int
-        ) -> None:
-    
-    with ThreadPool(cpu_number) as pool: pool.starmap(image_write, zip(extracted_frames_paths, extracted_frames))
-
-def extract_video_frames(
-        process_status_q: multiprocessing_Queue,
-        file_number: int,
-        target_directory: str,
-        video_path: str, 
-        cpu_number: int,
-    ) -> list[str]:
-
-    create_dir(target_directory)
-
-    # Video frame extraction
-    frames_number_to_save = cpu_number * ECTRACTION_FRAMES_FOR_CPU
-    video_capture         = opencv_VideoCapture(video_path)
-    frame_count           = int(video_capture.get(CAP_PROP_FRAME_COUNT))
-
-    extracted_frames       = []
-    extracted_frames_paths = []
-    video_frames_list      = []
-
-    frame_index = 0
-
-    for frame_number in range(frame_count):
-        success, frame = video_capture.read()
-        if not success: break
-
-        frame_path = f"{target_directory}{os_separator}frame_{frame_number:03d}.jpg"            
-        extracted_frames.append(frame)
-        extracted_frames_paths.append(frame_path)
-        video_frames_list.append(frame_path)
-
-        if len(extracted_frames) == frames_number_to_save:
-            percentage_extraction = (frame_number / frame_count) * 100
-
-            write_process_status(process_status_q, f"{file_number}. Extracting video frames ({round(percentage_extraction, 2)}%)")
-            save_extracted_frames(extracted_frames_paths, extracted_frames, cpu_number)
-            extracted_frames       = []
-            extracted_frames_paths = []
-
-        frame_index += 1
-
-    video_capture.release()
-
-    if len(extracted_frames) > 0: 
-        save_extracted_frames(extracted_frames_paths, extracted_frames, cpu_number)
-    
-    return video_frames_list
-
 def video_encoding(
         process_status_q: multiprocessing_Queue,
         video_path: str,
@@ -1604,54 +1543,65 @@ def blend_images_and_save(
 def check_upscale_steps() -> None:
     sleep(1)
 
-    try:
-        while True:
-            actual_step = read_process_status()
+    while True:
+        actual_step = process_status_q.get()
+        print(f"[{app_name}] check_upscale_steps - {actual_step}")
 
-            if actual_step == COMPLETED_STATUS:
-                info_message.set(f"All files completed! :)")
-                stop_upscale_process()
-                stop_thread()
+        if actual_step == COMPLETED_STATUS:
+            info_message.set(f"All files completed! :)")
+            stop_upscale_process()
+            place_upscale_button()
+            break
 
-            elif actual_step == STOP_STATUS:
-                info_message.set(f"Upscaling stopped")
-                stop_upscale_process()
-                stop_thread()
+        elif actual_step == STOP_STATUS:
+            info_message.set(f"Upscaling stopped")
+            stop_upscale_process()
+            place_upscale_button()
+            break
 
-            elif ERROR_STATUS in actual_step:
-                info_message.set(f"Error while upscaling :(")
-                error_to_show = actual_step.replace(ERROR_STATUS, "")
-                show_error_message(error_to_show.strip())
-                stop_thread()
+        elif ERROR_STATUS in actual_step:
+            info_message.set(f"Error while upscaling :(")
+            error_to_show = actual_step.replace(ERROR_STATUS, "")
+            show_error_message(error_to_show.strip())
+            place_upscale_button()
+            break
 
-            else:
-                info_message.set(actual_step)
+        else:
+            info_message.set(actual_step)
 
-            sleep(1)
-    except:
-        place_upscale_button()
+        sleep(1)
         
-def read_process_status() -> str:
-    return process_status_q.get()
-
-def write_process_status(process_status_q: multiprocessing_Queue, step: str) -> None:
+def write_process_status(
+        process_status_q: multiprocessing_Queue, 
+        step: str
+        ) -> None:
     
-    print(f"{step}")
     while not process_status_q.empty(): process_status_q.get()
     process_status_q.put(f"{step}")
 
 def stop_upscale_process() -> None:
     global process_upscale_orchestrator
+
+    print(f"[{app_name}] stop_upscale_process - setting upscale process stop event")
+    event_stop_upscale_process.set()
+    print(f"[{app_name}] stop_upscale_process - upscale process stop event setted")
+
+    sleep(1)
+
     try:
         process_upscale_orchestrator
     except:
         pass
     else:
+        print(f"[{app_name}] stop_upscale_process - waiting for upscale orchestrator to terminate")
         process_upscale_orchestrator.kill()
+        print(f"[{app_name}] stop_upscale_process - upscale orchestrator terminated")
 
 def stop_button_command() -> None:
     stop_upscale_process()
     write_process_status(process_status_q, f"{STOP_STATUS}") 
+
+# ORCHESTRATOR
 
 def upscale_button_command() -> None: 
     global selected_file_list
@@ -1672,8 +1622,6 @@ def upscale_button_command() -> None:
     if user_input_checks():
         info_message.set("Loading")
 
-        cpu_number = int(os_cpu_count()/2)
-
         print("=" * 50)
         print("> Starting upscale:")
         print(f"  Files to upscale: {len(selected_file_list)}")
@@ -1688,16 +1636,21 @@ def upscale_button_command() -> None:
         print(f"  Tiles resolution for selected GPU VRAM: {tiles_resolution}x{tiles_resolution}px")
         print(f"  Input resize factor: {int(input_resize_factor * 100)}%")
         print(f"  Output resize factor: {int(output_resize_factor * 100)}%")
-        print(f"  Cpu number: {cpu_number}")
         print(f"  Save frames: {selected_keep_frames}")
         print("=" * 50)
 
         place_stop_button()
 
+        event_stop_upscale_process.clear()
+        while not process_status_q.empty():        process_status_q.get_nowait()
+        while not video_frames_and_info_q.empty(): video_frames_and_info_q.get_nowait()
+
         process_upscale_orchestrator = Process(
             target = upscale_orchestrator,
             args = (
-                process_status_q, 
+                process_status_q,
+                video_frames_and_info_q,
+                event_stop_upscale_process,
                 selected_file_list, 
                 selected_output_path.get(),
                 selected_AI_model, 
@@ -1711,19 +1664,17 @@ def upscale_button_command() -> None:
                 selected_image_extension,
                 selected_video_extension,
                 selected_video_codec,
-                cpu_number, 
             )
         )
         process_upscale_orchestrator.start()
 
-        thread_wait = Thread(target = check_upscale_steps)
-        thread_wait.start()
-
-
-# ORCHESTRATOR
+        Thread(target = check_upscale_steps).start()
 
 def upscale_orchestrator(
-        process_status_q: multiprocessing_Queue,
+        process_status_q:           multiprocessing_Queue,
+        video_frames_and_info_q:    multiprocessing_Queue,
+        event_stop_upscale_process: multiprocessing_Event,
+
         selected_file_list: list,
         selected_output_path: str,
         selected_AI_model: str,
@@ -1737,17 +1688,9 @@ def upscale_orchestrator(
         selected_image_extension: str,
         selected_video_extension: str,
         selected_video_codec: str,
-        cpu_number: int,
         ) -> None:
 
     try:
-        write_process_status(process_status_q, f"Loading AI model")
-
-        AI_upscale_instance_list = [
-            AI_upscale(selected_AI_model, selected_gpu, input_resize_factor, output_resize_factor, tiles_resolution) 
-            for _ in range(selected_AI_multithreading)
-        ]
-        
         how_many_files = len(selected_file_list)
         for file_number in range(how_many_files):
             file_path   = selected_file_list[file_number]
@@ -1755,49 +1698,42 @@ def upscale_orchestrator(
 
             if check_if_file_is_video(file_path):
                 upscale_video(
-                    process_status_q,
-                    file_path, 
-                    file_number,
-                    selected_output_path, 
-                    AI_upscale_instance_list,
-                    selected_AI_model,
-                    input_resize_factor,
-                    output_resize_factor, 
-                    cpu_number, 
-                    selected_video_extension, 
-                    selected_blending_factor,
-                    selected_AI_multithreading,
-                    selected_keep_frames,
-                    selected_video_codec
+                    process_status_q            = process_status_q,
+                    video_frames_and_info_q     = video_frames_and_info_q,
+                    event_stop_upscale_process  = event_stop_upscale_process,
+                    video_path                  = file_path, 
+                    file_number                 = file_number,
+                    selected_output_path        = selected_output_path, 
+                    selected_AI_model           = selected_AI_model, 
+                    selected_blending_factor    = selected_blending_factor,
+                    selected_AI_multithreading  = selected_AI_multithreading,
+                    selected_gpu                = selected_gpu,
+                    input_resize_factor         = input_resize_factor,
+                    output_resize_factor        = output_resize_factor,
+                    tiles_resolution            = tiles_resolution,
+                    selected_video_extension    = selected_video_extension,
+                    selected_video_codec        = selected_video_codec,
+                    selected_keep_frames        = selected_keep_frames,
                 )
             else:
                 upscale_image(
-                    process_status_q,
-                    file_path, 
-                    file_number,
-                    selected_output_path,
-                    AI_upscale_instance_list[0],
-                    selected_AI_model,
-                    selected_image_extension, 
-                    input_resize_factor, 
-                    output_resize_factor,
-                    selected_blending_factor
+                    process_status_q         = process_status_q,
+                    image_path               = file_path, 
+                    file_number              = file_number,
+                    selected_output_path     = selected_output_path,
+                    AI_instance              = AI_upscale(selected_AI_model, selected_gpu, input_resize_factor, output_resize_factor, tiles_resolution) ,
+                    selected_AI_model        = selected_AI_model,
+                    selected_image_extension = selected_image_extension, 
+                    input_resize_factor      = input_resize_factor, 
+                    output_resize_factor     = output_resize_factor,
+                    selected_blending_factor = selected_blending_factor
                 )
 
         write_process_status(process_status_q, f"{COMPLETED_STATUS}")
 
-
     except Exception as exception:
         error_message = str(exception)
-        
-        if "cannot convert float NaN to integer" in error_message:
-            write_process_status(
-                process_status_q, 
-                f"{ERROR_STATUS}An error occurred during video upscaling, likely due to a GPU driver timeout.\n"
-                "Restart the process without deleting the upscaled frames to resume and complete the upscaling."
-            )
-        else:
-            write_process_status(process_status_q, f"{ERROR_STATUS} {error_message}")
+        write_process_status(process_status_q, f"{ERROR_STATUS} {error_message}")
  
 # IMAGES
 
@@ -1827,7 +1763,7 @@ def upscale_image(
             upscaled_image, 
             selected_blending_factor, 
             selected_image_extension
-            )
+        )
     else:
         image_write(upscaled_image_path, upscaled_image, selected_image_extension)
 
@@ -1835,46 +1771,88 @@ def upscale_image(
 
 # VIDEOS
 
+# Function executed as process
+
+def upscale_video_frames_async(
+        video_frames_and_info_q:    multiprocessing_Queue,
+        event_stop_upscale_process: multiprocessing_Event,
+        threads_number:             int,
+        selected_AI_model:          str,
+        selected_gpu:               str,
+        input_resize_factor:        int,
+        output_resize_factor:       int,
+        tiles_resolution:           int,
+        frame_chunk:                list[tuple[str, str]],
+    ) -> None:
+
+    AI_instance = AI_upscale(selected_AI_model, selected_gpu, input_resize_factor, output_resize_factor, tiles_resolution)
+
+    for input_path, output_path in frame_chunk:
+
+        if event_stop_upscale_process.is_set():
+            print("[Upscale process] Terminating early due to stop event")
+            break
+
+        start_timer = timer()
+        
+        # Upscale frame
+        starting_frame  = image_read(input_path)
+        upscaled_frame  = AI_instance.AI_orchestration(starting_frame)
+        
+        # Calculate processing time
+        end_timer       = timer()
+        processing_time = (end_timer - start_timer)/threads_number
+
+        # Add things in queue
+        video_frames_and_info_q.put(
+            {
+                "starting_frame":      starting_frame,
+                "upscaled_frame":      upscaled_frame,
+                "upscaled_frame_path": output_path,
+                "processing_time":     processing_time
+            }
+        )
+
+    if event_stop_upscale_process.is_set():
+        print("[Upscale process] Terminated")
+    else:
+        print("[Upscale process] Upscale process finished the job")
+
+# -------------------------------------
+
 def upscale_video(
-        process_status_q: multiprocessing_Queue,
-        video_path: str, 
-        file_number: int,
-        selected_output_path: str,
-        AI_upscale_instance_list: list[AI_upscale],
-        selected_AI_model: str,
-        input_resize_factor: int,
-        output_resize_factor: int,
-        cpu_number: int, 
-        selected_video_extension: str,
-        selected_blending_factor: float,
+        process_status_q:           multiprocessing_Queue,
+        video_frames_and_info_q:    multiprocessing_Queue,
+        event_stop_upscale_process: multiprocessing_Event,
+        video_path:                 str, 
+        file_number:                int,
+        selected_output_path:       str,
+        selected_AI_model:          str,
+        selected_blending_factor:   float,
         selected_AI_multithreading: int,
-        selected_keep_frames: bool,
-        selected_video_codec: str
+        selected_gpu:               str,
+        input_resize_factor:        int,
+        output_resize_factor:       int,
+        tiles_resolution:           int, 
+        selected_video_extension:   str,
+        selected_video_codec:       str,
+        selected_keep_frames:       bool,
         ) -> None:
     
 
     # Internal functions
 
-    def update_process_status_videos(
-            process_status_q: multiprocessing_Queue, 
-            file_number: int, 
-            ) -> None:
-        
-        global global_upscaled_frames_paths
-        global global_processing_times_list
-
-        if not global_upscaled_frames_paths: return
-        if not global_upscaled_frames_paths: return
+    def update_video_upscale_process_status(
+            process_status_q:        multiprocessing_Queue, 
+            file_number:             int,
+            upscaled_frame_paths:    list[str],
+            average_processing_time: float
+        ) -> None:
 
         # Remaining frames
-        total_frames_counter            = len(global_upscaled_frames_paths)
-        frames_already_upscaled_counter = len([path for path in global_upscaled_frames_paths if os_path_exists(path)])
-        frames_to_upscale_counter       = len([path for path in global_upscaled_frames_paths if not os_path_exists(path)])
-
-        if global_processing_times_list:
-            average_processing_time = numpy_mean(global_processing_times_list)
-        else:
-            average_processing_time = 0.0
+        total_frames_counter            = len(upscaled_frame_paths)
+        frames_already_upscaled_counter = len([path for path in upscaled_frame_paths if os_path_exists(path)])
+        frames_to_upscale_counter       = len([path for path in upscaled_frame_paths if not os_path_exists(path)])
 
         remaining_frames = frames_to_upscale_counter
         remaining_time   = calculate_time_to_complete_video(average_processing_time, remaining_frames)
@@ -1882,124 +1860,251 @@ def upscale_video(
             percent_complete = (frames_already_upscaled_counter / total_frames_counter) * 100 
             write_process_status(process_status_q, f"{file_number}. Upscaling video {percent_complete:.2f}% ({remaining_time})")
 
-    def manage_video_frames_save_on_disk_async(
-        process_status_q: multiprocessing_Queue,
-        file_number: int,
-        frames_to_save_q: multiprocessing_Queue,
-        stop_event: multiprocessing_Event, 
-        selected_blending_factor: float,
-    ):
-        saved_frames_count = 0
-        
-        try:
+    def manage_upscaled_frames_save_on_disk(
+            process_status_q:                multiprocessing_Queue,
+            video_frames_and_info_q:         multiprocessing_Queue,
+            event_stop_upscale_process:      multiprocessing_Event,
+            event_stop_upscaled_save_thread: multiprocessing_Event,
+            file_number:                     int,
+            upscaled_frame_paths:            list[str],
+            selected_blending_factor:        float,
+        ) -> None:
+
+        saved_frames_count    = 0
+        processing_times_list = []
+
+        def _internal_save_frame(starting_frame, upscaled_frame, upscaled_frame_path, selected_blending_factor):
+            if selected_blending_factor > 0:
+                blend_images_and_save(upscaled_frame_path, starting_frame, upscaled_frame, selected_blending_factor)
+            else:
+                image_write(upscaled_frame_path, upscaled_frame)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            threads_list = []
+
             while True:
-                while not frames_to_save_q.empty():
-                    item = frames_to_save_q.get_nowait()
-                    starting_frame      = item["starting_frame"]
-                    upscaled_frame      = item["upscaled_frame"]
-                    upscaled_frame_path = item["upscaled_frame_path"]
+                if event_stop_upscale_process.is_set():
+                    print(f"[Upscaled save thread] terminating by upscale stop event")
+                    break
 
-                    if selected_blending_factor > 0:
-                        blend_images_and_save(upscaled_frame_path, starting_frame, upscaled_frame, selected_blending_factor)
-                    else:
-                        image_write(upscaled_frame_path, upscaled_frame)
+                if event_stop_upscaled_save_thread.is_set() and video_frames_and_info_q.empty():
+                    print(f"[Upscaled save thread] terminating correctly")
+                    break
 
-                    saved_frames_count += 1
+                try:
+                    item = video_frames_and_info_q.get(timeout=0.25)
+                except Empty:
+                    continue
 
-                    if saved_frames_count % MULTIPLE_FRAMES_TO_SAVE == 0: update_process_status_videos(process_status_q, file_number)
+                starting_frame      = item["starting_frame"]
+                upscaled_frame      = item["upscaled_frame"]
+                upscaled_frame_path = item["upscaled_frame_path"]
+                processing_time     = item["processing_time"]
 
-                if stop_event.is_set() and frames_to_save_q.empty(): stop_thread()
-        except:
-            pass
-            
-    def upscale_video_frames_async(
-            threads_number: int,
-            AI_instance: AI_upscale,
-            extracted_frames_paths: list[str],
-            upscaled_frame_paths: list[str],
-            frames_to_save_q: multiprocessing_Queue
-            ) -> None:
-
-        global global_processing_times_list
-
-        for frame_index in range(len(extracted_frames_paths)):
-            frame_path          = extracted_frames_paths[frame_index]
-            upscaled_frame_path = upscaled_frame_paths[frame_index]
-            already_upscaled    = os_path_exists(upscaled_frame_path)
-
-            if already_upscaled == False:
-                start_timer = timer()
-                
-                # Upscale frame
-                starting_frame = image_read(frame_path)
-                upscaled_frame = AI_instance.AI_orchestration(starting_frame)
-
-                # Save frames in queue
-                frames_to_save_q.put(
-                    {
-                        "starting_frame": starting_frame,
-                        "upscaled_frame": upscaled_frame,
-                        "upscaled_frame_path": upscaled_frame_path
-                    }
+                threads_list.append(
+                    executor.submit(
+                        _internal_save_frame, 
+                        starting_frame, 
+                        upscaled_frame, 
+                        upscaled_frame_path,
+                        selected_blending_factor
+                    )
                 )
-                
-                # Calculate processing time
-                end_timer       = timer()
-                processing_time = (end_timer - start_timer)/threads_number
-                global_processing_times_list.append(processing_time)
 
-                if len(global_processing_times_list) >= 100: global_processing_times_list = []
+                saved_frames_count += 1
+                processing_times_list.append(processing_time)
+
+                if saved_frames_count % FRAMES_TO_SAVE_BATCH == 0: 
+                    if processing_times_list:
+                        average_processing_time = numpy_mean(processing_times_list)
+                        if len(processing_times_list) >= 100: 
+                            processing_times_list = []
+                        update_video_upscale_process_status(process_status_q, file_number, upscaled_frame_paths, average_processing_time)
+
+            for t in threads_list: t.result()
+
+    def monitor_extraction_progress(
+            process_status_q:      multiprocessing_Queue,
+            stop_extraction_event: multiprocessing_Event,
+            file_number:           int,
+            target_directory:      str,
+            total_video_frames:    int,
+        ):
+
+        while not stop_extraction_event.is_set():
+            sleep(1)
+            extracted_frames_number = len(
+                [
+                    f for f in os_listdir(target_directory)
+                    if f.endswith(".jpg") and f.startswith("frame_")
+                ]
+            )
+            percent_complete = (extracted_frames_number / total_video_frames) * 100 if total_video_frames > 0 else 0
+            write_process_status(process_status_q, f"{file_number}. Extracting video frames {percent_complete:.2f}%")
+
+    def extract_video_frames(
+            process_status_q:           multiprocessing_Queue,
+            event_stop_upscale_process: multiprocessing_Event,
+            file_number:                int,
+            target_directory:           str,
+            video_path:                 str,
+        ) -> list[str]:
+
+        # 1. Get total number of frames
+        cap = opencv_VideoCapture(video_path)
+        total_video_frames = int(cap.get(CAP_PROP_FRAME_COUNT))
+        cap.release()
+
+        # 2. Create directory to extract frames
+        create_dir(target_directory)
+
+        # 3. Start monitoring thread
+        stop_extraction_event = multiprocessing_Event()
+        monitor_thread = Thread(
+            target = monitor_extraction_progress,
+            args = (
+                process_status_q,
+                stop_extraction_event,
+                file_number,
+                target_directory,
+                total_video_frames
+            ),
+            daemon = True
+        )
+        monitor_thread.start()
+
+        # 4. Create FFMPEG command to extract video frames
+        output_pattern = os_path_join(target_directory, "frame_%03d.jpg")
+        extraction_command = [
+            FFMPEG_EXE_PATH,
+            "-y",
+            "-loglevel", "error",
+            "-err_detect", "ignore_err",
+            "-i", video_path,
+            "-qscale:v", "2",
+            output_pattern
+        ]
+        
+        # 5. Execute FFMPEG command
+        startupinfo = None
+        if sys.platform == "win32":
+            startupinfo = STARTUPINFO()
+            startupinfo.dwFlags |= STARTF_USESHOWWINDOW
+
+        ffmpeg_process = None
+        try:
+            ffmpeg_process = subprocess_Popen(
+                extraction_command,
+                startupinfo = startupinfo
+            )
+
+            while ffmpeg_process.poll() is None:
+                if event_stop_upscale_process.is_set():
+                    print("[FFMPEG] Stop richiesto, terminazione in corso")
+                    ffmpeg_process.terminate()
+                    ffmpeg_process.wait()
+                    stop_extraction_event.set()
+                    monitor_thread.join()
+                    return []
+                sleep(0.25)
+
+        except Exception as e:
+            write_process_status(process_status_q, f"{ERROR_STATUS} Frame extraction failed: {e}")
+            if ffmpeg_process: ffmpeg_process.kill()
+            stop_extraction_event.set()
+            monitor_thread.join()
+            return []
+
+        # 6. Stop monitoring thread
+        stop_extraction_event.set()
+        monitor_thread.join()
+
+        # 7. Get extracted frames paths and return
+        extracted_files = [
+            os_path_join(target_directory, f)
+            for f in natsorted(os_listdir(target_directory))
+            if f.endswith(".jpg") and f.startswith("frame_")
+        ]
+
+        return extracted_files
 
     def upscale_video_frames(
-            process_status_q: multiprocessing_Queue,
-            file_number: int,
-            AI_upscale_instance_list: list[AI_upscale],
-            extracted_frames_paths: list[str],
-            upscaled_frame_paths: list[str],
-            threads_number: int,
-            frames_to_save_q: multiprocessing_Queue,
-            ) -> None:
+            process_status_q:           multiprocessing_Queue,
+            video_frames_and_info_q:    multiprocessing_Queue,
+            event_stop_upscale_process: multiprocessing_Event,
 
-        global global_upscaled_frames_paths
-        global global_processing_times_list
+            file_number:              int, 
+            selected_AI_model:        str,
+            selected_gpu:             str,
+            input_resize_factor:      int,
+            output_resize_factor:     int,
+            tiles_resolution:         int,
+            extracted_frames_paths:   list[str],
+            upscaled_frame_paths:     list[str],
+            threads_number:           int,
+            selected_blending_factor: float,
+        ) -> None:
 
-        global_upscaled_frames_paths = upscaled_frame_paths
-        global_processing_times_list = []
-    
-        extracted_frame_list_chunks = numpy_array_split(extracted_frames_paths, threads_number)
-        upscaled_frame_list_chunks  = numpy_array_split(upscaled_frame_paths, threads_number)
+        event_stop_upscaled_save_thread = multiprocessing_Event()
+        Thread(
+            target = manage_upscaled_frames_save_on_disk,
+            args = (
+                process_status_q, 
+                video_frames_and_info_q, 
+                event_stop_upscale_process,
+                event_stop_upscaled_save_thread,
+                file_number, 
+                upscaled_frame_paths, 
+                selected_blending_factor, 
+            ),
+        ).start()
 
-        extracted_frame_list_chunks = [list(chunk) for chunk in extracted_frame_list_chunks]
-        upscaled_frame_list_chunks  = [list(chunk) for chunk in upscaled_frame_list_chunks]
+        frame_pairs_to_process = [
+            (input_path, output_path)
+            for input_path, output_path in zip(
+                extracted_frames_paths,
+                upscaled_frame_paths
+                ) if not os_path_exists(output_path)
+        ]
+
+        if not frame_pairs_to_process:
+            print("All frames already upscaled")
+            event_stop_upscaled_save_thread.set()
+            return
+
+        frame_chunks = numpy_array_split(frame_pairs_to_process, threads_number)
+        frame_chunks = [list(chunk) for chunk in frame_chunks]
 
         write_process_status(process_status_q, f"{file_number}. Upscaling video ({threads_number} threads)")
-        with ThreadPool(threads_number) as pool:
+
+        with multiprocessing_Pool(threads_number) as pool:
             pool.starmap(
                 upscale_video_frames_async,
                 zip(
+                    repeat(video_frames_and_info_q),
+                    repeat(event_stop_upscale_process),
                     repeat(threads_number),
-                    AI_upscale_instance_list,
-                    extracted_frame_list_chunks,
-                    upscaled_frame_list_chunks,
-                    repeat(frames_to_save_q),
+                    repeat(selected_AI_model),
+                    repeat(selected_gpu),
+                    repeat(input_resize_factor),
+                    repeat(output_resize_factor),
+                    repeat(tiles_resolution),
+                    frame_chunks,
                 )
             )
 
+        write_process_status(process_status_q, f"{file_number}. Finalizing upscaling")
+        event_stop_upscaled_save_thread.set()
+        sleep(5)
 
 
     # Main function
 
     # 1.Preparation
-    frames_to_save_q = multiprocessing_Queue(maxsize=100)
-    stop_event = multiprocessing_Event()
-    Thread(
-        target = manage_video_frames_save_on_disk_async,
-        args   = (process_status_q, file_number, frames_to_save_q, stop_event, selected_blending_factor)
-    ).start()
-
     target_directory  = prepare_output_video_directory_name(video_path, selected_output_path, selected_AI_model, input_resize_factor, output_resize_factor, selected_blending_factor)
     video_output_path = prepare_output_video_filename(video_path, selected_output_path, selected_AI_model, input_resize_factor, output_resize_factor, selected_video_extension, selected_blending_factor)
     
+
     # 2. Resume upscaling OR extract video frames
     video_upscale_continue = check_video_upscaling_resume(target_directory, selected_AI_model)
     if video_upscale_continue:
@@ -2007,33 +2112,51 @@ def upscale_video(
         extracted_frames_paths = get_video_frames_for_upscaling_resume(target_directory, selected_AI_model)
     else:
         write_process_status(process_status_q, f"{file_number}. Extracting video frames")
-        extracted_frames_paths = extract_video_frames(process_status_q, file_number, target_directory, video_path, cpu_number)
+        extracted_frames_paths = extract_video_frames(
+            process_status_q           = process_status_q,
+            event_stop_upscale_process = event_stop_upscale_process,
+            file_number                = file_number, 
+            target_directory           = target_directory, 
+            video_path                 = video_path
+        )
 
     upscaled_frame_paths = [prepare_output_video_frame_filename(frame_path, selected_AI_model, input_resize_factor, output_resize_factor, selected_blending_factor) for frame_path in extracted_frames_paths]
 
+
     # 3. Check if video need tiles OR video multithreading upscale
-    multiframes_supported_by_gpu = AI_upscale_instance_list[0].calculate_multiframes_supported_by_gpu(extracted_frames_paths[0])
-    threads_number = min(multiframes_supported_by_gpu, selected_AI_multithreading)
-    if threads_number <= 0: threads_number = 1
+    AI_instance    = AI_upscale(selected_AI_model, selected_gpu, input_resize_factor, output_resize_factor, tiles_resolution) 
+    threads_number = AI_instance.calculate_optimal_multithreads_number(extracted_frames_paths[0], selected_AI_multithreading)
+    AI_instance    = None
+
 
     # 4. Upscaling video frames
     write_process_status(process_status_q, f"{file_number}. Upscaling video") 
-    upscale_video_frames(process_status_q, file_number, AI_upscale_instance_list, extracted_frames_paths, upscaled_frame_paths, threads_number, frames_to_save_q)
+    upscale_video_frames(
+        process_status_q           = process_status_q, 
+        video_frames_and_info_q    = video_frames_and_info_q,
+        event_stop_upscale_process = event_stop_upscale_process,
+        file_number                = file_number, 
+        selected_AI_model          = selected_AI_model, 
+        selected_gpu               = selected_gpu, 
+        input_resize_factor        = input_resize_factor, 
+        output_resize_factor       = output_resize_factor, 
+        tiles_resolution           = tiles_resolution, 
+        extracted_frames_paths     = extracted_frames_paths, 
+        upscaled_frame_paths       = upscaled_frame_paths, 
+        threads_number             = threads_number, 
+        selected_blending_factor   = selected_blending_factor,
+        )
 
-    # 5. Stop save frames thread
-    write_process_status(process_status_q, f"{file_number}. Finalizing upscaling")
-    stop_event.set()
-    sleep(15)
 
     # 6. Video encoding
     write_process_status(process_status_q, f"{file_number}. Encoding upscaled video")
     video_encoding(process_status_q, video_path, video_output_path, upscaled_frame_paths, selected_video_codec)
     copy_file_metadata(video_path, video_output_path)
 
+
     # 7. Delete frames folder
     if selected_keep_frames == False: 
         if os_path_exists(target_directory): remove_directory(target_directory)
-
 
 
 
@@ -2363,8 +2486,8 @@ def place_AI_menu():
     info_button = create_info_button(open_info_AI_model, "AI model")
     option_menu = create_option_menu(select_AI_from_menu, AI_models_list, default_AI_model)
 
-    info_button.place(relx = column_info1, rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_3_5,   rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info1, rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_3_5,   rely = widget_row, anchor = "center")
 
 def place_AI_blending_menu():
 
@@ -2400,8 +2523,8 @@ def place_AI_blending_menu():
     info_button = create_info_button(open_info_AI_blending, "AI blending")
     option_menu = create_option_menu(select_blending_from_menu, blending_list, default_blending)
 
-    info_button.place(relx = column_info1, rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_3_5,   rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info1, rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_3_5,   rely = widget_row, anchor = "center")
 
 def place_AI_multithreading_menu():
 
@@ -2438,21 +2561,21 @@ def place_AI_multithreading_menu():
     info_button = create_info_button(open_info_AI_multithreading, "AI multithreading")
     option_menu = create_option_menu(select_AI_multithreading_from_menu, AI_multithreading_list, default_AI_multithreading)
 
-    info_button.place(relx = column_info1, rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_3_5,   rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info1, rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_3_5,   rely = widget_row, anchor = "center")
 
 def place_input_output_resolution_textboxs():
 
     def open_info_input_resolution():
         option_list = [
-            " A high value (>70%) will create high quality photos/videos but will be slower",
-            " While a low value (<40%) will create good quality photos/videos but will much faster",
+            " A high value (>50%) will create high quality photos/videos but will be slower",
+            " While a low value (<50%) will create good quality photos/videos but will much faster",
 
             " \n For example, for a 1080p (1920x1080) image/video\n" + 
-            " • Input resolution 25% => input to AI 270p (480x270)\n" +
-            " • Input resolution 50% => input to AI 540p (960x540)\n" + 
-            " • Input resolution 75% => input to AI 810p (1440x810)\n" + 
-            " • Input resolution 100% => input to AI 1080p (1920x1080) \n",
+            " • Input scale 25% => input to AI 270p (480x270)\n" +
+            " • Input scale 50% => input to AI 540p (960x540)\n" + 
+            " • Input scale 75% => input to AI 810p (1440x810)\n" + 
+            " • Input scale 100% => input to AI 1080p (1920x1080) \n",
         ]
 
         MessageBox(
@@ -2465,7 +2588,14 @@ def place_input_output_resolution_textboxs():
 
     def open_info_output_resolution():
         option_list = [
-            " TBD ",
+            " 100% keeps the exact resolution produced by the AI upscaling",
+            " A lower value (<100%) will downscale the AI result to a smaller resolution, saving space and processing time",
+            " A higher value (>100%) will further upscale the AI output, increasing size but not adding real details",
+
+            "\n For example, if the AI generates a 4K (3840x2160) image/video\n" +
+            " • Output scale 50%  => final output 1920x1080 (downscaled)\n" +
+            " • Output scale 100% => final output 3840x2160 (AI native)\n" +
+            " • Output scale 200% => final output 7680x4320 (8K, interpolated)\n",
         ]
 
         MessageBox(
@@ -2482,19 +2612,19 @@ def place_input_output_resolution_textboxs():
     background = create_option_background()
     background.place(relx = 0.75, rely = widget_row, relwidth = 0.48, anchor = "center")
 
-    # Input resolution %
-    info_button = create_info_button(open_info_input_resolution, "Input resolution")
+    # Input scale %
+    info_button = create_info_button(open_info_input_resolution, "Input scale %")
     option_menu = create_text_box(selected_input_resize_factor, width = little_textbox_width) 
 
-    info_button.place(relx = column_info1, rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_1_5,   rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info1, rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_1_5,   rely = widget_row, anchor = "center")
 
-    # Output resolution %
-    info_button = create_info_button(open_info_output_resolution, "Output resolution")
+    # Output scale %
+    info_button = create_info_button(open_info_output_resolution, "Output scale %")
     option_menu = create_text_box(selected_output_resize_factor, width = little_textbox_width)  
 
-    info_button.place(relx = column_info2, rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_3,     rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info2, rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_3,     rely = widget_row, anchor = "center")
 
 def place_gpu_gpuVRAM_menus():
 
@@ -2545,15 +2675,15 @@ def place_gpu_gpuVRAM_menus():
     info_button = create_info_button(open_info_gpu, "GPU")
     option_menu = create_option_menu(select_gpu_from_menu, gpus_list, default_gpu, width = little_menu_width) 
 
-    info_button.place(relx = column_info1,        rely = widget_row - 0.003, anchor = "center")
+    info_button.place(relx = column_info1,        rely = widget_row, anchor = "center")
     option_menu.place(relx = column_1_4, rely = widget_row,  anchor = "center")
 
     # GPU VRAM
     info_button = create_info_button(open_info_vram_limiter, "GPU VRAM (GB)")
     option_menu = create_text_box(selected_VRAM_limiter, width = little_textbox_width)  
 
-    info_button.place(relx = column_info2, rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_3,     rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info2, rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_3,     rely = widget_row, anchor = "center")
 
 def place_image_video_output_menus():
 
@@ -2640,14 +2770,14 @@ def place_image_video_output_menus():
     # Image output
     info_button = create_info_button(open_info_image_output, "Image output")
     option_menu = create_option_menu(select_image_extension_from_menu, image_extension_list, default_image_extension, width = little_menu_width)
-    info_button.place(relx = column_info1,        rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_1_4, rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info1,        rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_1_4, rely = widget_row, anchor = "center")
 
     # Video output
     info_button = create_info_button(open_info_video_extension, "Video output")
     option_menu = create_option_menu(select_video_extension_from_menu, video_extension_list, default_video_extension, width = little_menu_width)
-    info_button.place(relx = column_info2,      rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_2_9, rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info2,      rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_2_9, rely = widget_row, anchor = "center")
 
 def place_video_codec_keep_frames_menus():
 
@@ -2705,14 +2835,14 @@ def place_video_codec_keep_frames_menus():
     # Video codec
     info_button = create_info_button(open_info_video_codec, "Video codec")
     option_menu = create_option_menu(select_video_codec_from_menu, video_codec_list, default_video_codec, width = little_menu_width)
-    info_button.place(relx = column_info1,        rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_1_4, rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info1,        rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_1_4, rely = widget_row, anchor = "center")
 
     # Keep frames
     info_button = create_info_button(open_info_keep_frames, "Keep frames")
     option_menu = create_option_menu(select_save_frame_from_menu, keep_frames_list, default_keep_frames, width = little_menu_width)
-    info_button.place(relx = column_info2,      rely = widget_row - 0.003, anchor = "center")
-    option_menu.place(relx = column_2_9, rely = widget_row,         anchor = "center")
+    info_button.place(relx = column_info2,      rely = widget_row, anchor = "center")
+    option_menu.place(relx = column_2_9, rely = widget_row, anchor = "center")
 
 def place_output_path_textbox():
 
@@ -2747,15 +2877,15 @@ def place_message_label():
     message_label = CTkLabel(
         master        = window, 
         textvariable  = info_message,
-        height        = 26,
-        width         = 200,
+        height        = 24,
+        width         = 247,
         font          = bold11,
         fg_color      = "#ffbf00",
         text_color    = "#000000",
         anchor        = "center",
         corner_radius = 1
     )
-    message_label.place(relx = 0.83, rely = 0.9495, anchor = "center")
+    message_label.place(relx = 0.85, rely = 0.9495, anchor = "center")
 
 def place_stop_button(): 
     stop_button = create_active_button(
@@ -2865,14 +2995,66 @@ class App():
         place_upscale_button()
 
 if __name__ == "__main__":
+    
+    if os_path_exists(FFMPEG_EXE_PATH): 
+        print(f"[{app_name}] ffmpeg.exe found")
+    else:
+        print(f"[{app_name}] ffmpeg.exe not found, please install ffmpeg.exe following the guide")
+
+    if os_path_exists(USER_PREFERENCE_PATH):
+        print(f"[{app_name}] Preference file exist")
+        with open(USER_PREFERENCE_PATH, "r") as json_file:
+            json_data = json_load(json_file)
+            default_AI_model             = json_data.get("default_AI_model",             AI_models_list[0])
+            default_AI_multithreading    = json_data.get("default_AI_multithreading",    AI_multithreading_list[0])
+            default_gpu                  = json_data.get("default_gpu",                  gpus_list[0])
+            default_keep_frames          = json_data.get("default_keep_frames",          keep_frames_list[1])
+            default_image_extension      = json_data.get("default_image_extension",      image_extension_list[0])
+            default_video_extension      = json_data.get("default_video_extension",      video_extension_list[0])
+            default_video_codec          = json_data.get("default_video_codec",          video_codec_list[0])
+            default_blending             = json_data.get("default_blending",             blending_list[1])
+            default_output_path          = json_data.get("default_output_path",          OUTPUT_PATH_CODED)
+            default_input_resize_factor  = json_data.get("default_input_resize_factor",  str(50))
+            default_output_resize_factor = json_data.get("default_output_resize_factor", str(100))
+            default_VRAM_limiter         = json_data.get("default_VRAM_limiter",         str(4))
+    else:
+        print(f"[{app_name}] Preference file does not exist, using default coded value")
+        default_AI_model             = AI_models_list[0]
+        default_AI_multithreading    = AI_multithreading_list[0]
+        default_gpu                  = gpus_list[0]
+        default_keep_frames          = keep_frames_list[1]
+        default_image_extension      = image_extension_list[0]
+        default_video_extension      = video_extension_list[0]
+        default_video_codec          = video_codec_list[0]
+        default_blending             = blending_list[1]
+        default_output_path          = OUTPUT_PATH_CODED
+        default_input_resize_factor  = str(50)
+        default_output_resize_factor = str(100)
+        default_VRAM_limiter         = str(4)
+
     multiprocessing_freeze_support()
     set_appearance_mode("Dark")
     set_default_color_theme("dark-blue")
+
+    # Leggi la RAM totale in GB
+    ram_gb = round(psutil_virtual_memory().total / (1024**3))
+
+    if ram_gb <= 8:    
+        queue_maxsize = 100
+    elif ram_gb <= 16: 
+        queue_maxsize = 250
+    elif ram_gb <= 32: 
+        queue_maxsize = 500
+    else:              
+        queue_maxsize = 1000
     
-    process_status_q = multiprocessing_Queue(maxsize=1)
+    # Multiprocessing utilities
+    multiprocessing_manager    = multiprocessing_Manager()
+    process_status_q           = multiprocessing_manager.Queue(maxsize=1)
+    video_frames_and_info_q    = multiprocessing_manager.Queue(maxsize=queue_maxsize)
+    event_stop_upscale_process = multiprocessing_manager.Event()
 
     window = CTk() 
-
     info_message                  = StringVar()
     selected_output_path          = StringVar()
     selected_input_resize_factor  = StringVar()
