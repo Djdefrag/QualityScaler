@@ -134,22 +134,29 @@ widget_background_color = "#181818"
 text_color              = "#B8B8B8"
 
 VRAM_model_usage = {
-    'RealESR_Gx4':     2.5,
-    'RealESR_Animex4': 2.5,
-    'BSRGANx4':        0.75,
-    'RealESRGANx4':    0.75,
-    'BSRGANx2':        0.8,
-    'IRCNN_Mx1':       4,
-    'IRCNN_Lx1':       4,
-    'UltraSharpx4':    4,
+    'RealESR_Gx4':        2.5,
+    'RealESR_Animex4':    2.5,
+    'BSRGANx4':           0.75,
+    'RealESRGANx4':       0.75,
+    'BSRGANx2':           0.8,
+    'IRCNN_Mx1':          4,
+    'IRCNN_Lx1':          4,
+    'UltraSharpx4':       4,
+    'ClearRealityV1':     4,
+    'ClearRealityV1_Soft':4,
 }
 
 MENU_LIST_SEPARATOR         = [ "----" ]
-SRVGGNetCompact_models_list = [ "RealESR_Gx4", "RealESR_Animex4", "UltraSharpx4" ]
+SRVGGNetCompact_models_list = [ "RealESR_Gx4", "RealESR_Animex4", "UltraSharpx4", "ClearRealityV1", "ClearRealityV1_Soft" ]
 BSRGAN_models_list          = [ "BSRGANx4", "BSRGANx2", "RealESRGANx4" ]
 IRCNN_models_list           = [ "IRCNN_Mx1", "IRCNN_Lx1" ]
 
 AI_models_list         = ( SRVGGNetCompact_models_list + MENU_LIST_SEPARATOR + BSRGAN_models_list + MENU_LIST_SEPARATOR + IRCNN_models_list )
+
+AI_MODEL_UPSCALE_OVERRIDES = {
+    "ClearRealityV1": 4,
+    "ClearRealityV1_Soft": 4,
+}
 AI_multithreading_list = [ "OFF", "2 threads", "4 threads", "6 threads", "8 threads"]
 blending_list          = [ "OFF", "Low", "Medium", "High" ]
 gpus_list              = [ "Auto", "GPU 1", "GPU 2", "GPU 3", "GPU 4" ]
@@ -267,9 +274,9 @@ class AI_upscale:
     # CLASS INIT FUNCTIONS
 
     def __init__(
-            self, 
-            AI_model_name: str, 
-            directml_gpu: str, 
+            self,
+            AI_model_name: str,
+            directml_gpu: str,
             input_resize_factor: int,
             output_resize_factor: int,
             max_resolution: int
@@ -288,9 +295,14 @@ class AI_upscale:
         self.inferenceSession = self._load_inferenceSession()
 
     def _get_upscale_factor(self) -> int:
+        if self.AI_model_name in AI_MODEL_UPSCALE_OVERRIDES:
+            return AI_MODEL_UPSCALE_OVERRIDES[self.AI_model_name]
+
         if   "x1" in self.AI_model_name: return 1
         elif "x2" in self.AI_model_name: return 2
         elif "x4" in self.AI_model_name: return 4
+
+        return 0
 
     def _load_inferenceSession(self) -> None:
         
@@ -2111,12 +2123,23 @@ def show_error_message(exception: str) -> None:
 
 def get_upscale_factor() -> int:
     global selected_AI_model
-    if MENU_LIST_SEPARATOR[0] in selected_AI_model: upscale_factor = 0
-    elif 'x1' in selected_AI_model: upscale_factor = 1
-    elif 'x2' in selected_AI_model: upscale_factor = 2
-    elif 'x4' in selected_AI_model: upscale_factor = 4
 
-    return upscale_factor
+    try:
+        model_name = selected_AI_model
+    except NameError:
+        model_name = ""
+
+    if not model_name or MENU_LIST_SEPARATOR[0] in model_name:
+        return 0
+
+    if model_name in AI_MODEL_UPSCALE_OVERRIDES:
+        return AI_MODEL_UPSCALE_OVERRIDES[model_name]
+
+    if 'x1' in model_name: return 1
+    if 'x2' in model_name: return 2
+    if 'x4' in model_name: return 4
+
+    return 0
 
 def open_files_action():
 
@@ -2314,7 +2337,7 @@ def place_AI_menu():
             " • Year: 2017\n"
             " • Function: Denoising\n",
 
-            "\n RealESR_Gx4 | RealESR_Animex4 | UltraSharpx4\n"
+            "\n RealESR_Gx4 | RealESR_Animex4 | UltraSharpx4 | ClearRealityV1 | ClearRealityV1_Soft\n"
             "\n • Fast and lightweight AI models\n"
             " • Year: 2022\n"
             " • Function: Upscaling\n",
