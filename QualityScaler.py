@@ -89,20 +89,24 @@ from cv2 import (
 from numpy import (
     ascontiguousarray as numpy_ascontiguousarray,
     frombuffer        as numpy_frombuffer,
-    concatenate       as numpy_concatenate, 
+    concatenate       as numpy_concatenate,
     transpose         as numpy_transpose,
-    full              as numpy_full, 
+    full              as numpy_full,
     expand_dims       as numpy_expand_dims,
     squeeze           as numpy_squeeze,
     clip              as numpy_clip,
     mean              as numpy_mean,
     repeat            as numpy_repeat,
     array_split       as numpy_array_split,
-    zeros             as numpy_zeros, 
-    max               as numpy_max, 
+    zeros             as numpy_zeros,
+    max               as numpy_max,
     ndarray           as numpy_ndarray,
+    iinfo             as numpy_iinfo,
+    issubdtype        as numpy_issubdtype,
+    float16,
     float32,
-    uint8
+    uint8,
+    uint16
 )
 
 # GUI imports
@@ -143,21 +147,29 @@ widget_background_color = "#181818"
 text_color              = "#B8B8B8"
 
 VRAM_model_usage = {
-    'RealESR_Gx4':     2.5,
-    'RealESR_Animex4': 2.5,
-    'BSRGANx4':        0.75,
-    'RealESRGANx4':    0.75,
-    'BSRGANx2':        0.8,
-    'IRCNN_Mx1':       4,
-    'IRCNN_Lx1':       4,
+    'RealESR_Gx4':        2.5,
+    'RealESR_Animex4':    2.5,
+    'BSRGANx4':           0.75,
+    'RealESRGANx4':       0.75,
+    'BSRGANx2':           0.8,
+    'IRCNN_Mx1':          4,
+    'IRCNN_Lx1':          4,
+    'UltraSharpx4':       4,
+    'ClearRealityV1':     4,
+    'ClearRealityV1_Soft':4,
 }
 
 MENU_LIST_SEPARATOR         = [ "----" ]
-SRVGGNetCompact_models_list = [ "RealESR_Gx4", "RealESR_Animex4" ]
+SRVGGNetCompact_models_list = [ "RealESR_Gx4", "RealESR_Animex4", "UltraSharpx4", "ClearRealityV1", "ClearRealityV1_Soft" ]
 BSRGAN_models_list          = [ "BSRGANx4", "BSRGANx2", "RealESRGANx4" ]
 IRCNN_models_list           = [ "IRCNN_Mx1", "IRCNN_Lx1" ]
 
 AI_models_list         = ( SRVGGNetCompact_models_list + MENU_LIST_SEPARATOR + BSRGAN_models_list + MENU_LIST_SEPARATOR + IRCNN_models_list )
+
+AI_MODEL_UPSCALE_OVERRIDES = {
+    "ClearRealityV1": 4,
+    "ClearRealityV1_Soft": 4,
+}
 AI_multithreading_list = [ "OFF", "2 threads", "4 threads", "6 threads", "8 threads"]
 blending_list          = [ "OFF", "Low", "Medium", "High" ]
 gpus_list              = [ "Auto", "GPU 1", "GPU 2", "GPU 3", "GPU 4" ]
@@ -217,13 +229,13 @@ supported_file_extensions = [
     '.PNG', '.webp', '.WEBP', '.bmp', '.BMP', '.tif',
     '.tiff', '.TIF', '.TIFF', '.mp4', '.MP4', '.webm',
     '.WEBM', '.mkv', '.MKV', '.flv', '.FLV', '.gif',
-    '.GIF', '.m4v', ',M4V', '.avi', '.AVI', '.mov',
+    '.GIF', '.m4v', '.M4V', '.avi', '.AVI', '.mov',
     '.MOV', '.qt', '.3gp', '.mpg', '.mpeg', ".vob"
 ]
 
 supported_video_extensions = [
     '.mp4', '.MP4', '.webm', '.WEBM', '.mkv', '.MKV',
-    '.flv', '.FLV', '.gif', '.GIF', '.m4v', ',M4V',
+    '.flv', '.FLV', '.gif', '.GIF', '.m4v', '.M4V',
     '.avi', '.AVI', '.mov', '.MOV', '.qt', '.3gp',
     '.mpg', '.mpeg', ".vob"
 ]
@@ -238,9 +250,9 @@ class AI_upscale:
     # CLASS INIT FUNCTIONS
 
     def __init__(
-            self, 
-            AI_model_name: str, 
-            directml_gpu: str, 
+            self,
+            AI_model_name: str,
+            directml_gpu: str,
             input_resize_factor: int,
             output_resize_factor: int,
             max_resolution: int
@@ -259,9 +271,14 @@ class AI_upscale:
         self.inferenceSession = self._load_inferenceSession()
 
     def _get_upscale_factor(self) -> int:
+        if self.AI_model_name in AI_MODEL_UPSCALE_OVERRIDES:
+            return AI_MODEL_UPSCALE_OVERRIDES[self.AI_model_name]
+
         if   "x1" in self.AI_model_name: return 1
         elif "x2" in self.AI_model_name: return 2
         elif "x4" in self.AI_model_name: return 4
+
+        return 0
 
     def _load_inferenceSession(self) -> None:
         
@@ -373,8 +390,12 @@ class AI_upscale:
             return False
 
     def add_alpha_channel(self, image: numpy_ndarray) -> numpy_ndarray:
-        if image.shape[2] == 3:
-            alpha = numpy_full((image.shape[0], image.shape[1], 1), 255, dtype = uint8)
+        if image.ndim == 3 and image.shape[2] == 3:
+            if numpy_issubdtype(image.dtype, uint8) or numpy_issubdtype(image.dtype, uint16):
+                max_value = numpy_iinfo(image.dtype).max
+            else:
+                max_value = 1.0
+            alpha = numpy_full((image.shape[0], image.shape[1], 1), max_value, dtype = image.dtype)
             image = numpy_concatenate((image, alpha), axis = 2)
         return image
 
@@ -391,46 +412,72 @@ class AI_upscale:
 
         img_height, img_width = self.get_image_resolution(image)
 
-        tile_width  = img_width // tiles_x
-        tile_height = img_height // tiles_y
+        base_tile_width  = img_width // tiles_x
+        base_tile_height = img_height // tiles_y
+
+        extra_width  = img_width  - (base_tile_width  * (tiles_x - 1))
+        extra_height = img_height - (base_tile_height * (tiles_y - 1))
 
         tiles = []
 
+        y_start = 0
         for y in range(tiles_y):
-            y_start = y * tile_height
-            y_end   = (y + 1) * tile_height
+            current_height = base_tile_height if y < tiles_y - 1 else extra_height
+            y_end = y_start + current_height
 
+            x_start = 0
             for x in range(tiles_x):
-                x_start = x * tile_width
-                x_end   = (x + 1) * tile_width
-                tile    = image[y_start:y_end, x_start:x_end]
+                current_width = base_tile_width if x < tiles_x - 1 else extra_width
+                x_end = x_start + current_width
+                tile = image[y_start:y_end, x_start:x_end]
                 tiles.append(tile)
+                x_start = x_end
+
+            y_start = y_end
 
         return tiles
 
     def combine_tiles_into_image(self, image: numpy_ndarray, tiles: list[numpy_ndarray], t_height: int, t_width: int, num_tiles_x: int) -> numpy_ndarray:
 
-        match self.get_image_mode(image):
-            case "Grayscale": tiled_image = numpy_zeros((t_height, t_width, 3), dtype = uint8)
-            case "RGB":       tiled_image = numpy_zeros((t_height, t_width, 3), dtype = uint8)
-            case "RGBA":      tiled_image = numpy_zeros((t_height, t_width, 4), dtype = uint8)
+        if not tiles:
+            return image
 
-        for tile_index in range(len(tiles)):
-            actual_tile = tiles[tile_index]
+        num_tiles_y = len(tiles) // num_tiles_x if num_tiles_x else 0
+        first_tile = tiles[0]
+        image_mode = self.get_image_mode(image)
 
-            tile_height, tile_width = self.get_image_resolution(actual_tile)
+        if image_mode == "RGBA":
+            tiled_image = numpy_zeros((t_height, t_width, 4), dtype = first_tile.dtype)
+        elif first_tile.ndim == 2:
+            tiled_image = numpy_zeros((t_height, t_width), dtype = first_tile.dtype)
+        else:
+            channels = first_tile.shape[2]
+            tiled_image = numpy_zeros((t_height, t_width, channels), dtype = first_tile.dtype)
 
-            row     = tile_index // num_tiles_x
-            col     = tile_index % num_tiles_x
-            y_start = row * tile_height
-            y_end   = y_start + tile_height
-            x_start = col * tile_width
-            x_end   = x_start + tile_width
+        tile_index = 0
+        y_start = 0
 
-            match self.get_image_mode(image):
-                case "Grayscale": tiled_image[y_start:y_end, x_start:x_end] = actual_tile
-                case "RGB":       tiled_image[y_start:y_end, x_start:x_end] = actual_tile
-                case "RGBA":      tiled_image[y_start:y_end, x_start:x_end] = self.add_alpha_channel(actual_tile)
+        for _ in range(num_tiles_y):
+            x_start = 0
+            max_row_height = 0
+
+            for _ in range(num_tiles_x):
+                actual_tile = tiles[tile_index]
+                tile_height, tile_width = self.get_image_resolution(actual_tile)
+                y_end = y_start + tile_height
+                x_end = x_start + tile_width
+
+                match image_mode:
+                    case "RGBA":
+                        tiled_image[y_start:y_end, x_start:x_end] = self.add_alpha_channel(actual_tile)
+                    case _:
+                        tiled_image[y_start:y_end, x_start:x_end] = actual_tile
+
+                x_start = x_end
+                max_row_height = max(max_row_height, tile_height)
+                tile_index += 1
+
+            y_start += max_row_height
 
         return tiled_image
 
@@ -449,7 +496,7 @@ class AI_upscale:
         image = numpy_transpose(image, (2, 0, 1))
         image = numpy_expand_dims(image, axis=0)
 
-        return image
+        return image.astype(float16)
 
     def onnxruntime_inference(self, image: numpy_ndarray) -> numpy_ndarray:
 
@@ -472,10 +519,10 @@ class AI_upscale:
 
         return onnx_output
 
-    def de_normalize_image(self, onnx_output: numpy_ndarray, max_range: int) -> numpy_ndarray:    
+    def de_normalize_image(self, onnx_output: numpy_ndarray, max_range: int) -> numpy_ndarray:
         match max_range:
             case 255:   return (onnx_output * max_range).astype(uint8)
-            case 65535: return (onnx_output * max_range).round().astype(float32)
+            case 65535: return (onnx_output * max_range).round().astype(uint16)
 
 
 
@@ -523,22 +570,35 @@ class AI_upscale:
             
             case "Grayscale":
                 image = opencv_cvtColor(image, COLOR_GRAY2RGB)
-                
+
                 image = self.preprocess_image(image)
                 onnx_output  = self.onnxruntime_inference(image)
                 onnx_output  = self.postprocess_output(onnx_output)
                 output_image = opencv_cvtColor(onnx_output, COLOR_RGB2GRAY)
-                output_image = self.de_normalize_image(onnx_output, range)
+                output_image = self.de_normalize_image(output_image, range)
 
                 return output_image
 
     def AI_upscale_with_tilling(self, image: numpy_ndarray) -> numpy_ndarray:
-        t_height, t_width = self.calculate_target_resolution(image)
         tiles_x, tiles_y  = self.calculate_tiles_number(image)
         tiles_list        = self.split_image_into_tiles(image, tiles_x, tiles_y)
         tiles_list        = [self.AI_upscale(tile) for tile in tiles_list]
 
-        return self.combine_tiles_into_image(image, tiles_list, t_height, t_width, tiles_x)
+        target_height = sum(
+            self.get_image_resolution(tiles_list[row * tiles_x])[0]
+            for row in range(tiles_y)
+        )
+        target_width = sum(
+            self.get_image_resolution(tiles_list[col])[1]
+            for col in range(tiles_x)
+        )
+
+        combined_image = self.combine_tiles_into_image(image, tiles_list, target_height, target_width, tiles_x)
+
+        if self.output_resize_factor != 1:
+            combined_image = self.resize_with_output_factor(combined_image)
+
+        return combined_image
 
 
     # PUBLIC FUNCTION
@@ -553,14 +613,16 @@ class AI_upscale:
                     upscaled_image = self.AI_upscale_with_tilling(resized_image)
                 else:
                     upscaled_image = self.AI_upscale(resized_image)
-                
+                    if self.output_resize_factor != 1:
+                        upscaled_image = self.resize_with_output_factor(upscaled_image)
+
                 success = True
             
             except Exception as e:
                 print(f"error upscaling : {e}")
                 sleep(0.25)
         
-        return self.resize_with_output_factor(upscaled_image)
+        return upscaled_image
 
 
 
@@ -2233,12 +2295,23 @@ def show_error_message(exception: str) -> None:
 
 def get_upscale_factor() -> int:
     global selected_AI_model
-    if MENU_LIST_SEPARATOR[0] in selected_AI_model: upscale_factor = 0
-    elif 'x1' in selected_AI_model: upscale_factor = 1
-    elif 'x2' in selected_AI_model: upscale_factor = 2
-    elif 'x4' in selected_AI_model: upscale_factor = 4
 
-    return upscale_factor
+    try:
+        model_name = selected_AI_model
+    except NameError:
+        model_name = ""
+
+    if not model_name or MENU_LIST_SEPARATOR[0] in model_name:
+        return 0
+
+    if model_name in AI_MODEL_UPSCALE_OVERRIDES:
+        return AI_MODEL_UPSCALE_OVERRIDES[model_name]
+
+    if 'x1' in model_name: return 1
+    if 'x2' in model_name: return 2
+    if 'x4' in model_name: return 4
+
+    return 0
 
 def open_files_action():
 
@@ -2436,7 +2509,7 @@ def place_AI_menu():
             " • Year: 2017\n"
             " • Function: Denoising\n",
 
-            "\n RealESR_Gx4 | RealESR_Animex4 \n"
+            "\n RealESR_Gx4 | RealESR_Animex4 | UltraSharpx4 | ClearRealityV1 | ClearRealityV1_Soft\n"
             "\n • Fast and lightweight AI models\n"
             " • Year: 2022\n"
             " • Function: Upscaling\n",
