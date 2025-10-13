@@ -3046,7 +3046,7 @@ if __name__ == "__main__":
     # Get total RAM of the PC
     free_ram_gb   = psutil_virtual_memory().available / (1024**3)
     queue_maxsize = max(50, int(free_ram_gb * 25))
-    print(f"[__main__] free RAM: {free_ram_gb:.2f} GB → queue_maxsize = {queue_maxsize}")
+    print(f"[__main__] free RAM: {free_ram_gb:.2f} GB | queue_maxsize = {queue_maxsize}")
     
     # Multiprocessing utilities
     multiprocessing_manager    = multiprocessing_Manager()
