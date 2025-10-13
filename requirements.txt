@@ -1,5 +1,5 @@
 #AI
-onnxruntime-directml==1.22.0
+onnxruntime-directml==1.23.0
 numpy
 
 #GUI
@@ -10,4 +10,4 @@ opencv-python-headless
 Pillow
 natsort
 psutil
-pyinstaller==6.14.2
+pyinstaller==6.16.0
