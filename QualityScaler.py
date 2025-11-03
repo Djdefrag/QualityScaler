@@ -77,6 +77,8 @@ from cv2 import (
     COLOR_RGB2GRAY,
     IMREAD_UNCHANGED,
     INTER_LINEAR,
+    INTER_AREA,
+    INTER_CUBIC,
     VideoCapture as opencv_VideoCapture,
     cvtColor     as opencv_cvtColor,
     imdecode     as opencv_imdecode,
@@ -326,7 +328,7 @@ class AI_upscale:
         new_width  = new_width if new_width % 2 == 0 else new_width + 1
         new_height = new_height if new_height % 2 == 0 else new_height + 1
 
-        return opencv_resize(image, (new_width, new_height), interpolation = INTER_LINEAR)
+        return opencv_resize(image, (new_width, new_height), interpolation = INTER_AREA)
 
     def resize_with_output_factor(self, image: numpy_ndarray) -> numpy_ndarray:
 
@@ -340,7 +342,7 @@ class AI_upscale:
         new_width  = new_width if new_width % 2 == 0 else new_width + 1
         new_height = new_height if new_height % 2 == 0 else new_height + 1
 
-        return opencv_resize(image, (new_width, new_height), interpolation = INTER_LINEAR)
+        return opencv_resize(image, (new_width, new_height), interpolation = INTER_CUBIC)
 
 
 
