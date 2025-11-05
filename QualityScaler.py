@@ -166,7 +166,7 @@ AI_models_list = (
     SRVGGNetCompact_models_list
     + MENU_LIST_SEPARATOR + BSRGAN_models_list
     + MENU_LIST_SEPARATOR + IRCNN_models_list
-    + MENU_LIST_SEPARATOR + in_testing_model_list
+    #+ MENU_LIST_SEPARATOR + in_testing_model_list
     )
 
 AI_multithreading_list = [ "OFF", "2 threads", "4 threads", "6 threads", "8 threads"]
