@@ -166,7 +166,7 @@ AI_models_list = (
     SRVGGNetCompact_models_list
     + MENU_LIST_SEPARATOR + BSRGAN_models_list
     + MENU_LIST_SEPARATOR + IRCNN_models_list
-    #+ MENU_LIST_SEPARATOR + in_testing_model_list
+    + MENU_LIST_SEPARATOR + in_testing_model_list
     )
 
 AI_multithreading_list = [ "OFF", "2 threads", "4 threads", "6 threads", "8 threads"]
@@ -1769,8 +1769,6 @@ def upscale_video_frames_async(
             break
 
         start_timer = timer()
-
-        sleep(0.001)
         
         # Upscale frame
         starting_frame  = image_read(input_path)
@@ -1778,7 +1776,7 @@ def upscale_video_frames_async(
 
         # Calculate processing time
         end_timer       = timer()
-        processing_time = (end_timer - start_timer)/threads_number
+        processing_time = round((end_timer - start_timer)/threads_number, 2)
 
         # Add things in queue
         success = False
@@ -1935,7 +1933,7 @@ def upscale_video(
 
                     if processing_times_list:
                         average_processing_time = numpy_median(processing_times_list)
-                        if len(processing_times_list) >= 100: processing_times_list = []
+                        processing_times_list = []
                         update_video_upscale_process_status(process_status_q, file_number, upscaled_frame_paths, average_processing_time)
 
             for t in threads_set: t.result()
@@ -1949,7 +1947,7 @@ def upscale_video(
         ):
 
         while not stop_extraction_event.is_set():
-            sleep(1)
+            sleep(2)
             extracted_frames_number = len(
                 [
                     f for f in os_listdir(target_directory)
