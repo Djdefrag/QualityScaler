@@ -96,7 +96,7 @@ from numpy import (
     expand_dims    as numpy_expand_dims,
     squeeze        as numpy_squeeze,
     clip           as numpy_clip,
-    median         as numpy_median,
+    mean           as numpy_mean,
     repeat         as numpy_repeat,
     array_split    as numpy_array_split,
     zeros          as numpy_zeros, 
@@ -134,7 +134,7 @@ def find_by_relative_path(relative_path: str) -> str:
 
 
 app_name   = "QualityScaler"
-version    = "4.8"
+version    = "4.9"
 githubme   = "https://github.com/Djdefrag/QualityScaler/releases"
 telegramme = "https://linktr.ee/j3ngystudio"
 
@@ -152,15 +152,14 @@ VRAM_model_usage = {
     'IRCNN_Mx1':       4,
     'IRCNN_Lx1':       4,
 
-    'LVAx2': 2.5,
-    'LVAx4': 1.5
+    'LVAx2':           2,
 }
 
 MENU_LIST_SEPARATOR         = [ "----" ]
 SRVGGNetCompact_models_list = [ "RealESR_Gx4", "RealESR_Animex4"                ]
 BSRGAN_models_list          = [ "BSRGANx2",    "BSRGANx4",       "RealESRGANx4" ]
 IRCNN_models_list           = [ "IRCNN_Mx1",   "IRCNN_Lx1"                      ]
-in_testing_model_list       = [ "LVAx2",       "LVAx4"                          ]
+in_testing_model_list       = [ "LVAx2" ]
 
 AI_models_list = ( 
     SRVGGNetCompact_models_list
@@ -318,8 +317,6 @@ class AI_upscale:
 
     def resize_with_input_factor(self, image: numpy_ndarray) -> numpy_ndarray:
 
-        if self.input_resize_factor == 1: return image
-        
         old_height, old_width = self.get_image_resolution(image)
 
         new_width  = int(old_width * self.input_resize_factor)
@@ -332,8 +329,6 @@ class AI_upscale:
 
     def resize_with_output_factor(self, image: numpy_ndarray) -> numpy_ndarray:
 
-        if self.output_resize_factor == 1: return image
-        
         old_height, old_width = self.get_image_resolution(image)
 
         new_width  = int(old_width * self.output_resize_factor)
@@ -538,6 +533,14 @@ class AI_upscale:
 
 
     # PUBLIC FUNCTION
+
+    def add_gaussian_noise(self, image_array: numpy_ndarray, std_dev: float = 5.0) -> numpy_ndarray:
+        import numpy as np
+        gaussian_noise = np.random.normal(0.0, std_dev, image_array.shape).astype(np.float32)
+        noisy_image = image_array + gaussian_noise
+        noisy_image = np.clip(noisy_image, 0.0, 255.0)
+        
+        return noisy_image
 
     def AI_orchestration(self, image: numpy_ndarray) -> numpy_ndarray:
         resized_image = self.resize_with_input_factor(image)
@@ -763,7 +766,7 @@ class FileWidget(CTkScrollableFrame):
         file_name_label = CTkLabel(
             self, 
             text       = os_path_basename(file_path),
-            font       = bold14,
+            font       = bold13,
             text_color = text_color,
             compound   = "left", 
             anchor     = "w",
@@ -956,7 +959,7 @@ def update_file_widget(a, b, c) -> None:
     file_widget.set_output_resize_factor(output_resize_factor)
     file_widget._create_widgets()
 
-def create_option_background():
+def create_option_background() -> CTkFrame:
     return CTkFrame(
         master   = window,
         bg_color = background_color,
@@ -1096,7 +1099,7 @@ def create_active_button(
         width: int = 140,
         height: int = 30,
         border_color: str = "#0096FF"
-        ) -> CTkButton:
+    ) -> CTkButton:
     
     return CTkButton(
         master        = window, 
@@ -1117,22 +1120,6 @@ def create_active_button(
 
 
 # File Utils functions ------------------------
-
-def create_dir(name_dir: str) -> None:
-    if os_path_exists(name_dir):     remove_directory(name_dir)
-    if not os_path_exists(name_dir): os_makedirs(name_dir, mode=0o777)
-
-    if sys.platform == "win32":
-        try:
-            # Exclude from Windows indexing
-            subprocess_run(
-                ["attrib", "+I", "/S", "/D", name_dir], 
-                check = False, 
-                shell = True
-            )
-
-        except Exception as e:
-            print(f"[create_dir] Warning: unable to disable indexing for {name_dir}: {e}")
 
 def image_read(file_path: str) -> numpy_ndarray: 
     with open(file_path, 'rb') as file:
@@ -1409,10 +1396,7 @@ def video_encoding(
     except:
         pass
     
-def check_video_upscaling_resume(
-        target_directory: str, 
-        selected_AI_model: str
-        ) -> bool:
+def check_video_upscaling_resume(target_directory: str, selected_AI_model: str) -> bool:
     
     if os_path_exists(target_directory):
         directory_files      = os_listdir(target_directory)
@@ -1425,10 +1409,7 @@ def check_video_upscaling_resume(
     else:
         return False
 
-def get_video_frames_for_upscaling_resume(
-        target_directory: str,
-        selected_AI_model: str,
-        ) -> list[str]:
+def get_video_frames_for_upscaling_resume(target_directory: str, selected_AI_model: str) -> list[str]:
     
     # Only file names
     directory_files      = os_listdir(target_directory)
@@ -1440,10 +1421,7 @@ def get_video_frames_for_upscaling_resume(
 
     return original_frames_path
 
-def calculate_time_to_complete_video(
-        time_for_frame: float,
-        remaining_frames: int,
-        ) -> str:
+def calculate_time_to_complete_video(time_for_frame: float, remaining_frames: int) -> str:
     
     remaining_time = time_for_frame * remaining_frames
 
@@ -1648,7 +1626,7 @@ def upscale_button_command() -> None:
 def upscale_orchestrator(
         process_status_q:           multiprocessing_Queue,
         video_frames_and_info_q:    multiprocessing_Queue,
-        event_stop_upscale_process: multiprocessing_Event,
+        event_stop_upscale_process: multiprocessing_Event, # type: ignore
 
         selected_file_list:         list[str],
         selected_output_path:       str,
@@ -1750,7 +1728,7 @@ def upscale_image(
 
 def upscale_video_frames_async(
         video_frames_and_info_q:    multiprocessing_Queue,
-        event_stop_upscale_process: multiprocessing_Event,
+        event_stop_upscale_process: multiprocessing_Event, # type: ignore
         threads_number:             int,
         selected_AI_model:          str,
         selected_gpu:               str,
@@ -1776,7 +1754,7 @@ def upscale_video_frames_async(
 
         # Calculate processing time
         end_timer       = timer()
-        processing_time = round((end_timer - start_timer)/threads_number, 2)
+        processing_time = round((end_timer - start_timer)/threads_number, 3)
 
         # Add things in queue
         success = False
@@ -1805,7 +1783,7 @@ def upscale_video_frames_async(
 def upscale_video(
         process_status_q:           multiprocessing_Queue,
         video_frames_and_info_q:    multiprocessing_Queue,
-        event_stop_upscale_process: multiprocessing_Event,
+        event_stop_upscale_process: multiprocessing_Event, # type: ignore
         video_path:                 str, 
         file_number:                int,
         selected_output_path:       str,
@@ -1845,8 +1823,8 @@ def upscale_video(
     def manage_upscaled_frames_save_on_disk(
             process_status_q:                multiprocessing_Queue,
             video_frames_and_info_q:         multiprocessing_Queue,
-            event_stop_upscale_process:      multiprocessing_Event,
-            event_stop_upscaled_save_thread: multiprocessing_Event,
+            event_stop_upscale_process:      multiprocessing_Event, # type: ignore
+            event_stop_upscaled_save_thread: multiprocessing_Event, # type: ignore
             file_number:                     int,
             upscaled_frame_paths:            list[str],
             selected_blending_factor:        float,
@@ -1932,7 +1910,7 @@ def upscale_video(
                     threads_set -= done_threads
 
                     if processing_times_list:
-                        average_processing_time = numpy_median(processing_times_list)
+                        average_processing_time = numpy_mean(processing_times_list)
                         processing_times_list = []
                         update_video_upscale_process_status(process_status_q, file_number, upscaled_frame_paths, average_processing_time)
 
@@ -1940,11 +1918,11 @@ def upscale_video(
 
     def monitor_extraction_progress(
             process_status_q:      multiprocessing_Queue,
-            stop_extraction_event: multiprocessing_Event,
+            stop_extraction_event: multiprocessing_Event, # type: ignore
             file_number:           int,
             target_directory:      str,
             total_video_frames:    int,
-        ):
+        ) -> None:
 
         while not stop_extraction_event.is_set():
             sleep(2)
@@ -1957,9 +1935,49 @@ def upscale_video(
             percent_complete = (extracted_frames_number / total_video_frames) * 100 if total_video_frames > 0 else 0
             write_process_status(process_status_q, f"{file_number}. Extracting video frames {percent_complete:.2f}%")
 
+    def create_dir(name_dir: str) -> None:
+        if os_path_exists(name_dir):     
+            remove_directory(name_dir)
+        if not os_path_exists(name_dir): 
+            os_makedirs(name_dir, mode=0o777)
+
+        if sys.platform == "win32":
+            try:
+                subprocess_run(
+                    ["attrib", "+I", "/S", "/D", name_dir],
+                    check = False,
+                    shell = True
+                )
+            except Exception as e:
+                print(f"[create_dir] Error setting +I attribute: {e}")
+
+            try:
+                desktop_ini = os_path_join(name_dir, "desktop.ini")
+                with open(desktop_ini, "w", encoding="utf-8") as f: f.write("[.ShellClassInfo]\nNoIndexing=1\n")
+            except Exception as e:
+                print(f"[create_dir] Error creating desktop.ini: {e}")
+
+            try:
+                subprocess_run(
+                    ["attrib", "+S", name_dir],
+                    check = False,
+                    shell = True
+                )
+            except Exception as e:
+                print(f"[create_dir] Error setting +S attribute on folder: {e}")
+
+            try:
+                subprocess_run(
+                    ["attrib", "+H", desktop_ini],
+                    check = False,
+                    shell = True
+                )
+            except Exception as e:
+                print(f"[create_dir] Error setting +H attribute on desktop.ini: {e}")
+
     def extract_video_frames(
             process_status_q:           multiprocessing_Queue,
-            event_stop_upscale_process: multiprocessing_Event,
+            event_stop_upscale_process: multiprocessing_Event, # type: ignore
             file_number:                int,
             target_directory:           str,
             video_path:                 str,
@@ -2044,7 +2062,7 @@ def upscale_video(
     def upscale_video_frames(
             process_status_q:           multiprocessing_Queue,
             video_frames_and_info_q:    multiprocessing_Queue,
-            event_stop_upscale_process: multiprocessing_Event,
+            event_stop_upscale_process: multiprocessing_Event, # type: ignore
 
             file_number:              int, 
             selected_AI_model:        str,
@@ -2259,6 +2277,7 @@ def get_upscale_factor() -> int:
     if MENU_LIST_SEPARATOR[0] in selected_AI_model: upscale_factor = 0
     elif 'x1' in selected_AI_model: upscale_factor = 1
     elif 'x2' in selected_AI_model: upscale_factor = 2
+    elif 'x3' in selected_AI_model: upscale_factor = 3
     elif 'x4' in selected_AI_model: upscale_factor = 4
 
     return upscale_factor
@@ -2914,6 +2933,7 @@ def place_upscale_button():
 
 def check_directml_support() -> bool:
     providers = onnxruntime_get_available_providers()
+    print(f"{providers}")
     return "DmlExecutionProvider" in providers
 
 def on_app_close() -> None:
@@ -3039,8 +3059,8 @@ if __name__ == "__main__":
 
     # Get total RAM of the PC
     free_ram_gb   = psutil_virtual_memory().available / (1024**3)
-    queue_maxsize = max(50, int(free_ram_gb * 25))
-    print(f"[__main__] free RAM: {free_ram_gb:.2f} GB | queue_maxsize = {queue_maxsize}")
+    queue_maxsize = max(50, int(free_ram_gb * 30))
+    print(f"[__main__] free RAM: {free_ram_gb:.2f} GB - queue_maxsize = {queue_maxsize}")
     
     # Multiprocessing utilities
     multiprocessing_manager    = multiprocessing_Manager()
