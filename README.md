@@ -124,6 +124,7 @@ Getting started.
     - [x] Video frames extraction by FFMPEG (x10 times faster)
 - [ ] 2026.X version
     - [x] Implement new AI models
+    - [x] App interface % scaling
     - [ ] TTA upscale mode
 
 ## Some Example.
