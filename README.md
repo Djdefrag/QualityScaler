@@ -55,9 +55,9 @@ QualityScaler is completely written in Python, from backend to frontend.
 
 ## Make it work by yourself. 👨‍💻
 Prerequisites.
-- Python installed on your pc (https://www.python.org/downloads/release/python-3119/)
+- Python installed on your pc (https://www.python.org/downloads/) < 3.14
 - VSCode installed on your pc (https://code.visualstudio.com/)
-- AI models downloaded (https://gofile.io/d/5O0nnS)
+- AI models downloaded (https://gofile.io/d/SCaV7F)
 - ffmpeg.exe file downloaded (https://www.gyan.dev/ffmpeg/builds/) RELEASE BUILD > ffmpeg-release-essentials.7z
 
 Getting started.
@@ -115,13 +115,16 @@ Getting started.
     - [x] Saving user settings (AI model, GPU, CPU  etc.)
     - [x] Video AI multi-threading upscale 
     - [x] Video upscaling STOP&RESUME
-- [ ] 4.X version
+- [x] 4.X version
     - [x] Hardware accelerated video encoding (nvenc / amf / qsv)
     - [x] More video extensions (.mp4 / .mkv / .avi / .mov)
     - [x] Choose output resolution scaling
     - [x] Video AI multi-threading improvements
     - [x] Updated AI-engine (onnxruntime-directml)
     - [x] Video frames extraction by FFMPEG (x10 times faster)
+- [ ] 2026.X version
+    - [x] Implement new AI models
+    - [ ] TTA upscale mode
 
 ## Some Example.
 
