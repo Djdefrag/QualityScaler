@@ -17,11 +17,10 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/user-attachments/assets/951685da-d0c3-4823-b112-b894b2f9e0d8">
+        <img src="https://github.com/user-attachments/assets/39c168af-4f40-4c26-9504-bd53be808a40">
     </div>
 </body>
 </html>
-
 
 ## What is QualityScaler?
 Qualityscaler is a Windows app powered by AI to enhance, upscale and de-noise photographs and videos.
