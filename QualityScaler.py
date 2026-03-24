@@ -157,28 +157,31 @@ text_color              = "#B8B8B8"
 
 
 VRAM_model_usage = {
+    'LVAx2':           2,
     'RealESR_Gx4':     2.5,
-    'RealESR_Animex4': 2.5,
-    'BSRGANx4':        0.75,
+    'RealESR_Ax4':     2.5,
     'BSRGANx2':        0.8,
+    'BSRGANx4':        0.75,
+    'RealESRGANx4':    0.75,
+    'MSharpx4':        1.5,
     'IRCNN_Mx1':       4,
     'IRCNN_Lx1':       4,
-    'LVAx2':           2,
-    'MSharpx4':        1.5
 }
 
-MENU_LIST_SEPARATOR    = [ "----" ]
-LVA_models             = [ "LVAx2"                          ] 
-SRVGGNetCompact_models = [ "RealESR_Gx4", "RealESR_Animex4" ]
-BSRGAN_models          = [ "BSRGANx2",    "BSRGANx4"        ]
-MSharp_models          = [ "MSharpx4"                       ]
-IRCNN_models           = [ "IRCNN_Mx1",   "IRCNN_Lx1"       ]
+MENU_LIST_SEPARATOR = [ "----" ]
+LVA_models        = [ "LVAx2"                          ] 
+RealESR_models    = [ "RealESR_Gx4", "RealESR_Ax4" ]
+BSRGAN_models     = [ "BSRGANx2",    "BSRGANx4"        ]
+RealESRGAN_models = [ "RealESRGANx4"                   ]
+MSharp_models     = [ "MSharpx4"                       ]
+IRCNN_models      = [ "IRCNN_Mx1",   "IRCNN_Lx1"       ]
 
 AI_models_list = ( 
-    LVA_models             + MENU_LIST_SEPARATOR +
-    SRVGGNetCompact_models + MENU_LIST_SEPARATOR + 
-    BSRGAN_models          + MENU_LIST_SEPARATOR +
-    MSharp_models          + MENU_LIST_SEPARATOR +
+    LVA_models          + MENU_LIST_SEPARATOR +
+    RealESR_models      + MENU_LIST_SEPARATOR + 
+    BSRGAN_models       + MENU_LIST_SEPARATOR +
+    RealESRGAN_models   + MENU_LIST_SEPARATOR +
+    MSharp_models       + MENU_LIST_SEPARATOR +
     IRCNN_models
 )
 
@@ -2739,23 +2742,31 @@ def place_AI_menu() -> None:
         option_list = [
             "\n"
             "LVAx2"
-            "\n\n"
+            "\n"
             " • Target: Live-action video upscaling"
             "\n"
-            " • Tips: use AI interpolation - OFF/Low"
+            " • Tips: AI interpolation - OFF/Low"
             "\n",
 
             "\n"
-            "RealESR_Gx4 • RealESR_Animex4"
-            "\n\n"
+            "RealESR_Gx4 • RealESR_Ax4"
+            "\n"
             " • Target: Animated/degraded live-action video upscaling"
             "\n"
-            " • Tips: use AI interpolation - Low for animation, use AI interpolation - Medium/High for live-action videos"
+            " • Tips: AI interpolation - Low for animation, Medium/High for live-action videos"
             "\n",
 
             "\n"
             "BSRGANx2 • BSRGANx4"
-            "\n\n"
+            "\n"
+            " • Target: High-quality image upscaling"
+            "\n"
+            " • Tips: can be used to upscale videos but will be slow"
+            "\n",
+
+            "\n"
+            "RealESRGANx4"
+            "\n"
             " • Target: High-quality image upscaling"
             "\n"
             " • Tips: can be used to upscale videos but will be slow"
@@ -2763,7 +2774,7 @@ def place_AI_menu() -> None:
 
             "\n"
             "MSharpx4"
-            "\n\n"
+            "\n"
             " • Target: Image upscaling and sharpening"
             "\n"
             " • Tips: to use on good quality photos (not too much noise)"
@@ -2771,9 +2782,10 @@ def place_AI_menu() -> None:
 
             "\n"
             "IRCNN_Mx1 • IRCNN_Lx1"
+            "\n"
             " • Target: Video/image denoising"
             "\n"
-            " • Tips: use with AI interpolation - OFF"
+            " • Tips: AI interpolation - OFF"
             "\n",
 
         ]
