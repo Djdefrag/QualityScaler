@@ -17,7 +17,7 @@
     </div>
     <br>
     <div align="center">
-        <img src="https://github.com/user-attachments/assets/39c168af-4f40-4c26-9504-bd53be808a40">
+        <img src="https://github.com/user-attachments/assets/98187c2e-0b10-4856-b34e-89a8df4fbfbe">
     </div>
 </body>
 </html>
@@ -49,14 +49,13 @@ QualityScaler is completely written in Python, from backend to frontend.
 - [x] onnxruntime-directml (https://github.com/microsoft/onnxruntime)
 - [x] customtkinter (https://github.com/TomSchimansky/CustomTkinter)
 - [x] openCV (https://github.com/opencv/opencv)
-- [x] moviepy (https://github.com/Zulko/moviepy)
 - [x] pyInstaller (https://github.com/pyinstaller/pyinstaller)
 
 ## Make it work by yourself. 👨‍💻
 Prerequisites.
-- Python installed on your pc (https://www.python.org/downloads/) < 3.14
+- Python installed on your pc (https://www.python.org/downloads/)
 - VSCode installed on your pc (https://code.visualstudio.com/)
-- AI models downloaded (https://gofile.io/d/SCaV7F)
+- AI models downloaded (https://gofile.io/d/b4Ds9u)
 - ffmpeg.exe file downloaded (https://www.gyan.dev/ffmpeg/builds/) RELEASE BUILD > ffmpeg-release-essentials.7z
 
 Getting started.
