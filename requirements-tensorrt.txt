@@ -1,0 +1,19 @@
+# TensorRT Python Dependencies
+# Run: pip install -r requirements-tensorrt.txt
+
+# Core TensorRT libraries
+nvidia-tensorrt>=8.0.0
+
+# CUDA Python bindings
+pycuda>=2022.1
+
+# Numerical computing
+numpy>=1.19.0
+
+# Image processing
+opencv-python-headless>=4.5.0
+Pillow>=8.0.0
+
+# Optional utilities
+psutil>=5.8.0
+natsort>=7.1.0

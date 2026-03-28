@@ -1,0 +1,23 @@
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.23
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+[BUILD] Compiling TensorRT Wrapper DLL...
+用于 x64 的 Microsoft (R) C/C++ 优化编译器 19.44.35222 版
+版权所有(C) Microsoft Corporation。保留所有权利。
+
+ai_tensorrt.cpp
+Microsoft (R) Incremental Linker Version 14.44.35222.0
+Copyright (C) Microsoft Corporation.  All rights reserved.
+
+/out:ai_tensorrt.dll 
+/dll 
+/implib:ai_tensorrt.lib 
+/LIBPATH:C:\TensorRT-10.16.0.72\lib 
+"/LIBPATH:C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.1\lib\x64" 
+nvinfer_10.lib 
+cudart.lib 
+/OUT:../../qualityscaler_tensorrt.dll 
+ai_tensorrt.obj 
+[OK] DLL generated successfully: qualityscaler_tensorrt.dll

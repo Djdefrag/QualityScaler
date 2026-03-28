@@ -1,0 +1,64 @@
+# 编译产物
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.a
+*.lib
+*.exp
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 构建输出
+dist/
+bin/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.codebuddy
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.log
+*.tmp
+compile_output.txt
+tensorrt_health_check.json
+
+# 敏感/本地配置
+*.local
+
+# Python
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Go
+vendor/
+
+# 本地符号链接(用户特定)
+/CUDA
+/TensorRT*
+
+# 仅开发环境需要的文件
+nvinfer_10.dll
+qualityscaler_tensorrt.dll
+
+*.py
+
+#模型文件
+*.onnx
+*.engine

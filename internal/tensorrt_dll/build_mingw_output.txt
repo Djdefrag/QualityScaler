@@ -1,0 +1,5 @@
+[BUILD] Building TensorRT Wrapper DLL with MinGW g++...
+
+[BUILD] Using g++ compiler: MinGW-w64
+
+[OK] DLL generated successfully: qualityscaler_tensorrt.dll
