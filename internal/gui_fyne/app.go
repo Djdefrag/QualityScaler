@@ -102,6 +102,7 @@ func Run() error {
 			state.mu.Lock()
 			defer state.mu.Unlock()
 			if id < len(state.files) {
+				// We don't need fyne.Do here as Fyne handles list callbacks on the main thread automatically
 				obj.(*widget.Label).SetText(filepath.Base(state.files[id]))
 			}
 		},
@@ -226,12 +227,13 @@ func Run() error {
 				count := len(state.files)
 				state.mu.Unlock()
 
-				// 在主goroutine中更新UI
-				fileList.Refresh()
-				updateResolutionPreview()
-				if added > 0 {
-					_ = statusBind.Set(fmt.Sprintf("已导入 %d 个文件，当前共 %d 个", added, count))
-				}
+				fyne.Do(func() {
+					fileList.Refresh()
+					updateResolutionPreview()
+					if added > 0 {
+						_ = statusBind.Set(fmt.Sprintf("已导入 %d 个文件，当前共 %d 个", added, count))
+					}
+				})
 			}
 		}()
 	})

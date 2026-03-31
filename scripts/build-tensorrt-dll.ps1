@@ -43,11 +43,26 @@ cmake -G "$cmakeGen" $cmakeArch `
       -DCUDA_ROOT="C:/CUDA" `
       ..
 
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "CMake configuration failed."
+    exit 1
+}
+
 # 4. 编译
 cmake --build . --config $Config --parallel
 
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "CMake build failed."
+    exit 1
+}
+
 # 5. 安装到项目根目录
 cmake --install . --config $Config
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "CMake install failed."
+    exit 1
+}
 
 # 6. 验证
 Set-Location $root

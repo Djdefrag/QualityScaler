@@ -22,7 +22,6 @@ class Logger : public ILogger {
 
 static Logger gLogger;
 static std::string gLastError;
-static std::mutex gTensorRTMutex;
 
 // Smart pointer deleters for TensorRT 10.x
 struct TrtDestroyer {
@@ -50,6 +49,7 @@ struct TensorRTEngineObj {
     cudaStream_t stream = nullptr;
     std::string inputName;
     std::string outputName;
+    std::mutex mu;  // per-engine mutex: IExecutionContext is not thread-safe
 };
 
 // Set error message
@@ -300,7 +300,7 @@ int TensorRT_RunInference(TensorRTContextHandle context,
     TensorRTEngineObj* engineObj = static_cast<TensorRTEngineObj*>(context);
 
     // Lock for thread-safe inference (TensorRT IExecutionContext is not thread-safe)
-    std::lock_guard<std::mutex> lock(gTensorRTMutex);
+    std::lock_guard<std::mutex> lock(engineObj->mu);
 
     // Allocate or reallocate input buffer if needed
     if (inputSize > engineObj->currentAllocatedInputSize) {

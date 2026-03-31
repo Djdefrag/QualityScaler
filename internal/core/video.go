@@ -337,6 +337,14 @@ func upscaleFrames(ctx context.Context, files []string, outDir string, opts Opti
 		}
 	}
 
+	// done is a broadcast stop signal: closing it notifies all goroutines to exit.
+	done := make(chan struct{})
+	var doneOnce sync.Once
+	stopAll := func(e error) {
+		setErr(e)
+		doneOnce.Do(func() { close(done) })
+	}
+
 	var inferWG sync.WaitGroup
 	var saveWG sync.WaitGroup
 	var processedPending int32
@@ -399,34 +407,44 @@ func upscaleFrames(ctx context.Context, files []string, outDir string, opts Opti
 	inferWorker := func(workerIndex int) {
 		defer inferWG.Done()
 		session := sharedSession
-		for job := range jobs {
-			decodeStart := time.Now()
-			img, err := decodeImageWithGOCV(job.src)
-			if err != nil {
-				img, err = decodeImage(job.src)
-				if err != nil {
-					setErr(err)
+		for {
+			select {
+			case <-done:
+				return
+			case job, ok := <-jobs:
+				if !ok {
 					return
 				}
-			}
-			decodeTime := time.Since(decodeStart)
+				decodeStart := time.Now()
+				img, err := decodeImageWithGOCV(job.src)
+				if err != nil {
+					img, err = decodeImage(job.src)
+					if err != nil {
+						stopAll(err)
+						return
+					}
+				}
+				decodeTime := time.Since(decodeStart)
 
-			inferStart := time.Now()
-			final, err := upscaleImageInMemoryWithSession(session, img, opts)
-			if err != nil {
-				setErr(err)
-				return
-			}
-			inferTime := time.Since(inferStart)
+				inferStart := time.Now()
+				final, err := upscaleImageInMemoryWithSession(session, img, opts)
+				if err != nil {
+					stopAll(err)
+					return
+				}
+				inferTime := time.Since(inferStart)
 
-			select {
-			case <-ctx.Done():
-				return
-			case results <- frameResult{outPath: job.outPath, img: final}:
-			}
+				select {
+				case <-ctx.Done():
+					return
+				case <-done:
+					return
+				case results <- frameResult{outPath: job.outPath, img: final}:
+				}
 
-			_ = decodeTime
-			_ = inferTime
+				_ = decodeTime
+				_ = inferTime
+			}
 		}
 	}
 
@@ -449,7 +467,7 @@ func upscaleFrames(ctx context.Context, files []string, outDir string, opts Opti
 				// gocv disabled or unavailable - silently fall back to pure Go encoder
 				err = encodeImage(result.outPath, result.img, outExt, opts.PerformanceMode)
 				if err != nil {
-					setErr(err)
+					stopAll(err)
 					return
 				}
 			}
@@ -474,14 +492,13 @@ func upscaleFrames(ctx context.Context, files []string, outDir string, opts Opti
 	}
 
 	// Feed jobs to workers
+feedLoop:
 	for _, j := range pending {
 		select {
 		case <-ctx.Done():
-			close(jobs)
-			inferWG.Wait()
-			close(results)
-			saveWG.Wait()
-			return context.Canceled
+			break feedLoop
+		case <-done:
+			break feedLoop
 		case jobs <- j:
 		}
 	}
