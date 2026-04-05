@@ -128,6 +128,7 @@ from customtkinter import (
     CTkOptionMenu,
     CTkScrollableFrame,
     CTkToplevel,
+    CTkCanvas,
     filedialog,
     set_appearance_mode,
     set_default_color_theme,
@@ -135,8 +136,12 @@ from customtkinter import (
     set_window_scaling
 )
 
-if sys.stdout is None: sys.stdout = open(os_devnull, "w")
-if sys.stderr is None: sys.stderr = open(os_devnull, "w")
+if sys.stdout is None: sys.stdout = open(os_devnull, "w", encoding="utf-8", errors="replace")
+else:                  sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+if sys.stderr is None: sys.stderr = open(os_devnull, "w", encoding="utf-8", errors="replace")
+else:                  sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def find_by_relative_path(relative_path: str) -> str:
     base_path = getattr(sys, '_MEIPASS', os_path_dirname(os_path_abspath(__file__)))
@@ -145,7 +150,7 @@ def find_by_relative_path(relative_path: str) -> str:
 
 
 app_name   = "QualityScaler"
-version    = "2026.2"
+version    = "2026.3"
 githubme   = "https://github.com/Djdefrag/QualityScaler/releases"
 telegramme = "https://linktr.ee/j3ngystudio"
 
@@ -153,7 +158,6 @@ app_name_color          = "#F274EE"
 background_color        = "#000000"
 widget_background_color = "#181818"
 text_color              = "#B8B8B8"
-
 
 
 VRAM_model_usage = {
@@ -169,12 +173,12 @@ VRAM_model_usage = {
 }
 
 MENU_LIST_SEPARATOR = [ "----" ]
-LVA_models        = [ "LVAx2"                          ] 
+LVA_models        = [ "LVAx2"                      ] 
 RealESR_models    = [ "RealESR_Gx4", "RealESR_Ax4" ]
-BSRGAN_models     = [ "BSRGANx2",    "BSRGANx4"        ]
-RealESRGAN_models = [ "RealESRGANx4"                   ]
-MSharp_models     = [ "MSharpx4"                       ]
-IRCNN_models      = [ "IRCNN_Mx1",   "IRCNN_Lx1"       ]
+BSRGAN_models     = [ "BSRGANx2",    "BSRGANx4"    ]
+RealESRGAN_models = [ "RealESRGANx4"               ]
+MSharp_models     = [ "MSharpx4"                   ]
+IRCNN_models      = [ "IRCNN_Mx1",   "IRCNN_Lx1"   ]
 
 AI_models_list = ( 
     LVA_models          + MENU_LIST_SEPARATOR +
@@ -296,6 +300,7 @@ class AI_upscale:
     def _load_inferenceSession(self) -> onnxruntime_InferenceSession:
 
         providers = ['DmlExecutionProvider']
+        #providers = ['WebGpuExecutionProvider']
 
         match self.selected_gpu:
             case 'Auto':  provider_options = [{"performance_preference": "high_performance"}]
@@ -688,20 +693,20 @@ class VideoUpscaleTask:
             f"  > Input:  {self.video_path}\n"
             f"  > Output: {self.video_output_path}\n"
             f"  AI INFO:\n"
-            f"      • AI Model:     {self.selected_AI_model}\n"
-            f"      • Blending:     {self.selected_blending_factor}\n"
-            f"      • GPU:          {self.selected_gpu}\n"
-            f"      • Threads:      x{self.optimal_threads_number}\n"
+            f"      - AI Model:     {self.selected_AI_model}\n"
+            f"      - Blending:     {self.selected_blending_factor}\n"
+            f"      - GPU:          {self.selected_gpu}\n"
+            f"      - Threads:      x{self.optimal_threads_number}\n"
             f"  RESOLUTIONS INFO:\n"
-            f"      • Video Input:  {self.original_width}x{self.original_height}\n"
-            f"      • AI Input:     {self.AI_input_width}x{self.AI_input_height}\n"
-            f"      • AI Scale:     x{self.upscale_factor}\n"
-            f"      • Out Factor:   x{self.output_resize_factor}\n"
-            f"      • Final Output: {self.target_width}x{self.target_height}\n"
+            f"      - Video Input:  {self.original_width}x{self.original_height}\n"
+            f"      - AI Input:     {self.AI_input_width}x{self.AI_input_height}\n"
+            f"      - AI Scale:     x{self.upscale_factor}\n"
+            f"      - Out Factor:   x{self.output_resize_factor}\n"
+            f"      - Final Output: {self.target_width}x{self.target_height}\n"
             f"  FRAMES INFO:\n"
-            f"      • Total frames: {self.extracted_frames_number}\n"
-            f"      • To upscale:   {len(self.frames_paths_to_upscale)}\n"
-            f"      • Already done: {self.upscaled_frames_counter}"
+            f"      - Total frames: {self.extracted_frames_number}\n"
+            f"      - To upscale:   {len(self.frames_paths_to_upscale)}\n"
+            f"      - Already done: {self.upscaled_frames_counter}"
         )
         
         print(info_message)
@@ -1222,7 +1227,7 @@ class FileWidget(CTkScrollableFrame):
             cap.release()
 
             file_icon  = self.extract_file_icon(file_path)
-            file_infos = f"{minutes}m:{round(seconds)}s • {num_frames}frames • {width}x{height} \n"
+            file_infos = f"{minutes}m:{round(seconds)}s - {num_frames}frames - {width}x{height} \n"
             
             if self.input_resize_factor != 0 and self.output_resize_factor != 0 and self.upscale_factor != 0 :
                 input_resized_height = int(height * (self.input_resize_factor/100))
@@ -1234,10 +1239,14 @@ class FileWidget(CTkScrollableFrame):
                 output_resized_height = int(upscaled_height * (self.output_resize_factor/100))
                 output_resized_width  = int(upscaled_width * (self.output_resize_factor/100))
 
+                label_in  = f"AI input ({self.input_resize_factor}%)"
+                label_ups = f"AI output (x{self.upscale_factor})"
+                label_out = f"File output ({self.output_resize_factor}%)"
+
                 file_infos += (
-                    f"AI input ({self.input_resize_factor}%) ➜ {input_resized_width}x{input_resized_height} \n"
-                    f"AI output (x{self.upscale_factor}) ➜ {upscaled_width}x{upscaled_height} \n"
-                    f"Video output ({self.output_resize_factor}%) ➜ {output_resized_width}x{output_resized_height}"
+                    f"{label_in}\t= {input_resized_width}x{input_resized_height}\n"
+                    f"{label_ups}\t= {upscaled_width}x{upscaled_height}\n"
+                    f"{label_out}\t= {output_resized_width}x{output_resized_height}"
                 )
 
         else:
@@ -1256,10 +1265,14 @@ class FileWidget(CTkScrollableFrame):
                 output_resized_height = int(upscaled_height * (self.output_resize_factor/100))
                 output_resized_width  = int(upscaled_width * (self.output_resize_factor/100))
 
+                label_in  = f"AI input ({self.input_resize_factor}%)"
+                label_ups = f"AI output (x{self.upscale_factor})"
+                label_out = f"File output ({self.output_resize_factor}%)"
+
                 file_infos += (
-                    f"AI input ({self.input_resize_factor}%) ➜ {input_resized_width}x{input_resized_height} \n"
-                    f"AI output (x{self.upscale_factor}) ➜ {upscaled_width}x{upscaled_height} \n"
-                    f"Image output ({self.output_resize_factor}%) ➜ {output_resized_width}x{output_resized_height}"
+                    f"{label_in}\t= {input_resized_width}x{input_resized_height}\n"
+                    f"{label_ups}\t= {upscaled_width}x{upscaled_height}\n"
+                    f"{label_out}\t= {output_resized_width}x{output_resized_height}"
                 )
 
         return file_infos, file_icon
@@ -2650,8 +2663,8 @@ def place_loadFile_section() -> None:
     )
 
     text_drop = (" SUPPORTED FILES \n\n "
-               + "IMAGES • jpg png tif bmp webp heic \n " 
-               + "VIDEOS • mp4 webm mkv flv gif avi mov mpg qt 3gp ")
+               + "IMAGES - jpg png tif bmp webp heic \n " 
+               + "VIDEOS - mp4 webm mkv flv gif avi mov mpg qt 3gp ")
 
     input_file_text = CTkLabel(
         master     = window, 
@@ -2743,49 +2756,49 @@ def place_AI_menu() -> None:
             "\n"
             "LVAx2"
             "\n"
-            " • Target: Live-action video upscaling"
+            " - Target: Live-action video upscaling"
             "\n"
-            " • Tips: AI interpolation - OFF/Low"
+            " - Tips: AI interpolation - OFF/Low"
             "\n",
 
             "\n"
-            "RealESR_Gx4 • RealESR_Ax4"
+            "RealESR_Gx4 - RealESR_Ax4"
             "\n"
-            " • Target: Animated/degraded live-action video upscaling"
+            " - Target: Animated/degraded live-action video upscaling"
             "\n"
-            " • Tips: AI interpolation - Low for animation, Medium/High for live-action videos"
+            " - Tips: AI interpolation - Low for animation, Medium/High for live-action videos"
             "\n",
 
             "\n"
-            "BSRGANx2 • BSRGANx4"
+            "BSRGANx2 - BSRGANx4"
             "\n"
-            " • Target: High-quality image upscaling"
+            " - Target: High-quality image upscaling"
             "\n"
-            " • Tips: can be used to upscale videos but will be slow"
+            " - Tips: can be used to upscale videos but will be slow"
             "\n",
 
             "\n"
             "RealESRGANx4"
             "\n"
-            " • Target: High-quality image upscaling"
+            " - Target: High-quality image upscaling"
             "\n"
-            " • Tips: can be used to upscale videos but will be slow"
+            " - Tips: can be used to upscale videos but will be slow"
             "\n",
 
             "\n"
             "MSharpx4"
             "\n"
-            " • Target: Image upscaling and sharpening"
+            " - Target: Image upscaling and sharpening"
             "\n"
-            " • Tips: to use on good quality photos (not too much noise)"
+            " - Tips: to use on good quality photos (not too much noise)"
             "\n",
 
             "\n"
-            "IRCNN_Mx1 • IRCNN_Lx1"
+            "IRCNN_Mx1 - IRCNN_Lx1"
             "\n"
-            " • Target: Video/image denoising"
+            " - Target: Video/image denoising"
             "\n"
-            " • Tips: AI interpolation - OFF"
+            " - Tips: AI interpolation - OFF"
             "\n",
 
         ]
@@ -2815,15 +2828,15 @@ def place_AI_blending_menu() -> None:
             " Blending combines the upscaled image produced by AI with the original image",
 
             " \n BLENDING OPTIONS\n" +
-            "  • [OFF] No blending is applied\n" +
-            "  • [Low] The result favors the upscaled image, with a slight touch of the original\n" +
-            "  • [Medium] A balanced blend of the original and upscaled images\n" +
-            "  • [High] The result favors the original image, with subtle enhancements from the upscaled version\n",
+            "  - [OFF] No blending is applied\n" +
+            "  - [Low] The result favors the upscaled image, with a slight touch of the original\n" +
+            "  - [Medium] A balanced blend of the original and upscaled images\n" +
+            "  - [High] The result favors the original image, with subtle enhancements from the upscaled version\n",
 
             " \n NOTES\n" +
-            "  • Can enhance the quality of the final result\n" +
-            "  • Especially effective when using the tiling/merging function (useful for low VRAM)\n" +
-            "  • Particularly helpful at low input resolution percentages (<50%)\n",
+            "  - Can enhance the quality of the final result\n" +
+            "  - Especially effective when using the tiling/merging function (useful for low VRAM)\n" +
+            "  - Particularly helpful at low input resolution percentages (<50%)\n",
         ]
 
         MessageBox(
@@ -2852,17 +2865,17 @@ def place_AI_multithreading_menu() -> None:
             " This option can enhance video upscaling performance, especially on powerful GPUs.",
 
             " \n AI MULTITHREADING OPTIONS\n"
-            + "  • OFF - Processes one frame at a time.\n"
-            + "  • 2 threads - Processes two frames simultaneously.\n"
-            + "  • 4 threads - Processes four frames simultaneously.\n"
-            + "  • 6 threads - Processes six frames simultaneously.\n"
-            + "  • 8 threads - Processes eight frames simultaneously.\n",
+            + "  - OFF - Processes one frame at a time.\n"
+            + "  - 2 threads - Processes two frames simultaneously.\n"
+            + "  - 4 threads - Processes four frames simultaneously.\n"
+            + "  - 6 threads - Processes six frames simultaneously.\n"
+            + "  - 8 threads - Processes eight frames simultaneously.\n",
 
             " \n NOTES\n"
-            + "  • Higher thread counts increase CPU, GPU, and RAM usage.\n"
-            + "  • The GPU may be heavily stressed, potentially reaching high temperatures.\n"
-            + "  • Monitor your system's temperature to prevent overheating.\n"
-            + "  • If the chosen thread count exceeds GPU capacity, the app automatically selects an optimal value.\n",
+            + "  - Higher thread counts increase CPU, GPU, and RAM usage.\n"
+            + "  - The GPU may be heavily stressed, potentially reaching high temperatures.\n"
+            + "  - Monitor your system's temperature to prevent overheating.\n"
+            + "  - If the chosen thread count exceeds GPU capacity, the app automatically selects an optimal value.\n",
         ]
 
         MessageBox(
@@ -2891,10 +2904,10 @@ def place_input_output_resolution_textboxs() -> None:
             " While a low value (<50%) will create good quality photos/videos but will much faster",
 
             " \n For example, for a 1080p (1920x1080) image/video\n" + 
-            " • Input scale 25% => input to AI 270p (480x270)\n" +
-            " • Input scale 50% => input to AI 540p (960x540)\n" + 
-            " • Input scale 75% => input to AI 810p (1440x810)\n" + 
-            " • Input scale 100% => input to AI 1080p (1920x1080) \n",
+            " - Input scale 25% => input to AI 270p (480x270)\n" +
+            " - Input scale 50% => input to AI 540p (960x540)\n" + 
+            " - Input scale 75% => input to AI 810p (1440x810)\n" + 
+            " - Input scale 100% => input to AI 1080p (1920x1080) \n",
         ]
 
         MessageBox(
@@ -2912,9 +2925,9 @@ def place_input_output_resolution_textboxs() -> None:
             " A higher value (>100%) will further upscale the AI output, increasing size but not adding real details",
 
             "\n For example, if the AI generates a 4K (3840x2160) image/video\n" +
-            " • Output scale 50%  => final output 1920x1080 (downscaled)\n" +
-            " • Output scale 100% => final output 3840x2160 (AI native)\n" +
-            " • Output scale 200% => final output 7680x4320 (8K, interpolated)\n",
+            " - Output scale 50%  => final output 1920x1080 (downscaled)\n" +
+            " - Output scale 100% => final output 3840x2160 (AI native)\n" +
+            " - Output scale 200% => final output 7680x4320 (8K, interpolated)\n",
         ]
 
         MessageBox(
@@ -2950,16 +2963,16 @@ def place_gpu_gpuVRAM_menus() -> None:
     def open_info_gpu():
         option_list = [
             "\n It is possible to select up to 4 GPUs for AI processing\n" +
-            "  • Auto (the app will select the most powerful GPU)\n" + 
-            "  • GPU 1 (GPU 0 in Task manager)\n" + 
-            "  • GPU 2 (GPU 1 in Task manager)\n" + 
-            "  • GPU 3 (GPU 2 in Task manager)\n" + 
-            "  • GPU 4 (GPU 3 in Task manager)\n",
+            "  - Auto (the app will select the most powerful GPU)\n" + 
+            "  - GPU 1 (GPU 0 in Task manager)\n" + 
+            "  - GPU 2 (GPU 1 in Task manager)\n" + 
+            "  - GPU 3 (GPU 2 in Task manager)\n" + 
+            "  - GPU 4 (GPU 3 in Task manager)\n",
 
             "\n NOTES\n" +
-            "  • Keep in mind that the more powerful the chosen gpu is, the faster the upscaling will be\n" +
-            "  • For optimal performance, it is essential to regularly update your GPUs drivers\n" +
-            "  • Selecting a GPU not present in the PC will cause the app to use the CPU for AI processing\n"
+            "  - Keep in mind that the more powerful the chosen gpu is, the faster the upscaling will be\n" +
+            "  - For optimal performance, it is essential to regularly update your GPUs drivers\n" +
+            "  - Selecting a GPU not present in the PC will cause the app to use the CPU for AI processing\n"
         ]
 
         MessageBox(
@@ -2974,7 +2987,7 @@ def place_gpu_gpuVRAM_menus() -> None:
         option_list = [
             " Make sure to enter the correct value based on the selected GPU's VRAM",
             " Setting a value higher than the available VRAM may cause upscale failure",
-            " For integrated GPUs (Intel HD series • Vega 3, 5, 7), select 2 GB to avoid issues",
+            " For integrated GPUs (Intel HD series - Vega 3, 5, 7), select 2 GB to avoid issues",
         ]
 
         MessageBox(
@@ -3009,32 +3022,32 @@ def place_image_video_output_menus() -> None:
     def open_info_image_output():
         option_list = [
             " \n PNG\n"
-            " • Very good quality\n"
-            " • Slow and heavy file\n"
-            " • Supports transparent images\n"
-            " • Lossless compression (no quality loss)\n"
-            " • Ideal for graphics, web images, and screenshots\n",
+            " - Very good quality\n"
+            " - Slow and heavy file\n"
+            " - Supports transparent images\n"
+            " - Lossless compression (no quality loss)\n"
+            " - Ideal for graphics, web images, and screenshots\n",
 
             " \n JPG\n"
-            " • Good quality\n"
-            " • Fast and lightweight file\n"
-            " • Lossy compression (some quality loss)\n"
-            " • Ideal for photos and web images\n"
-            " • Does not support transparency\n",
+            " - Good quality\n"
+            " - Fast and lightweight file\n"
+            " - Lossy compression (some quality loss)\n"
+            " - Ideal for photos and web images\n"
+            " - Does not support transparency\n",
 
             " \n BMP\n"
-            " • Highest quality\n"
-            " • Slow and heavy file\n"
-            " • Uncompressed format (large file size)\n"
-            " • Ideal for raw images and high-detail graphics\n"
-            " • Does not support transparency\n",
+            " - Highest quality\n"
+            " - Slow and heavy file\n"
+            " - Uncompressed format (large file size)\n"
+            " - Ideal for raw images and high-detail graphics\n"
+            " - Does not support transparency\n",
 
             " \n TIFF\n"
-            " • Highest quality\n"
-            " • Very slow and heavy file\n"
-            " • Supports both lossless and lossy compression\n"
-            " • Often used in professional photography and printing\n"
-            " • Supports multiple layers and transparency\n",
+            " - Highest quality\n"
+            " - Very slow and heavy file\n"
+            " - Supports both lossless and lossy compression\n"
+            " - Often used in professional photography and printing\n"
+            " - Supports multiple layers and transparency\n",
         ]
 
 
@@ -3049,28 +3062,28 @@ def place_image_video_output_menus() -> None:
     def open_info_video_extension():
         option_list = [
             " \n MP4\n"
-            " • Most widely supported format\n"
-            " • Good quality with efficient compression\n"
-            " • Fast and lightweight file\n"
-            " • Ideal for streaming and general use\n",
+            " - Most widely supported format\n"
+            " - Good quality with efficient compression\n"
+            " - Fast and lightweight file\n"
+            " - Ideal for streaming and general use\n",
 
             " \n MKV\n"
-            " • High-quality format with multiple audio and subtitle tracks support\n"
-            " • Larger file size compared to MP4\n"
-            " • Supports almost any codec\n"
-            " • Ideal for high-quality videos and archiving\n",
+            " - High-quality format with multiple audio and subtitle tracks support\n"
+            " - Larger file size compared to MP4\n"
+            " - Supports almost any codec\n"
+            " - Ideal for high-quality videos and archiving\n",
 
             " \n AVI\n"
-            " • Older format with high compatibility\n"
-            " • Larger file size due to less efficient compression\n"
-            " • Supports multiple codecs but lacks modern features\n"
-            " • Ideal for older devices and raw video storage\n",
+            " - Older format with high compatibility\n"
+            " - Larger file size due to less efficient compression\n"
+            " - Supports multiple codecs but lacks modern features\n"
+            " - Ideal for older devices and raw video storage\n",
 
             " \n MOV\n"
-            " • High-quality format developed by Apple\n"
-            " • Large file size due to less compression\n"
-            " • Best suited for editing and high-quality playback\n"
-            " • Compatible mainly with macOS and iOS devices\n",
+            " - High-quality format developed by Apple\n"
+            " - Large file size due to less compression\n"
+            " - Best suited for editing and high-quality playback\n"
+            " - Compatible mainly with macOS and iOS devices\n",
         ]
 
         MessageBox(
@@ -3103,20 +3116,20 @@ def place_video_codec_keep_frames_menus() -> None:
     def open_info_video_codec():
         option_list = [
             " \n SOFTWARE ENCODING (CPU)\n"
-            " • x264 | H.264 software encoding\n"
-            " • x265 | HEVC (H.265) software encoding\n",
+            " - x264 | H.264 software encoding\n"
+            " - x265 | HEVC (H.265) software encoding\n",
 
             " \n NVIDIA GPU ENCODING (NVENC - Optimized for NVIDIA GPU)\n"
-            " • h264_nvenc | H.264 hardware encoding\n"
-            " • hevc_nvenc | HEVC (H.265) hardware encoding\n",
+            " - h264_nvenc | H.264 hardware encoding\n"
+            " - hevc_nvenc | HEVC (H.265) hardware encoding\n",
 
             " \n AMD GPU ENCODING (AMF - Optimized for AMD GPU)\n"
-            " • h264_amf | H.264 hardware encoding\n"
-            " • hevc_amf | HEVC (H.265) hardware encoding\n",
+            " - h264_amf | H.264 hardware encoding\n"
+            " - hevc_amf | HEVC (H.265) hardware encoding\n",
 
             " \n INTEL GPU ENCODING (QSV - Optimized for Intel GPU)\n"
-            " • h264_qsv | H.264 hardware encoding\n"
-            " • hevc_qsv | HEVC (H.265) hardware encoding\n"
+            " - h264_qsv | H.264 hardware encoding\n"
+            " - hevc_qsv | HEVC (H.265) hardware encoding\n"
         ]
 
 
@@ -3211,19 +3224,23 @@ def place_message_label() -> None:
         corner_radius = 4
     )
 
-    triangle_pointer = CTkLabel(
-        master     = window,
-        text       = "◀", 
-        font       = ("Arial", 24),
-        text_color = "#ffbf00",
-        bg_color   = background_color,
-        fg_color   = background_color,
+    triangle_dimension = 14
+    zero = 0
+    triangle_pointer = CTkCanvas(
+        window, 
+        width   = triangle_dimension, 
+        height  = triangle_dimension, 
+        bg      = background_color, 
+        highlightthickness = 0
     )
-    
-    label_relx = 0.85
-    label_rely = row11
-    triangle_pointer.place(relx = label_relx - 0.1325, rely = label_rely, anchor="center")
-    message_label.place(   relx = label_relx,         rely = label_rely, anchor="center")
+    triangle_pointer.create_polygon(
+        triangle_dimension, zero,
+        zero,               (triangle_dimension/2),
+        triangle_dimension, triangle_dimension,
+        fill = "#ffbf00"
+    )
+    triangle_pointer.place(relx = 0.716, rely = row11, anchor = "center")
+    message_label.place(   relx = 0.85,  rely = row11, anchor = "center")
     
 def place_stop_button() -> None: 
     stop_button = create_active_button(
@@ -3312,6 +3329,7 @@ class App():
     def __init__(self, window) -> None:
         self.toplevel_window = None
         window.protocol("WM_DELETE_WINDOW", on_app_close)
+
         window.title(f"{self._get_AI_engine_info()}")
         window.geometry("1000x675")
         window.resizable(False, False)
@@ -3336,6 +3354,7 @@ class App():
     def _get_AI_engine_info(self) -> str:
         try:
             AI_engine_v  = onnxruntime_get_version_string()
+            print(onnxruntime_get_available_providers())
             is_directml  = any("Dml" in p or "DirectML" in p for p in onnxruntime_get_available_providers())
             AI_providers = "DirectML" if is_directml else "CPU"
             return f"AI engine {AI_engine_v} + {AI_providers}"
@@ -3346,7 +3365,8 @@ class App():
 
 # Main functions ---------------------------
 
-if __name__ == "__main__":    
+if __name__ == "__main__":
+
     if os_path_exists(USER_PREFERENCE_PATH):
         print(f"[{app_name}] Preference file exist")
         with open(USER_PREFERENCE_PATH, "r") as json_file:
