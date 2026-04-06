@@ -18,8 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lxn/walk"
-
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
@@ -34,6 +32,7 @@ import (
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -63,17 +62,18 @@ func Run() error {
 		fmt.Printf("[INFO] %s\n", editionInfo)
 	}
 
-	aiAvailable := core.InitializeAI()
+	aiAvailable := core.InitializeAllBackends()
 	model := strings.TrimSpace(state.prefs.AIModel)
 	if model == "" {
 		model = appcfg.AIModels[0]
 	}
 
-	if aiAvailable {
+	// TensorRT 不需要预热 ONNX session；只有纯 ONNX 模式才需要
+	if aiAvailable && !core.TensorRTAvailable() {
 		_ = core.WarmupAISession(model)
 	}
 
-	a := fyneapp.New()
+	a := fyneapp.NewWithID("io.github.qualityscaler.go")
 	a.Settings().SetTheme(theme.DarkTheme())
 
 	// Include edition in window title
@@ -205,37 +205,64 @@ func Run() error {
 	inputScaleEntry.OnChanged = func(_ string) { updateResolutionPreview() }
 	outputScaleEntry.OnChanged = func(_ string) { updateResolutionPreview() }
 
-	addFilesBtn := widget.NewButton("添加文件", func() {
-		go func() {
-			dlg := new(walk.FileDialog)
-			dlg.Title = "选择文件"
-			dlg.Filter = "支持的文件 (*.jpg;*.png;*.mp4;*.mkv;...)|*.jpg;*.jpeg;*.png;*.webp;*.bmp;*.tif;*.tiff;*.mp4;*.mkv;*.avi;*.mov;*.webm;*.flv;*.gif"
-
-			if ok, err := dlg.ShowOpenMultiple(nil); ok && err == nil {
-				state.mu.Lock()
-				added := 0
-				for _, p := range dlg.FilePaths {
-					ext := strings.ToLower(filepath.Ext(p))
-					if _, ok := appcfg.SupportedExts[ext]; ok {
-						state.files = append(state.files, p)
-						added++
-					}
-				}
-				if added > 0 {
-					sortFilesNatural(state.files)
-				}
-				count := len(state.files)
-				state.mu.Unlock()
-
-				fyne.Do(func() {
-					fileList.Refresh()
-					updateResolutionPreview()
-					if added > 0 {
-						_ = statusBind.Set(fmt.Sprintf("已导入 %d 个文件，当前共 %d 个", added, count))
-					}
-				})
+	// addCandidates 将候选文件（已排序）去重后合并进队列
+	addCandidates := func(newFiles []string) {
+		state.mu.Lock()
+		existing := make(map[string]struct{}, len(state.files))
+		for _, f := range state.files {
+			existing[strings.ToLower(filepath.Clean(f))] = struct{}{}
+		}
+		for _, f := range newFiles {
+			key := strings.ToLower(filepath.Clean(f))
+			if _, dup := existing[key]; !dup {
+				state.files = append(state.files, f)
+				existing[key] = struct{}{}
 			}
-		}()
+		}
+		sortFilesNatural(state.files)
+		count := len(state.files)
+		state.mu.Unlock()
+		fileList.Refresh()
+		updateResolutionPreview()
+		_ = statusBind.Set(fmt.Sprintf("已导入文件，当前共 %d 个", count))
+	}
+
+	addFilesBtn := widget.NewButton("批量添加文件", func() {
+		// 保存当前输出路径，防止 Fyne 文件对话框意外覆盖
+		savedOutputPath, _ := outputPathBind.Get()
+		fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+			// 立即恢复输出路径，防止被对话框内部逻辑覆盖
+			_ = outputPathBind.Set(savedOutputPath)
+			if err != nil || reader == nil {
+				return
+			}
+			_ = reader.Close()
+			p := reader.URI().Path()
+			// 单文件直接通过预览弹窗
+			candidates := filterSupportedFiles([]string{p})
+			showFilePickerDialog(w, candidates, addCandidates)
+		}, w)
+		fd.SetFilter(storage.NewExtensionFileFilter([]string{
+			".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff",
+			".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".gif",
+		}))
+		fd.SetConfirmText("选择文件")
+		fd.Show()
+	})
+
+	addFolderBtn := widget.NewButton("添加文件夹", func() {
+		// 保存当前输出路径，防止 Fyne 文件夹对话框意外覆盖
+		savedOutputPath, _ := outputPathBind.Get()
+		fd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
+			// 立即恢复输出路径，防止被对话框内部逻辑覆盖
+			_ = outputPathBind.Set(savedOutputPath)
+			if err != nil || lu == nil {
+				return
+			}
+			candidates := scanSupportedFiles(lu.Path())
+			showFilePickerDialog(w, candidates, addCandidates)
+		}, w)
+		fd.Show()
 	})
 
 	clearBtn := widget.NewButton("清空列表", func() {
@@ -248,13 +275,13 @@ func Run() error {
 	})
 
 	selectOutputBtn := widget.NewButton("选择输出目录", func() {
-		go func() {
-			dlg := new(walk.FileDialog)
-			dlg.Title = "选择输出目录"
-			if ok, err := dlg.ShowBrowseFolder(nil); ok && err == nil {
-				_ = outputPathBind.Set(dlg.FilePath)
+		fd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
+			if err != nil || lu == nil {
+				return
 			}
-		}()
+			_ = outputPathBind.Set(lu.Path())
+		}, w)
+		fd.Show()
 	})
 
 	readOptions := func() (core.Options, error) {
@@ -369,23 +396,22 @@ func Run() error {
 					}
 				},
 				func(completedFile string) {
-					// 文件完成回调：从队列中移除
+					// 文件完成回调：从队列中移除（数据操作在 goroutine，UI 更新切到主线程）
 					state.mu.Lock()
-					// 过滤掉已完成的文件（使用 filepath.EvalSymlinks 规范化路径进行比较）
 					var filtered []string
 					for _, f := range state.files {
-						// 规范化路径后再比较
 						normalizedF := filepath.Clean(f)
 						normalizedCompleted := filepath.Clean(completedFile)
-						// Windows 下路径大小写不敏感
 						if !strings.EqualFold(normalizedF, normalizedCompleted) {
 							filtered = append(filtered, f)
 						}
 					}
 					state.files = filtered
 					state.mu.Unlock()
-					// 更新UI显示
-					fileList.Refresh()
+					// 必须在主线程刷新 UI
+					fyne.Do(func() {
+						fileList.Refresh()
+					})
 				},
 			)
 
@@ -401,8 +427,11 @@ func Run() error {
 				return
 			}
 			if err != nil {
-				_ = statusBind.Set(fmt.Sprintf("错误: %s | 耗时: %s", err.Error(), elapsedStr))
-				dialog.ShowError(err, w)
+				errMsg := fmt.Sprintf("错误: %s | 耗时: %s", err.Error(), elapsedStr)
+				_ = statusBind.Set(errMsg)
+				fyne.Do(func() {
+					dialog.ShowError(err, w)
+				})
 				return
 			}
 			_ = statusBind.Set(fmt.Sprintf("处理完成 | 总耗时: %s", elapsedStr))
@@ -437,9 +466,9 @@ func Run() error {
 	filePanel := container.NewBorder(
 		container.NewVBox(
 			widget.NewLabelWithStyle("SUPPORTED FILES", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-			widget.NewLabelWithStyle("提示: 队列仅保存在内存中，程序关闭后清空", fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
+			widget.NewLabelWithStyle("提示: 可拖拽文件/文件夹到窗口直接导入", fyne.TextAlignLeading, fyne.TextStyle{Italic: true}),
 		),
-		container.NewHBox(layout.NewSpacer(), addFilesBtn, clearBtn, layout.NewSpacer()),
+		container.NewHBox(layout.NewSpacer(), addFilesBtn, addFolderBtn, clearBtn, layout.NewSpacer()),
 		nil,
 		nil,
 		fileList,
@@ -474,6 +503,9 @@ func Run() error {
 	root.Offset = 0.34
 	w.SetContent(root)
 
+	// 注册窗口级文件拖拽（文件/文件夹均支持，拖入后进预览弹窗）
+	setupWindowDrop(w, addCandidates)
+
 	if !aiAvailable {
 		detail := core.AIStatusDetail()
 		missing := core.MissingRuntimeDLLs()
@@ -482,7 +514,8 @@ func Run() error {
 		}
 		_ = statusBind.Set("就绪 | AI后端: CPU 回退")
 		dialog.ShowInformation("AI 运行环境未就绪", detail, w)
-	} else if core.AIBackend() != "CUDA (GPU 0)" {
+	} else if !core.TensorRTAvailable() && core.CUDAUnavailable() {
+		// 仅在确认 CUDA 不可用（且非 TensorRT 模式）时弹窗提示
 		dialog.ShowInformation("AI 运行诊断", "ONNX 已加载，但 CUDA 未启用。\n后端: "+core.AIBackend()+"\n详情: "+core.AIStatusDetail(), w)
 	}
 

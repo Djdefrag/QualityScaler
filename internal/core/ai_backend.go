@@ -4,24 +4,22 @@ import (
 	"fmt"
 	"image"
 	"sync"
-
-	ort "github.com/yalue/onnxruntime_go"
 )
 
 // AIBackendType represents the AI inference backend
 type AIBackendType int
 
 const (
-	BackendAuto AIBackendType = iota // Auto-select best available
-	BackendONNX                    // ONNX Runtime
-	BackendTensorRT                 // TensorRT
+	BackendAuto     AIBackendType = iota // Auto-select best available
+	BackendONNX                          // ONNX Runtime
+	BackendTensorRT                      // TensorRT
 )
 
 var (
 	// Current backend selection
-	currentBackend     AIBackendType
-	preferredBackend   AIBackendType = BackendAuto
-	backendLock       sync.RWMutex
+	currentBackend   AIBackendType
+	preferredBackend AIBackendType = BackendAuto
+	backendLock      sync.RWMutex
 )
 
 // SetPreferredBackend sets the preferred AI backend
@@ -75,23 +73,19 @@ func RunAIInferenceWithBackend(img image.Image, modelName string, backend AIBack
 
 	switch backend {
 	case BackendTensorRT:
-		// Try TensorRT first
 		if TensorRTAvailable() {
 			imgRGBA := toRGBA(img)
-			hasAlpha := checkAlphaChannel(imgRGBA)
-
-			if !hasAlpha {
-				// RGB-only fast path
-				// Would use TensorRT batch inference here
-				// For now, fall back to ONNX
+			result, err := RunTensorRTInference(modelName, imgRGBA)
+			if err != nil {
+				fmt.Printf("[TensorRT] inference error, falling back to ONNX: %v\n", err)
 				return RunAIInference(img, modelName)
 			}
+			return result, nil
 		}
-		// Fall back to ONNX Runtime
+		// TRT not available, fall back to ONNX Runtime
 		return RunAIInference(img, modelName)
 
 	case BackendONNX:
-		// Use ONNX Runtime
 		return RunAIInference(img, modelName)
 
 	default:
@@ -139,15 +133,13 @@ func RunAIInferenceBatchAuto(imgs []*image.RGBA, modelName string) ([]image.Imag
 		backend = selectBestBackend()
 	}
 
+	results := make([]image.Image, len(imgs))
+
 	switch backend {
 	case BackendTensorRT:
 		if TensorRTAvailable() {
-			// Get or create TensorRT engine
 			_, err := GetTensorRTEngine(modelName)
 			if err == nil {
-				// For now, process images one by one with TensorRT
-				// TODO: Implement true batch inference in TensorRT
-				results := make([]image.Image, len(imgs))
 				for i, img := range imgs {
 					result, err := RunTensorRTInference(modelName, img)
 					if err != nil {
@@ -157,52 +149,18 @@ func RunAIInferenceBatchAuto(imgs []*image.RGBA, modelName string) ([]image.Imag
 				}
 				return results, nil
 			}
-			fmt.Printf("TensorRT error: %v, falling back to ONNX\n", err)
+			fmt.Printf("TensorRT engine error: %v, falling back to ONNX\n", err)
 		}
-		// Fall back to ONNX Runtime (single image at a time for now)
-		var session *ort.DynamicAdvancedSession
-		if !trtAvailable {
-			var err error
-			session, err = GetAISession(modelName)
-			if err != nil {
-				return nil, err
-			}
-		}
-		results := make([]image.Image, len(imgs))
-		for i, img := range imgs {
-			var result image.Image
-			var err error
-			if trtAvailable {
-				result, err = RunAIInference(img, modelName)
-			} else {
-				result, err = RunAIInferenceWithSession(session, img, modelName)
-			}
-			if err != nil {
-				return nil, err
-			}
-			results[i] = result
-		}
-		return results, nil
+		// Fall through to ONNX
+		fallthrough
 
 	case BackendONNX:
-		var session *ort.DynamicAdvancedSession
-		if !trtAvailable {
-			var err error
-			session, err = GetAISession(modelName)
-			if err != nil {
-				return nil, err
-			}
+		session, err := GetAISession(modelName)
+		if err != nil {
+			return nil, err
 		}
-		// For now, process images one at a time (ONNX Runtime batch=1)
-		results := make([]image.Image, len(imgs))
 		for i, img := range imgs {
-			var result image.Image
-			var err error
-			if trtAvailable {
-				result, err = RunAIInference(img, modelName)
-			} else {
-				result, err = RunAIInferenceWithSession(session, img, modelName)
-			}
+			result, err := RunAIInferenceWithSession(session, img, modelName)
 			if err != nil {
 				return nil, err
 			}

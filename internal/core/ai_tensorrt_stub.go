@@ -1,5 +1,5 @@
-//go:build !tensorrt
-// +build !tensorrt
+//go:build !tensorrt && !full
+// +build !tensorrt,!full
 
 package core
 

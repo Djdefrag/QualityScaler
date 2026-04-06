@@ -150,22 +150,10 @@ func extractFrames(ctx context.Context, ffmpegPath, inputPath, framesDir string,
 	}
 	totalFrames := duration * fps
 
-	// Try hardware acceleration: use cuda if we have an NVIDIA GPU, otherwise auto.
-	hwAccelArgs := []string{"-hwaccel", "auto"}
-	if strings.Contains(strings.ToUpper(AIBackend()), "CUDA") {
-		// Use CUDA for video decoding as well to show activity in the Video Decode engine
-		hwAccelArgs = []string{"-hwaccel", "cuda"}
-	}
+	reFrame := regexp.MustCompile(`frame=\s*(\d+)`)
 
-	args := []string{
-		"-threads", "0",
-		"-i", inputPath,
-		"-q:v", "2",
-		filepath.Join(framesDir, "frame_%08d.jpg"),
-	}
-
-	fullArgs := append(hwAccelArgs, args...)
-
+	// runWithProgress 运行 ffmpeg 并同步等待 stderr goroutine 退出，避免资源泄漏。
+	// 失败时清理 framesDir 中的残留文件，确保 fallback 重试时目录干净。
 	runWithProgress := func(cmdArgs []string) error {
 		cmd := exec.CommandContext(ctx, ffmpegPath, cmdArgs...)
 		hideWindow(cmd)
@@ -177,11 +165,11 @@ func extractFrames(ctx context.Context, ffmpegPath, inputPath, framesDir string,
 			return err
 		}
 
-		reFrame := regexp.MustCompile(`frame=\s*(\d+)`)
-
+		var stderrWG sync.WaitGroup
+		stderrWG.Add(1)
 		go func() {
+			defer stderrWG.Done()
 			scanner := bufio.NewScanner(stderr)
-			// FFmpeg uses \r to overwrite lines, so we split by \r
 			split := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 				if atEOF && len(data) == 0 {
 					return 0, nil, nil
@@ -195,12 +183,10 @@ func extractFrames(ctx context.Context, ffmpegPath, inputPath, framesDir string,
 				return 0, nil, nil
 			}
 			scanner.Split(split)
-
 			for scanner.Scan() {
 				line := scanner.Text()
 				if progress != nil && totalFrames > 0 {
-					matches := reFrame.FindStringSubmatch(line)
-					if len(matches) > 1 {
+					if matches := reFrame.FindStringSubmatch(line); len(matches) > 1 {
 						if currentFrame, err := strconv.ParseFloat(matches[1], 64); err == nil {
 							p := (currentFrame / totalFrames) * 10.0
 							if p > 10.0 {
@@ -213,20 +199,53 @@ func extractFrames(ctx context.Context, ffmpegPath, inputPath, framesDir string,
 			}
 		}()
 
-		return cmd.Wait()
+		waitErr := cmd.Wait()
+		stderrWG.Wait() // 确保 goroutine 在 pipe 关闭后完全退出
+		return waitErr
 	}
 
-	if err := runWithProgress(fullArgs); err != nil {
-		// Fallback to software decoding
-		softwareArgs := []string{
+	// Try hardware acceleration: use cuda if we have an NVIDIA GPU, otherwise auto.
+	hwAccelArgs := []string{"-hwaccel", "auto"}
+	if strings.Contains(strings.ToUpper(AIBackend()), "CUDA") {
+		hwAccelArgs = []string{"-hwaccel", "cuda"}
+	}
+
+	outputPattern := filepath.Join(framesDir, "frame_%08d.jpg")
+
+	hwArgs := append(hwAccelArgs, []string{
+		"-y",
+		"-threads", "0",
+		"-i", inputPath,
+		"-q:v", "2",
+		outputPattern,
+	}...)
+
+	if err := runWithProgress(hwArgs); err != nil {
+		// 硬件解码失败：清理可能写了一半的帧文件，再用纯软件解码重试
+		_ = cleanDir(framesDir)
+
+		swArgs := []string{
+			"-y",
 			"-threads", "0",
 			"-i", inputPath,
 			"-q:v", "2",
-			filepath.Join(framesDir, "frame_%08d.jpg"),
+			outputPattern,
 		}
-		if errFallback := runWithProgress(softwareArgs); errFallback != nil {
-			return fmt.Errorf("extract frames failed (hardware & software)")
+		if errFallback := runWithProgress(swArgs); errFallback != nil {
+			return fmt.Errorf("extract frames failed (hardware & software): %w", errFallback)
 		}
+	}
+	return nil
+}
+
+// cleanDir 删除目录下所有文件，保留目录本身
+func cleanDir(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		_ = os.Remove(filepath.Join(dir, e.Name()))
 	}
 	return nil
 }
@@ -616,8 +635,11 @@ func assembleVideo(ctx context.Context, ffmpegPath, frameDir, originalVideo, out
 
 	reFrame := regexp.MustCompile(`frame=\s*(\d+)`)
 
-	// Async goroutine: parse ffmpeg stderr and report 90→100% progress
+	// Synchronously drain stderr before Wait() to avoid pipe deadlock.
+	var stderrDone sync.WaitGroup
+	stderrDone.Add(1)
 	go func() {
+		defer stderrDone.Done()
 		scanner := bufio.NewScanner(stderr)
 		split := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 			if atEOF && len(data) == 0 {
@@ -652,7 +674,9 @@ func assembleVideo(ctx context.Context, ffmpegPath, frameDir, originalVideo, out
 		}
 	}()
 
-	if err := cmd.Wait(); err != nil {
+	waitErr := cmd.Wait()
+	stderrDone.Wait() // ensure goroutine exits before returning
+	if waitErr != nil {
 		return fmt.Errorf("assemble video failed (ffmpeg exited with error)")
 	}
 

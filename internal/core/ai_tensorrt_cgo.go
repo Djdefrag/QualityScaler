@@ -1,5 +1,5 @@
-//go:build tensorrt
-// +build tensorrt
+//go:build tensorrt || full
+// +build tensorrt full
 
 package core
 
@@ -39,6 +39,18 @@ import (
 	"unsafe"
 )
 
+// exeRelPath resolves a path relative to the executable's directory,
+// falling back to the current working directory.
+func exeRelPath(rel string) string {
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), rel)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return rel
+}
+
 // InitializeTensorRT initializes the TensorRT backend using pure CGO
 func InitializeTensorRT() bool {
 	if trtInitialized {
@@ -47,8 +59,8 @@ func InitializeTensorRT() bool {
 
 	fmt.Println("[TensorRT] Initializing TensorRT backend (Pure CGO)...")
 
-	// Check if TensorRT engines directory exists
-	trtDir := "AI-tensorrt"
+	// Resolve AI-tensorrt directory relative to exe, then CWD
+	trtDir := exeRelPath("AI-tensorrt")
 	if _, err := os.Stat(trtDir); os.IsNotExist(err) {
 		trtInitErr = fmt.Errorf("TensorRT engines directory not found: %s", trtDir)
 		fmt.Printf("[TensorRT] %v\n", trtInitErr)
@@ -128,10 +140,10 @@ func GetTensorRTEngine(modelName string) (*TensorRTEngine, error) {
 		return engine, nil
 	}
 
-	// Construct engine path
-	enginePath := fmt.Sprintf("AI-tensorrt/%s_fp16.engine", modelName)
+	// Construct engine path relative to exe directory
+	enginePath := exeRelPath(fmt.Sprintf("AI-tensorrt/%s_fp16.engine", modelName))
 	if _, err := os.Stat(enginePath); os.IsNotExist(err) {
-		enginePath = fmt.Sprintf("AI-tensorrt/%s.engine", modelName)
+		enginePath = exeRelPath(fmt.Sprintf("AI-tensorrt/%s.engine", modelName))
 		if _, err := os.Stat(enginePath); os.IsNotExist(err) {
 			return nil, fmt.Errorf("TensorRT engine not found: %s_fp16.engine or %s.engine", modelName, modelName)
 		}
@@ -293,7 +305,6 @@ func RunTensorRTInference(modelName string, img *image.RGBA) (image.Image, error
 		errMsg := C.GoString(C.TensorRT_GetLastError())
 		return nil, fmt.Errorf("TensorRT inference failed: %s", errMsg)
 	}
-
 
 	TRTLog.Add("[TensorRT] Inference completed successfully")
 

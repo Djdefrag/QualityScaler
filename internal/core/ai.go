@@ -26,7 +26,7 @@ var (
 	floatPoolsMu   sync.Mutex
 	floatPools     = make(map[int]*sync.Pool)
 	// Limit pool size to prevent memory bloat
-	maxFloatPools = 128
+	maxFloatPools  = 128
 	floatPoolCount int
 )
 
@@ -100,6 +100,12 @@ func MissingRuntimeDLLs() []string {
 	out := make([]string, len(aiMissingDLLs))
 	copy(out, aiMissingDLLs)
 	return out
+}
+
+// CUDAUnavailable returns true only when CUDA was explicitly tried and failed.
+// Returns false if CUDA hasn't been attempted yet (lazy session init) or succeeded.
+func CUDAUnavailable() bool {
+	return aiCudaErr != ""
 }
 
 func WarmupAISession(modelName string) error {
@@ -320,13 +326,13 @@ func createSession(modelName string) (*ort.DynamicAdvancedSession, error) {
 	if cudaOpts, err := ort.NewCUDAProviderOptions(); err == nil {
 		defer cudaOpts.Destroy()
 		_ = cudaOpts.Update(map[string]string{
-			"device_id":                  "0",
-			"arena_extend_strategy":      "kNextPowerOfTwo",
-			"cudnn_conv_algo_search":     "HEURISTIC", // Use HEURISTIC for faster warmup (was EXHAUSTIVE)
-			"do_copy_in_default_stream":  "1",
-			"cudnn_conv_use_max_workspace": "1",        // Use maximum workspace for better performance
-			"cudnn_conv_bias_prefetch":    "1",        // Pre-fetch bias data
-			"cudnn_conv_allow_tf32":       "1",        // Use TF32 for faster computation on Ampere+ GPUs
+			"device_id":                    "0",
+			"arena_extend_strategy":        "kNextPowerOfTwo",
+			"cudnn_conv_algo_search":       "HEURISTIC", // Use HEURISTIC for faster warmup (was EXHAUSTIVE)
+			"do_copy_in_default_stream":    "1",
+			"cudnn_conv_use_max_workspace": "1", // Use maximum workspace for better performance
+			"cudnn_conv_bias_prefetch":     "1", // Pre-fetch bias data
+			"cudnn_conv_allow_tf32":        "1", // Use TF32 for faster computation on Ampere+ GPUs
 		})
 		if err := options.AppendExecutionProviderCUDA(cudaOpts); err == nil {
 			aiBackend = "CUDA (GPU 0)"
@@ -403,20 +409,20 @@ func RunAIInferenceWithSession(session *ort.DynamicAdvancedSession, img image.Im
 	hasAlpha := checkAlphaChannel(imgRGBA)
 
 	if !hasAlpha {
-	// No alpha channel, use the standard fast path
-	var result image.Image
-	var err error
-	if session != nil {
-		result, err = runAIInferenceRGBOnly(session, imgRGBA, modelName)
-	} else if trtAvailable {
-		// Fallback to auto inference which handles TensorRT natively
-		// RunAIInference Auto logic separates alpha, so call it directly
-		result, err = RunAIInference(imgRGBA, modelName)
-	} else {
-		// Neither session nor TRT available
-		return nil, fmt.Errorf("AI session is nil and TensorRT is not available")
-	}
-	return result, err
+		// No alpha channel, use the standard fast path
+		var result image.Image
+		var err error
+		if session != nil {
+			result, err = runAIInferenceRGBOnly(session, imgRGBA, modelName)
+		} else if trtAvailable {
+			// Fallback to auto inference which handles TensorRT natively
+			// RunAIInference Auto logic separates alpha, so call it directly
+			result, err = RunAIInference(imgRGBA, modelName)
+		} else {
+			// Neither session nor TRT available
+			return nil, fmt.Errorf("AI session is nil and TensorRT is not available")
+		}
+		return result, err
 	}
 
 	// Image has alpha channel - separate and process
@@ -462,7 +468,7 @@ func runAIInferenceWithAlpha(session *ort.DynamicAdvancedSession, img *image.RGB
 			rgbImg.Pix[dstIdx] = img.Pix[srcIdx]     // R
 			rgbImg.Pix[dstIdx+1] = img.Pix[srcIdx+1] // G
 			rgbImg.Pix[dstIdx+2] = img.Pix[srcIdx+2] // B
-			rgbImg.Pix[dstIdx+3] = 255                // A (opaque)
+			rgbImg.Pix[dstIdx+3] = 255               // A (opaque)
 		}
 	}
 
@@ -559,9 +565,9 @@ func upsampleAlphaChannel(img *image.RGBA, outWidth, outHeight int) *image.RGBA 
 			// Bilinear interpolation
 			alpha := v00*(1-fx)*(1-fy) + v01*fx*(1-fy) + v10*(1-fx)*fy + v11*fx*fy
 
-			result.Pix[dstIdx] = 255   // R
-			result.Pix[dstIdx+1] = 255 // G
-			result.Pix[dstIdx+2] = 255 // B
+			result.Pix[dstIdx] = 255            // R
+			result.Pix[dstIdx+1] = 255          // G
+			result.Pix[dstIdx+2] = 255          // B
 			result.Pix[dstIdx+3] = uint8(alpha) // A
 		}
 	}
@@ -631,7 +637,7 @@ func runAIInferenceRGBOnly(session *ort.DynamicAdvancedSession, img *image.RGBA,
 	// Run Inference
 	// session.Run expects []Value for inputs and outputs
 	startTime := time.Now()
-	
+
 	// Add progress monitoring for long-running inferences
 	var progressTimer *time.Timer
 	var progressDone chan struct{}
@@ -653,10 +659,10 @@ func runAIInferenceRGBOnly(session *ort.DynamicAdvancedSession, img *image.RGBA,
 			}
 		}()
 	}
-	
+
 	err = session.Run([]ort.ArbitraryTensor{inputTensor}, []ort.ArbitraryTensor{outputTensor})
 	inferTime := time.Since(startTime)
-	
+
 	if progressTimer != nil {
 		progressTimer.Stop()
 		close(progressDone)
