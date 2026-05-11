@@ -69,6 +69,31 @@ Getting started.
 - Close VSCode and re-open it (this will refresh all the dependecies installed)
 - Click on the "Play button" in the upper right corner of VSCode
 
+## Make it work on Linux. 🐧
+Prerequisites.
+- Python 3.11 (`sudo dnf install python3.11` or `sudo apt install python3.11 python3.11-venv`)
+- AI models downloaded (https://gofile.io/d/b4Ds9u) placed in `/AI-onnx` folder
+- NVIDIA GPU with >= 4GB VRAM, driver 450+, Pascal (GTX 10xx) architecture or newer
+- `appimagetool` downloaded once into the repo root:
+```
+wget "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+chmod +x appimagetool-x86_64.AppImage
+```
+
+Getting started.
+```
+python3.11 -m venv .venv
+source .venv/bin/activate
+bash build-appimage.sh
+```
+The build script downloads static ffmpeg and exiftool binaries on first run, installs all Python dependencies including CUDA libraries, and packages the app as a self-contained AppImage.
+
+Or download the pre-built AppImage from the [Releases](../../releases) page, make it executable, and run:
+```
+chmod +x QualityScaler-*-x86_64.AppImage
+./QualityScaler-*-x86_64.AppImage
+```
+
 ## Requirements. 🤓
 - Windows 11 / Windows 10
 - RAM >= 8Gb
@@ -144,5 +169,3 @@ https://user-images.githubusercontent.com/32263112/209139639-2b123b83-ac6e-4681-
 ![Bsrgan x4 (3)](https://user-images.githubusercontent.com/32263112/197983979-5857a855-d402-4fab-9217-ee5bd057bd01.png)
 
 ![Bsrgan x4](https://user-images.githubusercontent.com/32263112/198290909-277e176e-ccb4-4a4b-8531-b182a18d566a.png)
-
-
