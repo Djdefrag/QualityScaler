@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
+
+# AppImage build artifacts
+AppDir/
+*.AppImage
+
+# Downloaded build tools (re-downloaded automatically by build-appimage.sh)
+appimagetool-x86_64.AppImage
+
+# Downloaded static binaries (re-downloaded automatically by build-appimage.sh)
+Assets/ffmpeg
+Assets/exiftool
+Assets/exiftool_lib/
+
+# AI models — large files, downloaded separately
+# See README for download link (gofile.io)
+AI-onnx/*.onnx
+
+# User preference files generated at runtime
+*.json
+
+# Logs and temp files
+*.log
+*.tmp
+cale_steps*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+CLAUDE.md

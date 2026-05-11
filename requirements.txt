@@ -1,5 +1,12 @@
 #AI
-onnxruntime-directml==1.24.4
+# 1.18.x is the last release supporting cuDNN 8, required for Pascal GPUs (GTX 1080, sm_61)
+# cuDNN 9 (used by 1.19+) requires sm_70 (Volta) or newer
+onnxruntime-gpu==1.18.1
+nvidia-cuda-runtime-cu11
+nvidia-cudnn-cu11
+nvidia-cublas-cu11
+nvidia-cufft-cu11
+nvidia-curand-cu11
 numpy
 
 #GUI

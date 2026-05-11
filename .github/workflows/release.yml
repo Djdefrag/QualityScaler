@@ -1,0 +1,63 @@
+name: Build and Release AppImage
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y wget libfuse2 python3-tk tk-dev
+
+      - name: Download appimagetool
+        run: |
+          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool-x86_64.AppImage
+
+      - name: Build AppImage
+        run: bash build-appimage.sh
+
+      - name: Get tag name
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Rename AppImage with tag
+        run: |
+          TAG=${{ steps.tag.outputs.tag }}
+          APPIMAGE=$(ls QualityScaler-*.AppImage | head -1)
+          RENAMED="QualityScaler-${TAG}-x86_64.AppImage"
+          [ "$APPIMAGE" != "$RENAMED" ] && mv "$APPIMAGE" "$RENAMED" || true
+          echo "APPIMAGE_PATH=$RENAMED" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: QualityScaler ${{ steps.tag.outputs.tag }}
+          body: |
+            ## QualityScaler ${{ steps.tag.outputs.tag }}
+
+            ### Installation
+            1. Download `QualityScaler-${{ steps.tag.outputs.tag }}-x86_64.AppImage`
+            2. Make it executable: `chmod +x QualityScaler-*.AppImage`
+            3. Run it: `./QualityScaler-*.AppImage`
+
+            **GPU acceleration:** CUDA 11 libraries are bundled. An NVIDIA GPU with driver 450+ is recommended but the app will fall back to CPU automatically.
+          files: ${{ env.APPIMAGE_PATH }}
+          draft: false
+          prerelease: false

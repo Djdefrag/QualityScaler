@@ -4,7 +4,7 @@ import sys
 from functools  import cache
 from time       import sleep
 from webbrowser import open as open_browser
-from subprocess import run as subprocess_run
+from subprocess import run as subprocess_run, DEVNULL as subprocess_DEVNULL
 from shutil     import rmtree as remove_directory
 from timeit     import default_timer as timer
 
@@ -50,19 +50,23 @@ from os.path import (
     expanduser as os_path_expanduser
 )
 
-from subprocess import (
-    Popen                as subprocess_Popen,
-    STARTUPINFO          as subprocess_STARTUPINFO,
-    STARTF_USESHOWWINDOW as subprocess_STARTF_USESHOWWINDOW
-)
+from subprocess import Popen as subprocess_Popen
+if sys.platform == "win32":
+    from subprocess import (
+        STARTUPINFO          as subprocess_STARTUPINFO,
+        STARTF_USESHOWWINDOW as subprocess_STARTF_USESHOWWINDOW
+    )
 
 # Third-party library imports
 from natsort import natsorted
 from psutil import (
-    Process             as psutil_Process,
-    IDLE_PRIORITY_CLASS as psutil_IDLE_PRIORITY_CLASS,
-    virtual_memory      as psutil_virtual_memory,
+    Process        as psutil_Process,
+    virtual_memory as psutil_virtual_memory,
 )
+if sys.platform == "win32":
+    from psutil import IDLE_PRIORITY_CLASS as psutil_IDLE_PRIORITY_CLASS
+else:
+    psutil_IDLE_PRIORITY_CLASS = 19  # POSIX nice value: lowest priority
 from onnxruntime import (
     InferenceSession        as onnxruntime_InferenceSession,
     SessionOptions          as onnxruntime_SessionOptions,
@@ -74,6 +78,7 @@ from PIL.Image import (
     open      as pillow_image_open,
     fromarray as pillow_image_fromarray
 )
+from PIL import ImageTk
 
 from cv2 import (
     CAP_PROP_FPS,
@@ -204,10 +209,17 @@ video_codec_list = [
     ]
 
 OUTPUT_PATH_CODED    = "Same path as input files"
-DOCUMENT_PATH        = os_path_join(os_path_expanduser('~'), 'Documents')
+if sys.platform == "win32":
+    DOCUMENT_PATH = os_path_join(os_path_expanduser('~'), 'Documents')
+else:
+    DOCUMENT_PATH = os_path_expanduser('~')
 USER_PREFERENCE_PATH = find_by_relative_path(f"{DOCUMENT_PATH}{os_separator}{app_name}_{version}_userpreference.json")
-FFMPEG_EXE_PATH      = find_by_relative_path(f"Assets{os_separator}ffmpeg.exe")
-EXIFTOOL_EXE_PATH    = find_by_relative_path(f"Assets{os_separator}exiftool.exe")
+if sys.platform == "win32":
+    FFMPEG_EXE_PATH   = find_by_relative_path(f"Assets{os_separator}ffmpeg.exe")
+    EXIFTOOL_EXE_PATH = find_by_relative_path(f"Assets{os_separator}exiftool.exe")
+else:
+    FFMPEG_EXE_PATH   = find_by_relative_path(f"Assets{os_separator}ffmpeg")
+    EXIFTOOL_EXE_PATH = find_by_relative_path(f"Assets{os_separator}exiftool")
 
 COMPLETED_STATUS = "Completed"
 ERROR_STATUS     = "Error"
@@ -299,15 +311,27 @@ class AI_upscale:
 
     def _load_inferenceSession(self) -> onnxruntime_InferenceSession:
 
-        providers = ['DmlExecutionProvider']
-        #providers = ['WebGpuExecutionProvider']
-
-        match self.selected_gpu:
-            case 'Auto':  provider_options = [{"performance_preference": "high_performance"}]
-            case 'GPU 1': provider_options = [{"device_id": "0"}]
-            case 'GPU 2': provider_options = [{"device_id": "1"}]
-            case 'GPU 3': provider_options = [{"device_id": "2"}]
-            case 'GPU 4': provider_options = [{"device_id": "3"}]
+        if sys.platform == "win32":
+            providers = ['DmlExecutionProvider']
+            match self.selected_gpu:
+                case 'Auto':  provider_options = [{"performance_preference": "high_performance"}]
+                case 'GPU 1': provider_options = [{"device_id": "0"}]
+                case 'GPU 2': provider_options = [{"device_id": "1"}]
+                case 'GPU 3': provider_options = [{"device_id": "2"}]
+                case 'GPU 4': provider_options = [{"device_id": "3"}]
+        else:
+            providers = ['CUDAExecutionProvider']
+            _cuda_opts = {
+                "arena_extend_strategy":  "kSameAsRequested",
+                "gpu_mem_limit":          str(6 * 1024 * 1024 * 1024),  # 6 GB cap
+                "cudnn_conv_algo_search": "HEURISTIC",
+            }
+            match self.selected_gpu:
+                case 'Auto':  provider_options = [{**_cuda_opts, "device_id": 0}]
+                case 'GPU 1': provider_options = [{**_cuda_opts, "device_id": 0}]
+                case 'GPU 2': provider_options = [{**_cuda_opts, "device_id": 1}]
+                case 'GPU 3': provider_options = [{**_cuda_opts, "device_id": 2}]
+                case 'GPU 4': provider_options = [{**_cuda_opts, "device_id": 3}]
 
         sess_options = onnxruntime_SessionOptions()
         sess_options.enable_profiling = False
@@ -1555,7 +1579,7 @@ def copy_file_metadata(
     ]
     
     try: 
-        subprocess_run(exiftool_cmd, check = True, shell = "False")
+        subprocess_run(exiftool_cmd, check=True, shell=False, stdin=subprocess_DEVNULL)
     except:
         pass
 
@@ -2150,7 +2174,7 @@ def upscale_video(
 
         ffmpeg_process = None
         try:
-            ffmpeg_process = subprocess_Popen(extraction_command, startupinfo = startupinfo)
+            ffmpeg_process = subprocess_Popen(extraction_command, startupinfo=startupinfo, stdin=subprocess_DEVNULL)
             try: psutil_Process(ffmpeg_process.pid).nice(psutil_IDLE_PRIORITY_CLASS)
             except Exception: pass
             while ffmpeg_process.poll() is None:
@@ -2355,7 +2379,8 @@ def upscale_video(
         with os_fdopen(os_open(video_upscale_task.ffmpeg_txt_file_path, os_O_WRONLY | os_O_CREAT, 0o777), 'w', encoding="utf-8") as txt:
             for frame_path in video_upscale_task.upscaled_frame_paths:
                 if os_path_exists(frame_path):
-                    txt.write(f"file '{os_path_abspath(frame_path).replace("\\", "/")}' \n")
+                    normalized = os_path_abspath(frame_path).replace("\\", "/")
+                    txt.write(f"file '{normalized}' \n")
 
         # Create the upscaled video trying with selected codec OR x264 codec fallback
         codecs_to_try = [video_upscale_task.effective_codec, "libx264"]
@@ -2384,7 +2409,7 @@ def upscale_video(
                     "-b:v",        "50000k",
                     str(video_upscale_task.video_output_path)
                 ]
-                subprocess_run(encoding_command, check = True, shell = "False")
+                subprocess_run(encoding_command, check=True, shell=False, stdin=subprocess_DEVNULL)
                 delete_file(video_upscale_task.ffmpeg_txt_file_path)
                 print(f"[FFMPEG] encoding completed with ({current_codec})")
                 break
@@ -2558,6 +2583,57 @@ def get_upscale_factor() -> int:
 
     return upscale_factor
 
+def _native_file_dialog(mode: str) -> list[str]:
+    # mode: "files" for multi-file pick, "directory" for folder pick
+    # Try zenity (GNOME/GTK), then kdialog (KDE), then fall back to tkinter.
+    from shutil import which
+    exts = " ".join(f"*{e}" for e in supported_file_extensions)
+
+    if which("zenity"):
+        try:
+            if mode == "files":
+                result = subprocess_run(
+                    ["zenity", "--file-selection", "--multiple", "--separator=\n",
+                     "--file-filter=Supported files | " + exts,
+                     "--file-filter=All files | *"],
+                    capture_output=True, text=True
+                )
+            else:
+                result = subprocess_run(
+                    ["zenity", "--file-selection", "--directory"],
+                    capture_output=True, text=True
+                )
+            if result.returncode == 0:
+                return [p for p in result.stdout.strip().splitlines() if p]
+        except Exception:
+            pass
+
+    if which("kdialog"):
+        try:
+            if mode == "files":
+                filter_str = "Supported files (" + " ".join(f"*{e}" for e in supported_file_extensions) + ")"
+                result = subprocess_run(
+                    ["kdialog", "--getopenfilename", ".", filter_str, "--multiple"],
+                    capture_output=True, text=True
+                )
+            else:
+                result = subprocess_run(
+                    ["kdialog", "--getexistingdirectory", "."],
+                    capture_output=True, text=True
+                )
+            if result.returncode == 0:
+                return [p for p in result.stdout.strip().splitlines() if p]
+        except Exception:
+            pass
+
+    # Tkinter fallback
+    if mode == "files":
+        return list(filedialog.askopenfilenames())
+    else:
+        path = filedialog.askdirectory()
+        return [path] if path else []
+
+
 def open_files_action():
 
     def check_supported_selected_files(uploaded_file_list: list) -> list:
@@ -2565,7 +2641,7 @@ def open_files_action():
 
     info_message.set("Selecting files")
 
-    uploaded_files_list    = list(filedialog.askopenfilenames())
+    uploaded_files_list    = _native_file_dialog("files")
     uploaded_files_counter = len(uploaded_files_list)
 
     supported_files_list    = check_supported_selected_files(uploaded_files_list)
@@ -2593,7 +2669,8 @@ def open_files_action():
         info_message.set("Not supported files :(")
 
 def open_output_path_action():
-    asked_selected_output_path = filedialog.askdirectory()
+    result = _native_file_dialog("directory")
+    asked_selected_output_path = result[0] if result else ""
     if asked_selected_output_path == "":
         selected_output_path.set(OUTPUT_PATH_CODED)
     else:
@@ -3333,7 +3410,11 @@ class App():
         window.title(f"{self._get_AI_engine_info()}")
         window.geometry("1000x675")
         window.resizable(False, False)
-        window.iconbitmap(find_by_relative_path("Assets" + os_separator + "logo.ico"))
+        if sys.platform == "win32":
+            window.iconbitmap(find_by_relative_path("Assets" + os_separator + "logo.ico"))
+        else:
+            icon_img = pillow_image_open(find_by_relative_path("Assets" + os_separator + "logo.png"))
+            window.iconphoto(True, ImageTk.PhotoImage(icon_img))
 
         place_loadFile_section()
 
@@ -3366,6 +3447,11 @@ class App():
 # Main functions ---------------------------
 
 if __name__ == "__main__":
+
+    multiprocessing_freeze_support()
+    if sys.platform != "win32":
+        from multiprocessing import set_start_method
+        set_start_method("spawn", force=True)
 
     if os_path_exists(USER_PREFERENCE_PATH):
         print(f"[{app_name}] Preference file exist")
@@ -3400,7 +3486,6 @@ if __name__ == "__main__":
         default_output_resize_factor = str(100)
         default_VRAM_limiter         = str(4)
 
-    multiprocessing_freeze_support()
     set_appearance_mode("Dark")
     set_default_color_theme("dark-blue")
     apply_app_zoom(float(default_app_zoom.replace("%", "")) / 100)
@@ -3461,7 +3546,7 @@ if __name__ == "__main__":
     selected_input_resize_factor.trace_add('write', update_file_widget)
     selected_output_resize_factor.trace_add('write', update_file_widget)
 
-    font   = "Segoe UI"    
+    font   = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
     bold8  = CTkFont(family = font, size = 8, weight = "bold")
     bold9  = CTkFont(family = font, size = 9, weight = "bold")
     bold10 = CTkFont(family = font, size = 10, weight = "bold")
