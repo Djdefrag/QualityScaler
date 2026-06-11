@@ -38,6 +38,7 @@ from PIL.Image        import open as pillow_image_open
 from moviepy.editor   import VideoFileClip
 from moviepy.video.io import ImageSequenceClip
 from download import download
+from zstandard import ZstdDecompressor
 
 from torch import (
     device          as torch_device,
@@ -216,9 +217,15 @@ def get_model_url(model_name: str) -> str:
 def torch_load_model(model_path, map_location = None) -> Module:
     print(f"Loading model from {model_path}")
     model_name = os_path.basename(model_path)
-    download_url = get_model_url(model_name)
     os.makedirs(os_path_join(HERE, "AI"), exist_ok = True)
-    download(download_url, model_path, replace = False, timeout=60)
+    if not os_path_exists(model_path):
+        zst_path = f"{model_path}.zst"
+        download(get_model_url(f"{model_name}.zst"), zst_path, replace = False, timeout=60)
+        temp_path = f"{model_path}.tmp"
+        with open(zst_path, "rb") as compressed, open(temp_path, "wb") as decompressed:
+            ZstdDecompressor().copy_stream(compressed, decompressed)
+        os.replace(temp_path, model_path)
+        os_remove(zst_path)
     return torch_load(model_path, map_location = map_location)
 
 @torch_inference_mode(True)

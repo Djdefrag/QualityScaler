@@ -28,3 +28,4 @@ torchvision==0.14.1
 tqdm==4.67.3
 typing-extensions==4.15.0
 urllib3==2.7.0
+zstandard==0.25.0
