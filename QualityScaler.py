@@ -216,6 +216,8 @@ VRAM_model_usage = {
     'MSharpx4':        1.5,
     'IRCNN_Mx1':       4,
     'IRCNN_Lx1':       4,
+    'NomosWebPhoto_RealPLKSRx4': 1.5,  # Added PLKSR
+    'SwinIRLargex4':              0.75, # Added SwinIR (smaller tiles due to high VRAM overhead)
 }
 
 MENU_LIST_SEPARATOR = [ "----" ]
@@ -225,6 +227,8 @@ BSRGAN_models     = [ "BSRGANx2",    "BSRGANx4"    ]
 RealESRGAN_models = [ "RealESRGANx4"               ]
 MSharp_models     = [ "MSharpx4"                   ]
 IRCNN_models      = [ "IRCNN_Mx1",   "IRCNN_Lx1"   ]
+PLKSR_models  = [ "NomosWebPhoto_RealPLKSRx4" ]
+SwinIR_models = [ "SwinIRLargex4" ]
 
 AI_models_list = ( 
     LVA_models          + MENU_LIST_SEPARATOR +
@@ -232,7 +236,9 @@ AI_models_list = (
     BSRGAN_models       + MENU_LIST_SEPARATOR +
     RealESRGAN_models   + MENU_LIST_SEPARATOR +
     MSharp_models       + MENU_LIST_SEPARATOR +
-    IRCNN_models
+    IRCNN_models        + MENU_LIST_SEPARATOR +
+    PLKSR_models        + MENU_LIST_SEPARATOR +
+    SwinIR_models
 )
 
 zoom_option_list       = [ "50%", "75%", "100%", "125%", "150%", "175%" ]
@@ -652,9 +658,23 @@ class AI_upscale:
         self.selected_gpu        = selected_gpu
         self.input_resize_factor = input_resize_factor
         self.tiles_resolution    = tiles_resolution
+        
+        # ONNX file path resolver
+        def resolve_model_path(model_name: str) -> str:
+            base_folder = f"AI-onnx{os_separator}"
+            candidates = [
+                f"{base_folder}{model_name}_fp16.onnx",
+                f"{base_folder}{model_name}_fp32.onnx",
+                f"{base_folder}{model_name}.onnx"
+            ]
+            for path in candidates:
+                full_path = find_by_relative_path(path)
+                if os_path_exists(full_path):
+                    return full_path
+            # Fallback to default naming convention if not found yet
+            return find_by_relative_path(f"{base_folder}{model_name}_fp16.onnx")
 
-        # Calculated variables
-        self.selected_AI_model_path = find_by_relative_path(f"AI-onnx{os_separator}{self.selected_AI_model}_fp16.onnx")
+        self.selected_AI_model_path = resolve_model_path(self.selected_AI_model)
         self.upscale_factor         = get_model_upscale_factor(self.selected_AI_model)
 
         # Variable assigned later 
@@ -3243,6 +3263,21 @@ class App():
                 " - Tips: AI sharpening - OFF"
                 "\n",
 
+                "\n"
+                "NomosWebPhoto_RealPLKSRx4"
+                "\n"
+                " - Target: Fast, natural photorealistic image upscaling"
+                "\n"
+                " - Tips: Great for web photos; avoids harsh edge artifacts and halos"
+                "\n",
+
+                "\n"
+                "SwinIRLargex4"
+                "\n"
+                " - Target: Ultra high-fidelity image & artwork upscaling"
+                "\n"
+                " - Tips: Preserves fine texture and line art without artifacts; slower processing time"
+                "\n",
             ]
 
             open_info_messagebox("AI model", "Select the AI model based on your content type", option_list)
